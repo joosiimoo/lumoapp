@@ -1,0 +1,68 @@
+schema: spec-driven
+
+# Project context is shown to AI when creating artifacts.
+context: |
+  Product: Lumo — AI-native managed business operations for small independent
+  merchants in Mexico. Initial language Spanish, currency MXN. Pilot: Carrota.
+
+  Authoritative sources (in this order for implementation of Build A):
+  1. docs/PRD_Lumo_MVP_Build_A_v1.0.md
+  2. docs/SRS_Lumo_MVP_Build_A_v1.0.md
+  3. docs/Technical_Architecture_Lumo_MVP_Build_A_v1.0.md
+  4. docs/LUMO_DESIGN_SYSTEM_v1.0.md
+  5. docs/PRD_Lumo_AI_Native_Managed_Business_Operations_v0.11.md (product vision;
+     Build A v1.0 supersedes 0.11 where they conflict on MVP scope)
+
+  Stack:
+  - Backend: Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2, Alembic, PostgreSQL
+  - Mobile: Flutter, Dart
+  - Deploy: Docker, docker-compose (api + postgres locally; no worker until a real async consumer exists)
+  - Architecture: modular monolith; dependencies point inward to domain
+  - Persistence: PostgreSQL is the system of record
+  - Foundation schemas only: identity, audit, platform. Product schemas are created by later changes.
+  - Money: numeric/Decimal only; never binary float; server-side deterministic calc
+  - IDs: UUIDv7; timestamps timestamptz UTC; operational date in business timezone
+  - API: /api/v1, JSON UTF-8 snake_case, error envelope per SRS 8.5
+
+  Repository layout (target):
+    backend/app/{api,agent,application,domain,infrastructure,policies,bootstrap}
+    backend/app/application/{commands,queries,workflows}
+    backend/migrations, backend/tests
+    mobile/lib/{app,core,api,lumo,features,shared}
+
+  Architectural constraints (non-negotiable):
+  - LLM never mutates domain state; never accesses repositories or DB credentials
+  - All mutations go through registered deterministic tools / application services
+  - Flutter contains no domain/business calculations and is the only GenerativeUIRenderer
+  - Backend GenerativeUIRegistry/GenerativeUIComposer emit only registered versioned UI contracts
+  - One Lumo Orchestrator in Build A, not multiple independent agents
+  - Keep modular monolith; no Redis, Kafka, microservices, or vector database
+  - Do not implement inventory, purchasing, replenishment, forecasting, invoicing,
+    banking reconciliation, ecommerce, CRM, or multi-branch
+  - Preserve visual identity from LUMO_DESIGN_SYSTEM_v1.0.md; do not redesign Lumo
+  - Domain must not import FastAPI, SQLAlchemy models, LLM SDKs, or Flutter types
+
+  Multi-tenancy: shared schema with business_id on every business entity.
+  TenantContext is derived from the authenticated session, never from client choice.
+
+  AI-native contracts exist as ports/interfaces first; implementations of product
+  tools, outcomes, and generative widgets come in later changes.
+
+# Per-artifact rules
+rules:
+  proposal:
+    - Keep proposals under 800 words
+    - Always include a "Non-goals" section
+    - Cite authoritative docs when a decision is inherited, not invented
+  specs:
+    - Requirements must be verifiable
+    - Do not specify sales, catalog, closing, or export feature logic in foundation
+    - Contracts/interfaces are in scope; full product implementations are not
+  design:
+    - Resolve directory-structure conflicts explicitly
+    - Record ADRs that this change establishes or prepares
+    - Do not introduce infrastructure forbidden by Build A architecture
+  tasks:
+    - Break tasks into chunks of max 2 hours
+    - No task may implement product feature logic (sales, catalog, closing, export)
+    - Tasks must produce interfaces/contracts for AI-native core, not full engines
