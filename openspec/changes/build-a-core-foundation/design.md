@@ -75,7 +75,7 @@ Compose runs `api` and `postgres` only. The transactional outbox table and port 
 
 ### D6. Persistence and tenancy
 
-Shared database with PostgreSQL schemas `identity`, `audit`, and `platform` only. Product schemas `catalog`, `sales`, `operations`, `workflow`, and `memory` are created by the OpenSpec changes that own those capabilities. UUIDv7 identifiers, `timestamptz` UTC, `numeric` money. Tenant-scoped tables enable RLS. `TenantContext` is derived from the authenticated principal, never from client-selected `business_id`.
+Shared database with PostgreSQL schemas `identity`, `audit`, and `platform` only. Product schemas `catalog`, `sales`, `operations`, `workflow`, and `memory` are created by the OpenSpec changes that own those capabilities. UUIDv7 identifiers, `timestamptz` UTC, `numeric` money. Tenant-scoped tables enable RLS. `TenantContext` is derived from the authenticated principal, never from client-selected `business_id`. FastAPI uses `DATABASE_URL` as role `lumo_app` (non-superuser, no `BYPASSRLS`). Alembic uses `DATABASE_ADMIN_URL` as role `lumo_admin`.
 
 ### D7. Auth foundation, not an IdP
 

@@ -32,3 +32,14 @@ Reads and writes for a resource belonging to another business MUST fail without 
 #### Scenario: RLS denies even if application filter is bypassed
 - **WHEN** a test session is configured for business A and a query omits `business_id` against a tenant-scoped table containing business B rows
 - **THEN** PostgreSQL MUST return no business B rows
+
+### Requirement: Runtime database role is subject to RLS
+The FastAPI process MUST connect as PostgreSQL role `lumo_app`. That role MUST NOT be a superuser and MUST NOT have `BYPASSRLS`, `CREATEDB`, or `CREATEROLE`. Schema ownership and migrations MUST use `lumo_admin` via `DATABASE_ADMIN_URL`.
+
+#### Scenario: API sessions run as lumo_app
+- **WHEN** the API opens a database session
+- **THEN** `current_user` MUST be `lumo_app` and `rolsuper` / `rolbypassrls` MUST be false
+
+#### Scenario: Application role cannot bypass RLS
+- **WHEN** an API-role session is configured for business A and a query omits `business_id` against a tenant-scoped table containing business B rows
+- **THEN** PostgreSQL MUST return no business B rows without switching roles

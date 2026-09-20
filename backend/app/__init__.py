@@ -1,0 +1,1 @@
+"""Lumo backend application package."""

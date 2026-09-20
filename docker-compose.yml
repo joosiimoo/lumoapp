@@ -1,0 +1,34 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: lumo
+      LUMO_ADMIN_PASSWORD: lumo_admin
+      LUMO_APP_PASSWORD: lumo_app
+    ports:
+      - "5433:5432"
+    volumes:
+      - ./backend/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lumo"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: local
+      DATABASE_URL: postgresql+psycopg://lumo_app:lumo_app@postgres:5432/lumo
+      DATABASE_ADMIN_URL: postgresql+psycopg://lumo_admin:lumo_admin@postgres:5432/lumo
+      DEV_TOKEN_SECRET: local-dev-secret-do-not-use-in-prod
+      SERVICE_NAME: lumo-api
+    ports:
+      - "8000:8000"

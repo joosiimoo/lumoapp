@@ -1,0 +1,8 @@
+.venv
+.pytest_cache
+__pycache__
+*.pyc
+.pytest_cache
+tests
+openapi.json
+README.md

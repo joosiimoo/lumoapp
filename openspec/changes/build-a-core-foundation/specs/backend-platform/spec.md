@@ -15,7 +15,7 @@ The backend MUST be a single deployable FastAPI application whose source tree se
 The system MUST load configuration from environment variables into a validated Pydantic settings object. Startup MUST fail if a required value is missing or invalid. Secrets MUST NOT be committed to the repository or baked into images.
 
 #### Scenario: Missing database URL
-- **WHEN** the API starts without a valid database URL
+- **WHEN** the API starts without a valid `DATABASE_URL` or `DATABASE_ADMIN_URL`
 - **THEN** the process MUST exit before serving traffic
 
 #### Scenario: Environment profiles

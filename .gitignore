@@ -6,5 +6,12 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
+.pytest_cache/
 .idea/
 .vscode/
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+
