@@ -8,7 +8,7 @@ services:
       LUMO_ADMIN_PASSWORD: lumo_admin
       LUMO_APP_PASSWORD: lumo_app
     ports:
-      - "5433:5432"
+      - "5432:5432"
     volumes:
       - ./backend/docker/postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:

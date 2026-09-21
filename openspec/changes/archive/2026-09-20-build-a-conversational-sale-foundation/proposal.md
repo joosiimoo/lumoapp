@@ -12,6 +12,9 @@ The archived foundation gives Lumo a modular monolith, tenant isolation, and emp
 - Expose `POST /api/v1/lumo/messages` so Inicio can send user text through the single orchestrator.
 - Register Generative UI contract `sale_item_added@1`. Flutter maps it onto the approved sale-item / soft-card language.
 - Enable the Inicio composer and conversation stream without changing navigation or visual identity.
+- Publish local PostgreSQL to the host as `5432:5432`.
+- Keep missing-unit clarification across the next turn (`"900 zanahoria"` then `"gr"`).
+- Enter submits the composer; Inicio eyebrow is `LUMO · {business name}`; sale-item row uses user-facing unit labels without client math.
 
 **BREAKING** relative to the active baseline: `ToolRegistry`, `PolicyEngine`, and `GenerativeUIRegistry` are no longer empty; persistence now includes product schemas `catalog` and `sales`.
 
@@ -45,4 +48,4 @@ The archived foundation gives Lumo a modular monolith, tenant isolation, and emp
 - Backend: `domain/catalog`, `domain/sales`, application commands/workflows, Alembic migrations, seed, `POST /api/v1/lumo/messages`, bootstrap wiring of tools/policies/UI contracts.
 - Mobile: Inicio stream + sticky composer; `GenerativeUIRenderer` learns `sale_item_added@1`; typed client calls the agent endpoint. No domain math on the client.
 - Integrity: the message path uses one application-owned write transaction for session create/reuse plus item; audit, idempotency, RLS, and Decimal money helpers are reused. The orchestrator does not open the transaction.
-- Tests: golden path `"900gr zanahoria"` plus ambiguity, missing unit, idempotent replay, tenant isolation, and unknown UI fallback.
+- Tests: golden path `"900gr zanahoria"`; two-turn missing-unit clarification; Enter-key submit; same vs different `conversation_id` session reuse; integrity cleanup without orphan audit/outbox; ambiguity, idempotent replay, tenant isolation, and unknown UI fallback. Dev/debug endpoints MUST be inert in staging/production.

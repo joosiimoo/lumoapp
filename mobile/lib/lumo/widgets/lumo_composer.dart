@@ -65,6 +65,12 @@ class _LumoComposerState extends State<LumoComposer> {
               child: TextField(
                 controller: widget.controller,
                 style: LumoTypography.input,
+                textInputAction: TextInputAction.send,
+                onSubmitted: (_) {
+                  if (widget.controller.text.trim().isNotEmpty) {
+                    widget.onSend();
+                  }
+                },
                 decoration: InputDecoration(
                   isDense: true,
                   border: InputBorder.none,

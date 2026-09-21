@@ -1,3 +1,11 @@
+import 'package:flutter/material.dart';
+import 'package:lumo/lumo/tokens.dart';
+import 'package:lumo/lumo/typography.dart';
+import 'package:lumo/lumo/widgets/lumo_card.dart';
+import 'package:lumo/lumo/widgets/lumo_mark.dart';
+import 'package:lumo/lumo/widgets/lumo_messages.dart';
+import 'package:lumo/shared/money_display.dart';
+
 class GenerativeUiAction {
   const GenerativeUiAction({
     required this.actionId,
@@ -60,7 +68,9 @@ class GenerativeUiRenderResult {
 class GenerativeUIRenderer {
   const GenerativeUIRenderer();
 
-  static const known = <String, int>{};
+  static const known = <String, int>{
+    'sale_item_added': 1,
+  };
 
   GenerativeUiRenderResult render(GenerativeUiContract contract) {
     final version = known[contract.component];
@@ -72,5 +82,113 @@ class GenerativeUIRenderer {
 
   bool canRunActions(GenerativeUiContract contract) {
     return render(contract).handled;
+  }
+
+  Widget build(GenerativeUiContract contract) {
+    final result = render(contract);
+    if (!result.handled) {
+      return LumoMessage(text: contract.fallbackText);
+    }
+    return SaleItemAddedView(contract: contract);
+  }
+}
+
+class SaleItemAddedView extends StatelessWidget {
+  const SaleItemAddedView({super.key, required this.contract});
+
+  final GenerativeUiContract contract;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = contract.data;
+    final productName = '${data['product_name'] ?? ''}';
+    final quantity = '${data['quantity_normalized'] ?? ''}';
+    final unit = '${data['unit_normalized'] ?? ''}';
+    final unitPrice = _amountOf(data['unit_price']);
+    final lineTotal = _amountOf(data['line_total']);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: LumoMark(),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(contract.fallbackText, style: LumoTypography.body),
+              const SizedBox(height: 8),
+              LumoCard(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Container(
+                      width: LumoSizes.thumbSm,
+                      height: LumoSizes.thumbSm,
+                      alignment: Alignment.center,
+                      decoration: const BoxDecoration(
+                        color: LumoColors.accent,
+                        borderRadius: BorderRadius.all(Radius.circular(LumoRadius.thumb)),
+                      ),
+                      child: Text(
+                        productName.isEmpty ? '' : productName[0],
+                        style: LumoTypography.cardTitle.copyWith(color: LumoColors.accentForeground),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            productName,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: LumoTypography.cardTitle,
+                          ),
+                          Text(
+                            '$quantity ${SaleItemAddedView.displayUnit(unit)} · $unitPrice/${SaleItemAddedView.displayUnit(unit)}',
+                            style: LumoTypography.caption,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Text(lineTotal, style: LumoTypography.metricSm),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String displayUnit(String canonical) {
+    switch (canonical) {
+      case 'kilogram':
+        return 'kg';
+      case 'gram':
+        return 'g';
+      case 'unit':
+        return 'unidad';
+      case 'package':
+        return 'paquete';
+      default:
+        return canonical;
+    }
+  }
+
+  static String _amountOf(Object? value) {
+    if (value is Map) {
+      return MoneyDisplay.format(
+        amount: '${value['amount'] ?? ''}',
+        currency: '${value['currency'] ?? 'MXN'}',
+      );
+    }
+    return '';
   }
 }

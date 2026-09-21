@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -8,16 +9,20 @@ from starlette.exceptions import HTTPException
 
 from app.agent.generative_ui import GenerativeUIComposer, GenerativeUIRegistry
 from app.agent.orchestrator import FoundationOrchestrator
-from app.agent.providers.fake import FakeLLMProvider
+from app.agent.providers.scripted import ScriptedLLMProvider
+from app.agent.registrations import register_conversational_sale_tools, register_sale_item_added_ui
 from app.agent.tools import ToolRegistry
 from app.api.middleware import CorrelationMiddleware
 from app.api.routes.health import router as health_router
+from app.api.routes.lumo import router as lumo_router
 from app.api.routes.platform import router as platform_router
 from app.api.schemas.errors import app_error_handler, http_exception_handler, unhandled_error_handler, validation_error_handler
+from app.application.pending import InMemoryPendingClarificationStore
 from app.application.workflows.outcomes import EmptyOutcomeEngine
-from app.bootstrap.settings import Settings, get_settings
+from app.bootstrap.settings import AppEnv, Settings, get_settings
 from app.domain.shared.errors import AppError
 from app.infrastructure.persistence.engine import create_engine_from_settings, create_session_factory
+from app.infrastructure.persistence.seed import ensure_carrota_seed
 from app.infrastructure.telemetry import configure_logging
 from app.policies.engine import build_policy_engine
 
@@ -37,11 +42,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     session_factory = create_session_factory(engine)
 
     tools = ToolRegistry()
+    register_conversational_sale_tools(tools)
     ui_registry = GenerativeUIRegistry()
+    register_sale_item_added_ui(ui_registry)
+    policies = build_policy_engine()
+    provider = ScriptedLLMProvider()
     orchestrator = FoundationOrchestrator(
-        provider=FakeLLMProvider(),
+        provider=provider,
         tools=tools,
-        policies=build_policy_engine(),
+        policies=policies,
     )
 
     app = FastAPI(title="Lumo API", version="0.1.0", lifespan=lifespan)
@@ -54,7 +63,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.generative_ui_composer = GenerativeUIComposer(ui_registry)
     app.state.orchestrator = orchestrator
     app.state.outcome_engine = EmptyOutcomeEngine()
-    app.state.llm_provider = orchestrator.provider
+    app.state.llm_provider = provider
+    app.state.policies = policies
+    app.state.carrota_token = None
+    app.state.pending_clarifications = InMemoryPendingClarificationStore()
+
+    if settings.app_env is AppEnv.LOCAL:
+        seed_session = session_factory()
+        try:
+            _tenant, token = ensure_carrota_seed(seed_session, token_secret=settings.dev_token_secret)
+            seed_session.commit()
+            app.state.carrota_token = token
+            logging.getLogger("lumo.seed").info("carrota seed ready")
+        except Exception:
+            seed_session.rollback()
+            raise
+        finally:
+            seed_session.close()
 
     app.add_middleware(CorrelationMiddleware)
     app.add_exception_handler(AppError, app_error_handler)
@@ -64,6 +89,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(platform_router)
+    app.include_router(lumo_router)
 
     if settings.app_env.value == "test":
         from pydantic import BaseModel

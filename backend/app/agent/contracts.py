@@ -23,6 +23,9 @@ class AgentDecision(BaseModel):
     missing_fields: list[str] = Field(default_factory=list)
     clarification_question: str | None = None
     response_hints: list[str] = Field(default_factory=list)
+    product_query: str | None = None
+    quantity: str | None = None
+    unit: Literal["gram", "kilogram", "unit", "package"] | None = None
 
     @field_validator("intent")
     @classmethod

@@ -43,6 +43,26 @@ class IdempotencyService(Protocol):
     ) -> None: ...
 
 
+class CatalogPort(Protocol):
+    def resolve(self, *, tenant: TenantContext, query: str) -> Any: ...
+
+    def get(self, *, tenant: TenantContext, product_id: UUID) -> Any: ...
+
+
+class SalesPort(Protocol):
+    def get_open_session(self, *, tenant: TenantContext, conversation_id: str | None) -> Any: ...
+
+    def add_session(self, *, tenant: TenantContext, session: Any) -> Any: ...
+
+    def add_item(self, *, tenant: TenantContext, item: Any) -> Any: ...
+
+    def list_items(self, *, tenant: TenantContext, sale_session_id: UUID) -> list[Any]: ...
+
+
+class IdentityPort(Protocol):
+    def get_business(self, tenant: TenantContext) -> Any: ...
+
+
 class Outbox(Protocol):
     def enqueue(
         self,

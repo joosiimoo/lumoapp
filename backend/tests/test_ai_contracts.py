@@ -58,7 +58,7 @@ def test_unregistered_tool_is_denied() -> None:
         policies=engine,
     )
     response = orchestrator.handle("sell")
-    assert "not available" in response.text.lower() or "foundation" in response.text.lower()
+    assert "not available" in response.text.lower() or "foundation" in response.text.lower() or "catálogo" in response.text.lower()
 
 
 def test_unknown_outcome_is_not_ready() -> None:

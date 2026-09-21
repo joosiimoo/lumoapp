@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
 ### Requirement: Sales schema and session entity
-Persistence MUST create PostgreSQL schema `sales` with `sale_sessions` and `sale_items`. `SaleSession` MUST include `id` (UUIDv7), `business_id`, `actor_id`, optional `conversation_id`, `status`, `currency`, `created_at`, and `updated_at`. Domain entities MUST NOT be SQLAlchemy models. Tenant-scoped sales tables MUST enable RLS.
+Persistence MUST create PostgreSQL schema `sales` with `sale_sessions` and `sale_items`. `SaleSession` MUST include `id` (UUIDv7), `business_id`, `actor_id`, optional `conversation_id`, `status`, `currency`, `created_at`, and `updated_at`. When the message path supplies `conversation_id`, that value MUST be persisted on the session. Domain entities MUST NOT be SQLAlchemy models. Tenant-scoped sales tables MUST enable RLS.
 
 #### Scenario: Tables exist
 - **WHEN** Alembic migrations for this change complete
 - **THEN** `sales.sale_sessions` and `sales.sale_items` MUST exist with `business_id` and `numeric` money/quantity columns
 
 ### Requirement: One active session per interaction context
-Interaction context MUST be `(business_id, actor_id, conversation_id)` when `conversation_id` is present, otherwise `(business_id, actor_id)`. At most one `SaleSession` with `status=open` MUST exist per interaction context. `sale.start@1` MUST reuse that session when present and MUST create one when absent. This change MUST NOT confirm, void, or complete a sale.
+Interaction context MUST be `(business_id, actor_id, conversation_id)` when `conversation_id` is present, otherwise `(business_id, actor_id)`. At most one `SaleSession` with `status=open` MUST exist per interaction context. `sale.start@1` MUST reuse that session when present and MUST create one when absent. A message with a new `conversation_id` MUST NOT reuse an open session that has a different `conversation_id` or a NULL `conversation_id`. This change MUST NOT confirm, void, or complete a sale.
 
 #### Scenario: First start creates
 - **WHEN** no open session exists for the interaction context and `sale.start@1` runs
@@ -17,6 +17,10 @@ Interaction context MUST be `(business_id, actor_id, conversation_id)` when `con
 #### Scenario: Second start reuses
 - **WHEN** an open session already exists for the same interaction context and `sale.start@1` runs again
 - **THEN** the same `sale_session_id` MUST be returned, `created=false`, and no second open session MUST exist
+
+#### Scenario: Conversation id is persisted
+- **WHEN** the message path creates or reuses a session with a non-null `conversation_id`
+- **THEN** `sales.sale_sessions.conversation_id` MUST equal that value
 
 ### Requirement: SaleItem persistence
 `SaleItem` MUST include `id`, `business_id`, `sale_session_id`, `product_id`, `product_name_snapshot`, `quantity_input`, `unit_input`, `quantity_normalized`, `unit_normalized`, `unit_price`, `currency`, `line_total`, `created_at`, and `updated_at`. Quantities and money MUST be `numeric`/`Decimal`. A `SaleItem` MUST belong to an `open` session in the same tenant.
@@ -65,7 +69,7 @@ If interpretation lacks a unit, the system MUST clarify and MUST NOT infer `kilo
 - **THEN** that session MUST still have `status=open` and the new `SaleItem` MUST be visible
 
 ### Requirement: Message-path write transaction
-The public conversational operation (`POST /api/v1/lumo/messages` that adds a catalog item) MUST use one application-owned write transaction for creating or reusing the `SaleSession` plus inserting the `SaleItem`, together with that operation's audit, outbox, and idempotency rows. `catalog.resolve_product@1` is read-only and MUST run before that write transaction. The orchestrator MUST NOT open the transaction. A failed logical mutation MUST NOT leave an orphan session created for that message, MUST NOT leave a partial item, and MUST NOT commit success audit/outbox/idempotency rows for that mutation.
+The public conversational operation (`POST /api/v1/lumo/messages` that adds a catalog item) MUST use one application-owned write transaction for creating or reusing the `SaleSession` plus inserting the `SaleItem`, together with that operation's audit, outbox, and idempotency rows. `catalog.resolve_product@1` is read-only and MUST run before that write transaction. The orchestrator MUST NOT open the transaction. A failed logical mutation MUST NOT leave an orphan session created for that message, MUST NOT leave a partial item, and MUST NOT commit success audit/outbox/idempotency rows for that mutation. After a committed mutation, every related audit and `sale.item.added` outbox payload MUST reference `sale_session_id` / `sale_item_id` rows that still exist.
 
 #### Scenario: New session rolled back with failed add-item
 - **WHEN** no open session exists for the interaction context, the message workflow creates a session and writes a `SaleItem`, and the transaction fails before commit
@@ -78,3 +82,14 @@ The public conversational operation (`POST /api/v1/lumo/messages` that adds a ca
 #### Scenario: Resolve does not create a session
 - **WHEN** product resolution is `ambiguous` or `none`, or the unit is missing
 - **THEN** no write transaction for start/add-item MUST run and no new `SaleSession` MUST be created
+
+#### Scenario: Committed integrity rows stay consistent
+- **WHEN** a message-path add-item commits
+- **THEN** the session, item, message idempotency row, `sale.start@1`/`sale.add_item@1` audit rows, and `sale.item.added` outbox row MUST all exist together, and audit/outbox payloads MUST reference those live ids
+
+### Requirement: Sale-mutation reset stays consistent
+Test or reset utilities that intentionally remove committed sale mutations MUST delete `sale_items` and `sale_sessions` together with related `audit_events` (`sale.start@1`, `sale.add_item@1`), `outbox_events` (`sale.item.added`), and `idempotency_records` (`lumo.message.add_sale_item`) in one transaction, or they MUST roll the original transaction back. They MUST NOT delete only sales (and/or only idempotency) rows. After cleanup or rollback, no audit or outbox row MAY reference a `sale_session_id` or `sale_item_id` that does not exist.
+
+#### Scenario: Cleanup does not leave orphan integrity
+- **WHEN** a test helper removes a tenant's committed sale mutations
+- **THEN** related sale audit, `sale.item.added` outbox, and message idempotency rows MUST also be gone, and no remaining audit/outbox payload MAY point at a missing session or item

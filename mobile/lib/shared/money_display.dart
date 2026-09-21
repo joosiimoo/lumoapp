@@ -1,5 +1,8 @@
 class MoneyDisplay {
   static String format({required String amount, required String currency}) {
-    return '\$$amount $currency';
+    if (currency.isEmpty) {
+      return amount;
+    }
+    return '\$$amount';
   }
 }

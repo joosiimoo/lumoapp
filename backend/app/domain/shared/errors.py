@@ -48,3 +48,21 @@ class InternalError(AppError):
     code = "INTERNAL_ERROR"
     http_status = 500
     retryable = True
+
+
+class AmbiguousProductError(AppError):
+    code = "AMBIGUOUS_PRODUCT"
+    http_status = 409
+    retryable = False
+
+
+class ProductNotFoundError(AppError):
+    code = "PRODUCT_NOT_FOUND"
+    http_status = 404
+    retryable = False
+
+
+class UnitNotSupportedError(AppError):
+    code = "UNIT_NOT_SUPPORTED"
+    http_status = 422
+    retryable = False

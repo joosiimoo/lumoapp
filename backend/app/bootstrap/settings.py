@@ -48,6 +48,10 @@ class Settings(BaseSettings):
     def allows_dev_tokens(self) -> bool:
         return self.app_env in {AppEnv.LOCAL, AppEnv.TEST}
 
+    @property
+    def allows_debug_fail_after_write(self) -> bool:
+        return self.app_env in {AppEnv.LOCAL, AppEnv.TEST}
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

@@ -1,10 +1,14 @@
-## ADDED Requirements
+## Purpose
+
+Tenant-scoped catalog persistence, name normalization, sale units, pricing types, and product resolution for conversational add-item.
+
+## Requirements
 
 ### Requirement: Catalog schema and Product entity
 Persistence MUST create PostgreSQL schema `catalog` and a `products` table. Each `Product` MUST include `id` (UUIDv7), `business_id`, `name`, `normalized_name`, `sale_unit`, `pricing_type`, `current_price` (`numeric`), `status` (`active` or `inactive`), `created_at`, and `updated_at` (`timestamptz` UTC). Domain `Product` MUST NOT be a SQLAlchemy model. Tenant-scoped catalog tables MUST enable RLS and MUST be queried only with an explicit tenant argument.
 
 #### Scenario: Product row shape
-- **WHEN** Alembic migrations for this change complete
+- **WHEN** Alembic migrations for this capability complete
 - **THEN** `catalog.products` MUST exist with the required columns and MUST NOT store money as `float`/`double precision`
 
 #### Scenario: Tenant required
@@ -12,7 +16,7 @@ Persistence MUST create PostgreSQL schema `catalog` and a `products` table. Each
 - **THEN** the call MUST fail before executing SQL
 
 ### Requirement: Optional product aliases
-The catalog MAY persist zero or more aliases per product in `catalog.product_aliases` with `business_id`, `product_id`, `alias`, and `normalized_alias`. This change MUST NOT require an alias for Zanahoria. Resolution MUST consider `name` and any aliases after the same normalization.
+The catalog MAY persist zero or more aliases per product in `catalog.product_aliases` with `business_id`, `product_id`, `alias`, and `normalized_alias`. Zanahoria MUST NOT require an alias. Resolution MUST consider `name` and any aliases after the same normalization.
 
 #### Scenario: Seed has no alias
 - **WHEN** the local/test seed loads Zanahoria
@@ -48,15 +52,23 @@ If exactly one active tenant product matches, resolution MUST return that produc
 - **THEN** the result MUST be `ambiguous` and no sale mutation MUST run from that interpretation
 
 ### Requirement: Current price is catalog truth
-`current_price` on the active `Product` MUST be the price source for this change. The LLM MUST NOT supply a trusted price. Price versioning tables, overrides, and discounts are out of scope.
+`current_price` on the active `Product` MUST be the price source for add-item. The LLM MUST NOT supply a trusted price. Price versioning tables, overrides, and discounts are out of scope.
 
 #### Scenario: Seed price
 - **WHEN** the Carrota seed product Zanahoria is loaded
 - **THEN** `current_price` MUST be `25.00` MXN stored as `numeric`
 
 ### Requirement: Carrota catalog seed
-Local and test environments MUST seed business `Carrota` and an active product `Zanahoria` with `sale_unit=kilogram`, `pricing_type=per_kilogram`, and `current_price=25.00` MXN. The seed MUST be tenant-scoped to that business.
+Local API startup (`APP_ENV=local`) and tests MUST seed business `Carrota` and an active product `Zanahoria` with `sale_unit=kilogram`, `pricing_type=per_kilogram`, and `current_price=25.00` MXN. The helper MUST be deterministic and idempotent. Staging and production MUST NOT insert this seed automatically. The seed MUST be tenant-scoped to that business. FORCE RLS remains enabled: a SQL client MUST set `app.current_business_id` to the Carrota business id to see catalog/sales rows; `lumo_admin` MUST NOT bypass RLS.
 
 #### Scenario: Seed isolation
 - **WHEN** an actor for a different business resolves `zanahoria`
 - **THEN** the Carrota product MUST NOT be returned
+
+#### Scenario: Unscoped SQL looks empty
+- **WHEN** `lumo_app` or `lumo_admin` selects `catalog.products` without `app.current_business_id`
+- **THEN** the result MUST be zero rows even if the seed committed
+
+#### Scenario: Local compose host port
+- **WHEN** local Compose publishes PostgreSQL
+- **THEN** the host mapping MUST be `5432:5432` and local URLs MUST use `localhost:5432`

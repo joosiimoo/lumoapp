@@ -33,19 +33,22 @@ Authority: Build A PRD/SRS/Architecture/Design System v1.0. PRD v0.11 is vision 
 
 ## Assumptions
 
-1. Interaction context is `(business_id, actor_id, conversation_id)` when `conversation_id` is sent; otherwise `(business_id, actor_id)` for Inicio.
+1. Interaction context is `(business_id, actor_id, conversation_id)` when `conversation_id` is present. Inicio MUST send a client-generated UUID on every `POST /api/v1/lumo/messages` and reuse that same id across turns in the current conversational sale context (including `"900 zanahoria"` then `"gr"`). A new context (for this slice: a new Inicio widget / app process) MAY generate a new UUID. This is not a Conversation aggregate and MUST NOT create schema `memory`. Independent `sale.start@1` MAY still receive `conversation_id=null`; that NULL bucket MUST NOT be used by Inicio.
 2. Local/test use a scripted interpreter; no vendor LLM SDK in this change.
 3. Seed price is **25.00 MXN / kg** so `0.900 × 25.00 = 22.50` is an exact Decimal result.
 4. `current_price` lives on `Product`; `ProductPrice` history and `UnitConversion` tables wait. Gram→kg is a domain rule (`/ 1000`).
 5. Alias table exists but Zanahoria needs no alias.
 6. Permission for all three tools is `sale.create` (SRS §11). No catalog CRUD permission is exercised.
 7. `POST /api/v1/lumo/messages` is the only public entry (SRS §8.2). Tools are not public HTTP resources.
-8. Clarifications return HTTP 200 agent responses with no UI card, not `AMBIGUOUS_PRODUCT` 409, because conversation is the surface.
-9. Camera/mic composer icons stay decorative.
+8. Clarifications return HTTP 200 agent responses with no UI card, not `AMBIGUOUS_PRODUCT` 409, because conversation is the surface. Missing-unit clarification MUST retain parsed product and quantity for the next user turn in the same interaction context.
+9. Camera/mic composer icons stay decorative. Enter and the send button share one submit path.
 10. Session currency is the business currency (MXN for Carrota).
 11. Orchestrator selects intent and registered tools; it does not open ORM sessions or transactions. The application workflow owns sequencing and the write transaction.
 12. `SaleSession.status=open` is the only status in this change (PRD `draft` equivalent).
 13. The public logical mutation is one user message, not two committed tool calls. `catalog.resolve_product@1` is read-only and runs before the write transaction.
+14. Local Compose publishes PostgreSQL to the host as `5432:5432`. Container-internal Postgres remains `5432`. Host `5433` is not canonical.
+15. FORCE RLS means `SELECT * FROM catalog.products` (and sales tables) returns zero rows unless `app.current_business_id` is set, even when seed rows exist. `lumo_admin` does not bypass RLS.
+16. Flutter display labels (`kg`, `g`, `unidad`, `paquete`) MUST NOT change persisted `unit_normalized` (`kilogram`, etc.).
 
 ## Exact entities and state transitions
 
@@ -59,7 +62,7 @@ No status machine beyond active/inactive. Inactive MUST NOT resolve for new item
 
 ### SaleSession (`sales.sale_sessions`)
 
-Fields: `id`, `business_id`, `actor_id`, `conversation_id` nullable, `status`, `currency`, timestamps.
+Fields: `id`, `business_id`, `actor_id`, `conversation_id` (nullable only for independent start; Inicio message path persists the client UUID), `status`, `currency`, timestamps. When `conversation_id` is present, open-session uniqueness/reuse is `(business_id, actor_id, conversation_id)`. New Inicio runs MUST NOT silently reuse an unrelated historical open session that has a different or NULL `conversation_id`.
 
 | From | Event | To | Notes |
 |---|---|---|---|
@@ -112,19 +115,23 @@ Message path (not two commits): read resolve → application write transaction (
 
 ## Exact Generative UI contract
 
-`sale_item_added@1` — see `specs/sale-item-added-ui/spec.md`. Actions `[]`. Flutter maps to Lumo mark + `LumoCard` product row (Design System §4.14 / §5 `sale item`). No payment section, no Registrar. User turn: right-aligned `#267B4C` bubble. Lumo: mark + unbubbled text/card.
+`sale_item_added@1` — see `specs/sale-item-added-ui/spec.md`. Actions `[]`. Flutter maps to Lumo mark + `LumoCard` product row (Design System §4.14 / §5 `sale item`) with **user-facing** quantity/unit/price labels (`0.900 kg · $25.00/kg`). Canonical payload fields stay `quantity_normalized=0.900`, `unit_normalized=kilogram`, `unit_price.amount=25.00`. No payment section, no Registrar. User turn: right-aligned `#267B4C` bubble. Lumo: mark + unbubbled text/card. Inicio eyebrow is `LUMO · {session business name}` in uppercase. Greeting is Design System display greeting with Lumo gradient: `Buenos días`.
 
 ## Acceptance tests for `"900gr zanahoria"`
 
-1. **E2E golden path.** Seeded Carrota actor posts the message. After commit: unique Zanahoria resolve; one open `SaleSession`; one `SaleItem` with `0.900` kg, unit price `25.00`, line total `22.50` MXN; audit row in the same transaction; response `ui[0]` is `sale_item_added@1` with those server values.
+1. **E2E golden path.** Seeded Carrota actor posts the message with a client `conversation_id`. After commit: unique Zanahoria resolve; one open `SaleSession` whose `conversation_id` equals the request; one `SaleItem` with `0.900` kg, unit price `25.00`, line total `22.50` MXN; audit, outbox, and message idempotency rows in the same transaction that reference live session/item ids; response `ui[0]` is `sale_item_added@1` with those server values.
 2. **Flutter render.** Inicio shows user bubble `"900gr zanahoria"` and the card; client does not multiply `0.900 * 25`.
 3. **Idempotent replay.** Same `Idempotency-Key` + hash → same item id, one row.
 4. **LLM cannot mutate.** Provider has no repository; a hinted total `99.00` is ignored.
-5. **Ambiguous / missing unit / unknown product.** Clarification, zero `SaleItem` writes, and no new `SaleSession`.
-6. **Tenant isolation.** Business B cannot resolve or add Carrota Zanahoria (`TENANT_SCOPE_VIOLATION` / empty resolve).
-7. **Unregistered tool.** `sale.commit@1` denied; `sale_confirmed_card` cannot be composed.
-8. **Rollback — new session.** No prior open session; force failure after session+item writes, before commit → zero `SaleSession` and zero `SaleItem` remain; no audit/outbox success rows; idempotency remains failed or absent so retry can execute.
-9. **Rollback — reused session.** Open session already exists; force add-item failure before commit → that session is unchanged; no new `SaleItem`; no partial audit/outbox/idempotency for the failed message.
+5. **Ambiguous / missing unit / unknown product.** Clarification, zero `SaleItem` writes, and no new `SaleSession`. After missing-unit clarification, a unit-only reply (`gr` / `g` / `gramos` / `kg` / `kilogramo` / `kilogramos`) MUST complete add-item using the preserved product and quantity.
+6. **Two-turn missing unit.** `"900 zanahoria"` then `"gr"` with the same `conversation_id` → one open session (that persisted id) and one item only after the second turn.
+7. **Tenant isolation.** Business B cannot resolve or add Carrota Zanahoria (`TENANT_SCOPE_VIOLATION` / empty resolve).
+8. **Unregistered tool.** `sale.commit@1` denied; `sale_confirmed_card` cannot be composed.
+9. **Rollback — new session.** No prior open session; force failure after session+item writes, before commit → zero `SaleSession` and zero `SaleItem` remain; no audit/outbox success rows; idempotency remains failed or absent so retry can execute.
+10. **Rollback — reused session.** Open session already exists; force add-item failure before commit → that session is unchanged; no new `SaleItem`; no partial audit/outbox/idempotency for the failed message.
+11. **Same conversation reuses session.** Two successful add-item messages with the same `conversation_id` → one `SaleSession`, two `SaleItem`s, persisted `conversation_id`.
+12. **Different conversations isolate sessions.** Two successful add-item messages with different `conversation_id`s → two open `SaleSession`s. A later run MUST NOT attach to a historical open session from another conversation (including a leftover NULL-`conversation_id` session).
+13. **Cleanup/reset integrity.** Test or reset utilities that remove a committed sale mutation MUST delete `sale_items`, `sale_sessions`, and the related `audit_events` / `outbox_events` / `idempotency_records` in the same transaction, or roll the original transaction back. Piecemeal DELETE of sales (and/or idempotency) that leaves audit/outbox pointing at missing session/item ids is forbidden. Production message UoW already commits or rolls back those rows together.
 
 ## Decisions
 
@@ -156,7 +163,7 @@ Foundation already placed `GenerativeUIRenderer` under `lumo/` (archived D3). Ke
 
 ### D5. Scripted interpreter
 
-Replace foundation `FakeLLMProvider` interpret-always-unsupported with a scripted parser for this slice (regex/rules for quantity+unit+product, Spanish abbreviations `gr`/`g`/`kg`). Alternative: vendor SDK — rejected for tests.
+Replace foundation `FakeLLMProvider` interpret-always-unsupported with a scripted parser for this slice (regex/rules for quantity+unit+product, Spanish abbreviations `gr`/`g`/`gramos`/`kg`/`kilogramo`/`kilogramos`). A unit-only follow-up MUST complete a pending missing-unit clarification. Alternative: vendor SDK — rejected for tests.
 
 ### D6. Money and conversion
 
@@ -164,7 +171,9 @@ Reuse `Money`; add `Quantity`/`normalize_mass` in domain. Round MXN to 2 decimal
 
 ### D7. Seed
 
-Deterministic fixture/migration-adjacent seed: business Carrota, owner membership, product Zanahoria `25.00`. Safe for local and pytest.
+Deterministic, idempotent fixture: business Carrota, owner membership, product Zanahoria `25.00` MXN/kg, `status=active`, no alias required. `create_app` MUST call `ensure_carrota_seed` only when `APP_ENV=local` and MUST commit it. Pytest MUST call the same helper explicitly (`APP_ENV=test` does not auto-seed at boot, so tests stay isolated). Staging and production MUST NOT insert this seed. `docker compose down -v` wipes the volume; the next local API boot re-seeds Carrota/Zanahoria but not prior `SaleSession`/`SaleItem` rows.
+
+Manual SQL as `lumo_app` or `lumo_admin` MUST set `app.current_business_id` to the Carrota id before `SELECT` on FORCE-RLS tables, or the result is empty even when seed succeeded.
 
 ### D8. ADRs this change establishes
 
@@ -195,21 +204,57 @@ The public operation is one message (`POST /api/v1/lumo/messages` with `"900gr z
 
 **Fallback if a Unit of Work cannot wrap both facades:** do not silently commit start first. Instead, the message workflow MUST call a single application command that performs start-or-reuse **and** add-item inside one transaction, while still recording both tool ids in audit. `sale.start@1` remains registered for explicit/test starts. This fallback is allowed; two-commit composition on the message path is not.
 
+### D11. Minimal pending clarification (missing unit only)
+
+When the interpreter has an unequivocal product query and quantity but no unit, the runtime MUST store those fields keyed by `(business_id, actor_id, conversation_id)` and ask only for the unit. Inicio's client UUID is the `conversation_id`. It MUST NOT open a write transaction or create `SaleSession`/`SaleItem`. A later unit-only message in that same context MUST merge with the pending fields and run the normal add-item workflow. A new complete add-item utterance replaces pending state. This is not general-purpose memory and MUST NOT create schema `memory`. Process-local application state is allowed for this slice.
+
+### D12. Local PostgreSQL host port
+
+Canonical host mapping is `5432:5432`. Internal container port stays `5432`. README, pytest defaults, and local scripts MUST use `localhost:5432`. If host 5432 is already occupied, stop and report the conflict; do not kill the other process.
+
+### D13. Display labels vs canonical units
+
+Flutter formats server strings only. Map `kilogram`→`kg`, `gram`→`g`, `unit`→`unidad`, `package`→`paquete`. Golden visible row: `0.900 kg · $25.00/kg`. Do not recompute `0.900 × 25`.
+
+### D14. Composer Enter
+
+`LumoComposer` Enter (and the send button) MUST call the same `onSend`. Whitespace-only text MUST NOT send. Retry/idempotency behavior is unchanged.
+
+### D15. Inicio header and greeting
+
+Eyebrow is `LUMO · {business.name}` in uppercase from `GET /api/v1/session` (Carrota when seeded). Do not hardcode `NEGOCIO`. `Buenos días` uses Design System display greeting (Instrument Serif italic) with the Lumo text gradient. Do not redesign the screen.
+
+### D16. Dev/debug is local/test only
+
+`GET /api/v1/dev/carrota-token` MUST be unavailable in staging/production (`FORBIDDEN`). `X-Debug-Fail-After-Write` MUST be ignored unless `APP_ENV` is `local` or `test`.
+
+### D17. Client-generated conversation_id on Inicio
+
+Inicio MUST hold one UUID for the current conversational sale context and send it on every `POST /api/v1/lumo/messages`. Flutter generates the UUID; the backend persists it on `SaleSession`. Same id → reuse one open session. Different id → different open session. Do not introduce a Conversation aggregate. Alternative: server-issued conversation resource — rejected for this slice.
+
+**Local inspection finding:** a live Carrota `SaleSession` had `conversation_id=NULL`, so later Inicio messages reused `live-golden-900gr`. Missing client id was the cause.
+
+### D18. Sale-mutation cleanup is all-or-nothing
+
+The message UoW already writes session, item, audit, outbox, and message idempotency in one transaction (D10). The `live-clarify-2` orphan (audit + `sale.item.added` outbox whose session/item ids no longer exist, idempotency already gone) was caused by the test helper `_clear_sales` originally deleting only sales rows (then sales + idempotency) against the shared local database — not by production rollback. Test/reset utilities MUST delete related integrity rows in the same transaction as the sales rows, or use rollback. Do not "fix" orphans by one-off DELETE of production-shaped rows without changing that path.
+
 ## Risks / Trade-offs
 
 - [SaleSession vs later Sale] → Document mapping; do not create a second confirmed-sale table in this change.
 - [Scripted interpreter overfits one utterance] → Cover `900gr`, `900 gr`, `900 g`, `900 gramos`; anything else clarifies.
 - [Empty-registry tests from foundation will fail] → Update those tests to the new closed catalog.
-- [Sticky composer vs keyboard] → Reuse `LumoScaffold.footer`; no layout redesign.
-- [Partial unique index for one open session] → Unique `(business_id, actor_id, coalesced conversation_id)` WHERE `status=open`.
+- [Sticky composer vs keyboard] → Reuse `LumoScaffold.footer`; Enter and send share `onSend`; no layout redesign.
+- [Empty catalog SELECT] → FORCE RLS + no `app.current_business_id`; not a missing-seed by itself. Document SET + local-only startup seed.
+- [Partial unique index for one open session] → Unique `(business_id, actor_id, coalesced conversation_id)` WHERE `status=open`. Inicio always supplies a UUID so it never shares the NULL coalesced bucket with leftover live tests.
 - [Tool-per-commit leaves orphan sessions] → D10: message path is one Unit of Work; tests must fail if a new session survives a failed add-item.
+- [Test helper leaves orphan audit/outbox] → D18: reset sales and related integrity together; regression test forbids audit/outbox that reference missing sale mutations.
 
 ## Migration Plan
 
-Alembic upgrade creates `catalog` and `sales` + RLS. Seed runs in local/test only. Rollback: downgrade those migrations; Inicio composer can be feature-flagged off if needed. No production tenant.
+Alembic upgrade creates `catalog` and `sales` + RLS. Seed runs automatically only when the API boots with `APP_ENV=local`; tests seed explicitly; staging/production never seed. Rollback: downgrade those migrations; Inicio composer can be feature-flagged off if needed. No production tenant.
 
 ## Open Questions
 
 1. Whether later `sale.commit` mutates the same `SaleSession` row or inserts a confirmed `Sale` — deferred, mapping recorded in D2.
 2. Production LLM provider — still deferred.
-3. Whether `conversation_id` becomes a persisted Conversation aggregate — not in this change.
+3. Whether `conversation_id` becomes a persisted Conversation aggregate — not in this change. This slice uses a client-generated UUID only (D17).

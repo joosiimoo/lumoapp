@@ -4,9 +4,9 @@ from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
-from app.infrastructure.persistence.models import AuditEventRow, FoundationNoteRow, OutboxEventRow
+from app.infrastructure.persistence.models import AuditEventRow, FoundationNoteRow, OutboxEventRow, ProductRow
 from app.infrastructure.persistence.rls import set_current_business_id
 from tests.conftest import make_settings, postgres_available, seed_business, settings_kwargs
 
@@ -184,27 +184,26 @@ def test_rls_hides_other_tenant_rows(db_session) -> None:
     assert not any(row.business_id == business_b for row in rows)
 
 
-def test_product_schemas_are_absent(db_session) -> None:
+def test_catalog_and_sales_schemas_are_present(db_session) -> None:
     names = db_session.scalars(text("SELECT nspname FROM pg_namespace")).all()
-    for schema in ("catalog", "sales", "operations", "workflow", "memory"):
+    assert "catalog" in names
+    assert "sales" in names
+    for schema in ("operations", "workflow", "memory"):
         assert schema not in names
     tables = db_session.scalars(
         text(
             """
             SELECT table_schema || '.' || table_name
             FROM information_schema.tables
-            WHERE table_schema IN ('identity', 'audit', 'platform')
+            WHERE table_schema IN ('catalog', 'sales')
             """
         )
     ).all()
     expected = {
-        "identity.businesses",
-        "identity.users",
-        "identity.memberships",
-        "audit.audit_events",
-        "platform.idempotency_records",
-        "platform.outbox_events",
-        "platform.foundation_notes",
+        "catalog.products",
+        "catalog.product_aliases",
+        "sales.sale_sessions",
+        "sales.sale_items",
     }
     assert expected.issubset(set(tables))
 
@@ -225,3 +224,39 @@ def test_dev_token_rejected_in_production(db_session) -> None:
     response = prod_client.get("/api/v1/session", headers=_auth(token))
     assert response.status_code == 403
     assert response.json()["error"]["code"] == "FORBIDDEN"
+    token_response = prod_client.get("/api/v1/dev/carrota-token")
+    assert token_response.status_code == 403
+    assert token_response.json()["error"]["code"] == "FORBIDDEN"
+
+
+def test_debug_fail_after_write_only_in_local_and_test() -> None:
+    from app.bootstrap.settings import Settings
+
+    test_settings = Settings.model_validate(settings_kwargs())
+    prod_settings = Settings.model_validate(
+        settings_kwargs(
+            APP_ENV="production",
+            DATABASE_URL=make_settings().database_url,
+            DATABASE_ADMIN_URL=make_settings().database_admin_url,
+        )
+    )
+    assert test_settings.allows_debug_fail_after_write is True
+    assert test_settings.allows_dev_tokens is True
+    assert prod_settings.allows_debug_fail_after_write is False
+    assert prod_settings.allows_dev_tokens is False
+
+
+def test_unscoped_catalog_select_is_empty_despite_seed(db_session) -> None:
+    from app.infrastructure.persistence.engine import create_engine_from_settings, create_session_factory
+    from app.infrastructure.persistence.seed import ensure_carrota_seed
+
+    ensure_carrota_seed(db_session, token_secret="test-dev-secret-16-chars-minimum")
+    db_session.commit()
+    engine = create_engine_from_settings(make_settings())
+    other = create_session_factory(engine)()
+    try:
+        count = other.scalar(select(func.count()).select_from(ProductRow))
+        assert count == 0
+    finally:
+        other.close()
+        engine.dispose()

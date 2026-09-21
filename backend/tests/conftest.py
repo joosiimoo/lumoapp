@@ -17,8 +17,8 @@ from app.infrastructure.persistence.models import BusinessRow, MembershipRow, Us
 from app.infrastructure.persistence.rls import set_current_business_id
 
 TEST_SECRET = "test-dev-secret-16-chars-minimum"
-DEFAULT_APP_URL = "postgresql+psycopg://lumo_app:lumo_app@localhost:5433/lumo"
-DEFAULT_ADMIN_URL = "postgresql+psycopg://lumo_admin:lumo_admin@localhost:5433/lumo"
+DEFAULT_APP_URL = "postgresql+psycopg://lumo_app:lumo_app@localhost:5432/lumo"
+DEFAULT_ADMIN_URL = "postgresql+psycopg://lumo_admin:lumo_admin@localhost:5432/lumo"
 
 
 def settings_kwargs(**overrides: str) -> dict[str, str]:

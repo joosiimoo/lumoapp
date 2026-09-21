@@ -15,11 +15,17 @@ context: |
 
   Baseline:
   - Change `build-a-core-foundation` is archived and complete.
-  - Active OpenSpec specs under openspec/specs/ are the foundation capabilities:
-    backend-platform, persistence, tenant-isolation, integrity-foundation,
-    ai-native-contracts, mobile-shell, lumo-design-system.
-  - Product changes MAY introduce catalog, sales, payment, closing, or export
-    logic when that logic is explicitly owned by an approved OpenSpec change.
+  - Change `build-a-conversational-sale-foundation` is archived and complete.
+  - Active OpenSpec specs under openspec/specs/ include foundation capabilities
+    (backend-platform, persistence, tenant-isolation, integrity-foundation,
+    ai-native-contracts, mobile-shell, lumo-design-system) plus catalog-foundation,
+    sales-session-foundation, conversational-sale-runtime, and sale-item-added-ui.
+  - Product schemas `catalog` and `sales` exist. Schemas `operations`, `workflow`,
+    and `memory` remain absent until a later change owns them.
+  - Registered tools: `catalog.resolve_product@1`, `sale.start@1`, `sale.add_item@1`.
+    `sale.commit@1` remains unregistered. Registered UI: `sale_item_added@1`.
+  - Product changes MAY introduce payment, closing, or export logic when that
+    logic is explicitly owned by an approved OpenSpec change.
   - Tasks and specs MUST stay within the active change's goals and non-goals.
     Do not implement adjacent Build A capabilities just because the PRD lists them.
 
@@ -29,9 +35,12 @@ context: |
   - Deploy: Docker, docker-compose (api + postgres locally; no worker until a real async consumer exists)
   - Architecture: modular monolith; dependencies point inward to domain
   - Persistence: PostgreSQL is the system of record
+  - Local Compose: PostgreSQL container listens on 5432 internally and MUST be
+    published to the host as 5432:5432 (localhost:5432). Do not document or
+    default host mappings to 5433.
   - Foundation schemas present: identity, audit, platform
-  - Product schemas (catalog, sales, operations, workflow, memory) are created
-    only by the OpenSpec change that owns that capability
+  - Product schemas present: catalog, sales
+  - Product schemas still absent: operations, workflow, memory
   - Money: numeric/Decimal only; never binary float; server-side deterministic calc
   - IDs: UUIDv7; timestamps timestamptz UTC; operational date in business timezone
   - API: /api/v1, JSON UTF-8 snake_case, error envelope per SRS 8.5

@@ -11,8 +11,8 @@ def main() -> None:
     settings = Settings.model_validate(
         {
             "APP_ENV": "local",
-            "DATABASE_URL": "postgresql+psycopg://lumo_app:lumo_app@localhost:5433/lumo",
-            "DATABASE_ADMIN_URL": "postgresql+psycopg://lumo_admin:lumo_admin@localhost:5433/lumo",
+            "DATABASE_URL": "postgresql+psycopg://lumo_app:lumo_app@localhost:5432/lumo",
+            "DATABASE_ADMIN_URL": "postgresql+psycopg://lumo_admin:lumo_admin@localhost:5432/lumo",
             "DEV_TOKEN_SECRET": "local-dev-secret-do-not-use-in-prod",
         }
     )

@@ -5,6 +5,7 @@ import 'package:lumo/api/api_error.dart';
 import 'package:lumo/api/idempotency_store.dart';
 import 'package:lumo/core/env/app_config.dart';
 import 'package:lumo/core/session/session_store.dart';
+import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:uuid/uuid.dart';
 
 class LumoApiClient {
@@ -75,5 +76,51 @@ class LumoApiClient {
       );
     }
     return decoded as Map<String, dynamic>;
+  }
+
+  Future<LumoMessageResponse> postMessage(
+    String message, {
+    required String operation,
+    required String conversationId,
+  }) async {
+    final decoded = await post(
+      '/api/v1/lumo/messages',
+      body: {'message': message, 'conversation_id': conversationId},
+      operation: operation,
+    );
+    return LumoMessageResponse.fromJson(decoded);
+  }
+
+  Future<Map<String, dynamic>> getSession() {
+    return get('/api/v1/session');
+  }
+}
+
+class LumoMessageResponse {
+  const LumoMessageResponse({
+    required this.messageId,
+    required this.status,
+    required this.text,
+    required this.ui,
+    required this.correlationId,
+  });
+
+  final String messageId;
+  final String status;
+  final String text;
+  final List<GenerativeUiContract> ui;
+  final String correlationId;
+
+  factory LumoMessageResponse.fromJson(Map<String, dynamic> json) {
+    return LumoMessageResponse(
+      messageId: '${json['message_id'] ?? ''}',
+      status: '${json['status'] ?? ''}',
+      text: '${json['text'] ?? ''}',
+      ui: [
+        for (final item in (json['ui'] as List? ?? []))
+          GenerativeUiContract.fromJson(Map<String, dynamic>.from(item as Map)),
+      ],
+      correlationId: '${json['correlation_id'] ?? ''}',
+    );
   }
 }

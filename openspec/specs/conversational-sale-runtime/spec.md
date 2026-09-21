@@ -1,11 +1,19 @@
-## ADDED Requirements
+## Purpose
+
+Agent message API, registered catalog/sale tools, policies, scripted local interpreter, and the application workflow that resolves then commits start/reuse + add-item in one write transaction.
+
+## Requirements
 
 ### Requirement: Agent message endpoint
-The API MUST expose `POST /api/v1/lumo/messages` under `/api/v1`. The body MUST accept `message` and MAY accept `conversation_id` and `client_context`. The route MUST authenticate, derive `TenantContext` from the session, require `Idempotency-Key`, and propagate `X-Correlation-ID`. The handler MUST invoke the single `LumoOrchestrator` and MUST NOT contain catalog or pricing rules.
+The API MUST expose `POST /api/v1/lumo/messages` under `/api/v1`. The body MUST accept `message` and MAY accept `conversation_id` and `client_context`. Inicio MUST send `conversation_id` on every request. The route MUST authenticate, derive `TenantContext` from the session, require `Idempotency-Key`, and propagate `X-Correlation-ID`. The handler MUST invoke the single `LumoOrchestrator` and MUST NOT contain catalog or pricing rules.
 
 #### Scenario: Authenticated send
-- **WHEN** a Carrota actor posts `{"message": "900gr zanahoria"}` with a valid session and idempotency key
+- **WHEN** a Carrota actor posts `{"message": "900gr zanahoria", "conversation_id": "<uuid>"}` with a valid session and idempotency key
 - **THEN** the orchestrator MUST run and the HTTP handler MUST NOT calculate `line_total`
+
+#### Scenario: Conversation id is forwarded
+- **WHEN** Inicio posts a message with a client-generated `conversation_id`
+- **THEN** the orchestrator context MUST include that same `conversation_id`
 
 ### Requirement: AgentDecision extension for add-item
 `AgentDecision` MUST keep existing fields and MAY add optional `product_query`, `quantity` (decimal string), and `unit` (`gram` | `kilogram` | `unit` | `package`). Intent for this slice MUST be `add_sale_item` when those fields are present. `candidate_tool` MUST be a registered tool id or null. Invalid provider output MUST be discarded with no mutation.
@@ -33,11 +41,19 @@ No `LLMProvider` implementation MUST write PostgreSQL, call repositories, or inv
 - **THEN** `match` MUST be `unique` and `product.name` MUST be `Zanahoria`
 
 ### Requirement: Tool sale.start@1
-`ToolRegistry` MUST register `sale.start@1` as a write tool. Input MUST be `{ "conversation_id": string|null }`. Output MUST be `{ "sale_session_id": uuid, "status": "open", "created": boolean, "item_count": integer }`. Permission MUST be `sale.create`. Idempotency MUST be required when start is invoked as its own public operation. The tool MUST reuse the open session for the interaction context. When composed on the message path, start/reuse MUST participate in the workflow write transaction (see message-path transaction requirement) and MUST NOT commit an empty session before add-item.
+`ToolRegistry` MUST register `sale.start@1` as a write tool. Input MUST be `{ "conversation_id": string|null }`. Output MUST be `{ "sale_session_id": uuid, "status": "open", "created": boolean, "item_count": integer }`. Permission MUST be `sale.create`. Idempotency MUST be required when start is invoked as its own public operation. When `conversation_id` is present, the tool MUST reuse the open session for `(business_id, actor_id, conversation_id)` and MUST persist that id on `SaleSession`. When composed on the message path, start/reuse MUST participate in the workflow write transaction (see message-path transaction requirement) and MUST NOT commit an empty session before add-item.
 
 #### Scenario: Start is idempotent
 - **WHEN** `sale.start@1` is invoked twice as its own public operation with the same tenant, actor, conversation, key, and payload
 - **THEN** one `SaleSession` MUST exist and both results MUST return the same `sale_session_id`
+
+#### Scenario: Same conversation reuses one session
+- **WHEN** two successful message-path add-item mutations use the same tenant, actor, and `conversation_id`
+- **THEN** exactly one open `SaleSession` MUST exist for that context and both items MUST belong to it
+
+#### Scenario: Different conversations isolate sessions
+- **WHEN** two successful message-path add-item mutations use different `conversation_id`s for the same tenant and actor
+- **THEN** two open `SaleSession`s MUST exist and neither mutation MUST reuse the other's session
 
 ### Requirement: Tool sale.add_item@1
 `ToolRegistry` MUST register `sale.add_item@1` as a write tool. Input MUST be `{ "sale_session_id": uuid, "product_id": uuid, "quantity": decimal-string, "unit": "gram"|"kilogram"|"unit"|"package" }`. Output MUST include `sale_session_id`, `sale_item_id`, `product_id`, `product_name`, `quantity_input`, `unit_input`, `quantity_normalized`, `unit_normalized`, `unit_price`, `line_total`, `session_item_count`, and `session_total` (money as decimal string plus `MXN`). Permission MUST be `sale.create`. Idempotency MUST be required when add-item is invoked as its own public operation. The tool MUST re-read the product, reject inactive/missing products, normalize quantity, calculate `line_total`, persist, and audit. On the message path, those writes MUST share the workflow transaction with session create/reuse.
@@ -84,8 +100,37 @@ For intent `add_sale_item` with complete product, quantity, and unit, the orches
 - **THEN** policy or domain validation MUST block the mutation under `SALE-001`
 
 ### Requirement: Scripted interpreter for local and test
-Local and test runtimes MUST use a non-vendor interpreter that can produce a valid `AgentDecision` for `900gr zanahoria` and can return clarification for missing unit or unsupported intent. A real LLM vendor SDK MUST NOT be required for the acceptance tests of this change.
+Local and test runtimes MUST use a non-vendor interpreter that can produce a valid `AgentDecision` for `900gr zanahoria` and can return clarification for missing unit or unsupported intent. A real LLM vendor SDK MUST NOT be required for the acceptance tests of this capability.
 
 #### Scenario: Fake provider still boots
 - **WHEN** no vendor LLM is configured
 - **THEN** health MAY report fake/non-ready and `POST /api/v1/lumo/messages` MUST still execute the golden path via the scripted interpreter
+
+### Requirement: Pending missing-unit clarification
+When a message yields an unequivocal product query and quantity but no unit, the runtime MUST ask only for the unit and MUST store those parsed fields keyed by `(business_id, actor_id, conversation_id)`. Inicio MUST use its stable client UUID as `conversation_id` (not null). It MUST NOT create a `SaleSession` or `SaleItem` on that turn. A later unit-only reply in the same scope (`gr`, `g`, `gramos`, `kg`, `kilogramo`, `kilogramos`) MUST reuse the pending product and quantity and complete the normal add-item workflow against the same `conversation_id`. A new complete add-item utterance MUST replace pending state. This MUST NOT be general-purpose memory and MUST NOT create schema `memory`.
+
+#### Scenario: Two-turn 900 zanahoria then gr
+- **WHEN** a Carrota actor posts `"900 zanahoria"` and then `"gr"` with the same `conversation_id`
+- **THEN** the first response MUST clarify with no session or item, and the second MUST persist exactly one open `SaleSession` with that `conversation_id` and one `SaleItem` for 0.900 kg Zanahoria at `22.50` MXN
+
+#### Scenario: Unit-only without pending state
+- **WHEN** the actor posts `"gr"` with no pending missing-unit clarification for that `conversation_id`
+- **THEN** the runtime MUST clarify and MUST NOT persist a sale
+
+### Requirement: Local seed at API boot
+When `APP_ENV=local`, API startup MUST run the idempotent Carrota/Zanahoria seed and commit it. Tests MUST call the same seed helper explicitly. Staging and production MUST NOT insert that seed automatically.
+
+#### Scenario: Local boot seeds catalog
+- **WHEN** the API starts with `APP_ENV=local` against a migrated database
+- **THEN** business Carrota and active product Zanahoria (`kilogram`, `per_kilogram`, `25.00` MXN) MUST exist for that tenant
+
+### Requirement: Dev and debug surfaces are local/test only
+`GET /api/v1/dev/carrota-token` MUST be unavailable in staging and production. Header `X-Debug-Fail-After-Write` MUST force a write rollback only when `APP_ENV` is `local` or `test`; it MUST be ignored otherwise.
+
+#### Scenario: Dev token rejected outside local/test
+- **WHEN** `APP_ENV` is `staging` or `production` and a client calls `GET /api/v1/dev/carrota-token`
+- **THEN** the API MUST NOT issue a token (`FORBIDDEN`)
+
+#### Scenario: Debug fail header ignored in production
+- **WHEN** `APP_ENV` is `production` and `POST /api/v1/lumo/messages` includes `X-Debug-Fail-After-Write: 1`
+- **THEN** a successful golden add-item MUST still commit

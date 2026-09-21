@@ -12,6 +12,7 @@ import 'package:lumo/lumo/tokens.dart';
 import 'package:lumo/lumo/widgets/lumo_composer.dart';
 import 'package:lumo/lumo/widgets/lumo_scaffold.dart';
 import 'package:lumo/lumo/widgets/lumo_bottom_navigation.dart';
+import 'package:uuid/uuid.dart';
 
 class LumoApp extends StatelessWidget {
   const LumoApp({super.key, required this.config, this.apiClient});
@@ -21,8 +22,7 @@ class LumoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final session = SessionStore();
-    final client = apiClient ?? LumoApiClient(config: config, session: session);
+    final client = apiClient ?? LumoApiClient(config: config, session: SessionStore());
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       locale: const Locale('es'),
@@ -39,15 +39,14 @@ class LumoApp extends StatelessWidget {
       routes: {
         '/onboarding': (_) => const OnboardingPage(),
       },
-      home: LumoHome(config: config, apiClient: client),
+      home: LumoHome(apiClient: client),
     );
   }
 }
 
 class LumoHome extends StatefulWidget {
-  const LumoHome({super.key, required this.config, required this.apiClient});
+  const LumoHome({super.key, required this.apiClient});
 
-  final AppConfig config;
   final LumoApiClient apiClient;
 
   @override
@@ -57,11 +56,82 @@ class LumoHome extends StatefulWidget {
 class _LumoHomeState extends State<LumoHome> {
   LumoTab _tab = LumoTab.inicio;
   final _composer = TextEditingController();
+  final List<InicioTurn> _inicio = [];
+  bool _sending = false;
+  String? _pendingOperation;
+  String? _businessName;
+  late final String _conversationId;
+
+  @override
+  void initState() {
+    super.initState();
+    _conversationId = const Uuid().v4();
+    _loadBusiness();
+  }
+
+  Future<void> _loadBusiness() async {
+    if (widget.apiClient.session.accessToken == null) {
+      return;
+    }
+    try {
+      final body = await widget.apiClient.getSession();
+      final business = body['business'];
+      if (!mounted || business is! Map) {
+        return;
+      }
+      setState(() => _businessName = '${business['name'] ?? ''}');
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
     _composer.dispose();
     super.dispose();
+  }
+
+  Future<void> _onSend() async {
+    if (_tab != LumoTab.inicio) {
+      LumoToast.show(context, 'Conversación — próximamente');
+      return;
+    }
+    final text = _composer.text.trim();
+    if (text.isEmpty || _sending) {
+      return;
+    }
+    _composer.clear();
+    final operation = _pendingOperation ?? 'lumo.message.send.${DateTime.now().microsecondsSinceEpoch}';
+    _pendingOperation = operation;
+    setState(() {
+      final last = _inicio.isEmpty ? null : _inicio.last;
+      if (last == null || !last.fromUser || last.text != text) {
+        _inicio.add(InicioTurn.user(text));
+      }
+      _sending = true;
+    });
+    try {
+      final response = await widget.apiClient.postMessage(
+        text,
+        operation: operation,
+        conversationId: _conversationId,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _inicio.add(InicioTurn.assistant(response.text, response.ui));
+        _sending = false;
+        _pendingOperation = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _sending = false);
+      _composer
+        ..text = text
+        ..selection = TextSelection.collapsed(offset: text.length);
+      LumoToast.show(context, 'No pude registrar eso. Intenta de nuevo.');
+    }
   }
 
   @override
@@ -73,14 +143,11 @@ class _LumoHomeState extends State<LumoHome> {
       footer: showComposer
           ? LumoComposer(
               controller: _composer,
-              onSend: () {
-                _composer.clear();
-                LumoToast.show(context, 'Conversación — próximamente');
-              },
+              onSend: _onSend,
             )
           : null,
       body: switch (_tab) {
-        LumoTab.inicio => const InicioPage(),
+        LumoTab.inicio => InicioPage(messages: _inicio, businessName: _businessName),
         LumoTab.hoy => const HoyPage(),
         LumoTab.memoria => const MemoriaPage(),
         LumoTab.negocio => const NegocioPage(),

@@ -18,16 +18,25 @@ From the repository root:
 docker compose up --build
 ```
 
-Services: `api` (http://localhost:8000) and `postgres` (host port 5433). There is no worker.
+Services: `api` (http://localhost:8000) and `postgres` (host port 5432). There is no worker.
 
 Example environment (local only — do not reuse in production):
 
 ```bash
 APP_ENV=local
-DATABASE_URL=postgresql+psycopg://lumo_app:lumo_app@localhost:5433/lumo
-DATABASE_ADMIN_URL=postgresql+psycopg://lumo_admin:lumo_admin@localhost:5433/lumo
+DATABASE_URL=postgresql+psycopg://lumo_app:lumo_app@localhost:5432/lumo
+DATABASE_ADMIN_URL=postgresql+psycopg://lumo_admin:lumo_admin@localhost:5432/lumo
 DEV_TOKEN_SECRET=local-dev-secret-do-not-use-in-prod
 ```
+
+Catalog and sales tables use FORCE RLS. A SQL client using `lumo_app` or `lumo_admin` must set the tenant before `SELECT`, or the result is empty even when seed rows exist:
+
+```sql
+SELECT set_config('app.current_business_id', '01900000-0000-7000-8000-000000000001', false);
+SELECT * FROM catalog.products;
+```
+
+Local API startup (`APP_ENV=local`) seeds business Carrota and product Zanahoria. Tests call the same helper explicitly. Staging/production never auto-seed.
 
 ## Health
 
@@ -41,8 +50,8 @@ Compose runs `alembic upgrade head` with `DATABASE_ADMIN_URL` before the API sta
 ```bash
 cd backend
 export APP_ENV=local
-export DATABASE_URL=postgresql+psycopg://lumo_app:lumo_app@localhost:5433/lumo
-export DATABASE_ADMIN_URL=postgresql+psycopg://lumo_admin:lumo_admin@localhost:5433/lumo
+export DATABASE_URL=postgresql+psycopg://lumo_app:lumo_app@localhost:5432/lumo
+export DATABASE_ADMIN_URL=postgresql+psycopg://lumo_admin:lumo_admin@localhost:5432/lumo
 export DEV_TOKEN_SECRET=local-dev-secret-do-not-use-in-prod
 alembic upgrade head
 ```

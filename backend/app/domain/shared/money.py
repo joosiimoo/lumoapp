@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 
 class Money:
@@ -25,5 +25,22 @@ class Money:
         self.amount = value
         self.currency = currency.upper()
 
+    def times(self, quantity: Decimal | str) -> Money:
+        if isinstance(quantity, float):
+            raise TypeError("money amounts must not use float")
+        if isinstance(quantity, Decimal):
+            qty = quantity
+        elif isinstance(quantity, str):
+            try:
+                qty = Decimal(quantity)
+            except InvalidOperation as exc:
+                raise ValueError("invalid decimal quantity") from exc
+        else:
+            raise TypeError("quantity must be Decimal or decimal string")
+        product = self.amount * qty
+        quantized = product.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return Money(quantized, self.currency)
+
     def to_json(self) -> dict[str, str]:
-        return {"amount": format(self.amount, "f"), "currency": self.currency}
+        quantized = self.amount.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        return {"amount": f"{quantized:.2f}", "currency": self.currency}

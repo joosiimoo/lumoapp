@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
@@ -8,6 +9,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -121,3 +123,86 @@ class FoundationNoteRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
     text: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ProductRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "products"
+    __table_args__ = (
+        Index("ix_products_business_id", "business_id"),
+        CheckConstraint("sale_unit IN ('unit', 'package', 'kilogram')", name="ck_products_sale_unit"),
+        CheckConstraint(
+            "pricing_type IN ('per_unit', 'per_package', 'per_kilogram')",
+            name="ck_products_pricing_type",
+        ),
+        CheckConstraint("status IN ('active', 'inactive')", name="ck_products_status"),
+        {"schema": "catalog"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    sale_unit: Mapped[str] = mapped_column(String(32), nullable=False)
+    pricing_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    current_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+
+
+class ProductAliasRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "product_aliases"
+    __table_args__ = (
+        Index("ix_product_aliases_business_id", "business_id"),
+        {"schema": "catalog"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    product_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("catalog.products.id"),
+        nullable=False,
+    )
+    alias: Mapped[str] = mapped_column(String(200), nullable=False)
+    normalized_alias: Mapped[str] = mapped_column(String(200), nullable=False)
+
+
+class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "sale_sessions"
+    __table_args__ = (
+        Index("ix_sale_sessions_business_id", "business_id"),
+        CheckConstraint("status IN ('open')", name="ck_sale_sessions_status"),
+        {"schema": "sales"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    conversation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+
+
+class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "sale_items"
+    __table_args__ = (
+        Index("ix_sale_items_business_id", "business_id"),
+        Index("ix_sale_items_session_id", "sale_session_id"),
+        {"schema": "sales"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    sale_session_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sales.sale_sessions.id"),
+        nullable=False,
+    )
+    product_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("catalog.products.id"),
+        nullable=False,
+    )
+    product_name_snapshot: Mapped[str] = mapped_column(String(200), nullable=False)
+    quantity_input: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False)
+    unit_input: Mapped[str] = mapped_column(String(32), nullable=False)
+    quantity_normalized: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False)
+    unit_normalized: Mapped[str] = mapped_column(String(32), nullable=False)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
