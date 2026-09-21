@@ -38,6 +38,58 @@ Map<String, dynamic> _goldenContract({
   };
 }
 
+Map<String, dynamic> _confirmedContract({
+  String total = '56.50',
+  String method = 'card',
+  int itemCount = 3,
+}) {
+  return {
+    'component': 'sale_confirmed',
+    'version': 1,
+    'data': {
+      'sale_session_id': 'sess',
+      'payment_id': 'pay',
+      'status': 'confirmed',
+      'currency': 'MXN',
+      'item_count': itemCount,
+      'total': {'amount': total, 'currency': 'MXN'},
+      'payment': {
+        'method': method,
+        'amount': {'amount': total, 'currency': 'MXN'},
+        'status': 'recorded',
+      },
+      'items': [
+        {
+          'sale_item_id': 'i1',
+          'product_name': 'Zanahoria',
+          'quantity_normalized': '0.900',
+          'unit_normalized': 'kilogram',
+          'unit_price': {'amount': '25.00', 'currency': 'MXN'},
+          'line_total': {'amount': '22.50', 'currency': 'MXN'},
+        },
+        {
+          'sale_item_id': 'i2',
+          'product_name': 'Tomate',
+          'quantity_normalized': '0.500',
+          'unit_normalized': 'kilogram',
+          'unit_price': {'amount': '20.00', 'currency': 'MXN'},
+          'line_total': {'amount': '10.00', 'currency': 'MXN'},
+        },
+        {
+          'sale_item_id': 'i3',
+          'product_name': 'Galleta A',
+          'quantity_normalized': '2',
+          'unit_normalized': 'unit',
+          'unit_price': {'amount': '12.00', 'currency': 'MXN'},
+          'line_total': {'amount': '24.00', 'currency': 'MXN'},
+        },
+      ],
+    },
+    'actions': [],
+    'fallback_text': 'Venta registrada · $itemCount artículos · \$$total · Tarjeta',
+  };
+}
+
 Map<String, dynamic> _summaryContract({
   String total = '32.50',
   String zanahoriaLine = '22.50',
@@ -351,6 +403,109 @@ void main() {
     expect(find.text('totalizar'), findsOneWidget);
     expect(find.text('Lista para cobrar'), findsOneWidget);
     expect(find.textContaining('\$32.50'), findsWidgets);
+  });
+
+  testWidgets('sale_confirmed renders payload totals without summing or change', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson(_confirmedContract(total: '99.00', method: 'card'));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('Venta registrada'), findsOneWidget);
+    expect(find.textContaining('3 artículos'), findsWidgets);
+    expect(find.textContaining('\$99.00'), findsWidgets);
+    expect(find.textContaining('Tarjeta'), findsWidgets);
+    expect(find.textContaining('\$56.50'), findsNothing);
+    expect(find.textContaining('\$32.50'), findsNothing);
+    expect(find.text('Registrar'), findsNothing);
+    expect(find.text('Corregir'), findsNothing);
+    expect(find.text('Deshacer'), findsNothing);
+    expect(find.text('Efectivo'), findsNothing);
+    expect(find.text('Transferencia'), findsNothing);
+    expect(find.textContaining('cambio'), findsNothing);
+    expect(find.byType(LumoCard), findsOneWidget);
+    expect(find.byType(LumoStatusChip), findsOneWidget);
+  });
+
+  test('unknown version of sale_confirmed falls back', () {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._confirmedContract(),
+      'version': 2,
+      'fallback_text': 'Confirmación no disponible',
+    });
+    expect(renderer.render(contract).handled, isFalse);
+    expect(renderer.canRunActions(contract), isFalse);
+    expect(renderer.render(contract).text, 'Confirmación no disponible');
+  });
+
+  test('display methods map canonical values without math', () {
+    expect(SaleConfirmedView.displayMethod('cash'), 'Efectivo');
+    expect(SaleConfirmedView.displayMethod('card'), 'Tarjeta');
+    expect(SaleConfirmedView.displayMethod('transfer'), 'Transferencia');
+  });
+
+  testWidgets('efectivo and next item reuse the same conversation_id', (tester) async {
+    final conversationIds = <String>[];
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET') {
+        return _sessionOk();
+      }
+      conversationIds.add(jsonDecode(request.body)['conversation_id'] as String);
+      final message = jsonDecode(request.body)['message'] as String;
+      if (message == 'efectivo') {
+        return _json({
+          'message_id': 'm3',
+          'status': 'completed',
+          'text': 'Venta registrada · 3 artículos · \$56.50 · Efectivo',
+          'ui': [_confirmedContract(method: 'cash')],
+          'correlation_id': 'c3',
+        });
+      }
+      if (message == '900gr zanahoria' && conversationIds.length > 2) {
+        return _json({
+          'message_id': 'm4',
+          'status': 'completed',
+          'text': 'Agregué 0.900 kg de Zanahoria · \$22.50',
+          'ui': [_goldenContract()],
+          'correlation_id': 'c4',
+        });
+      }
+      if (message == 'totalizar') {
+        return _json({
+          'message_id': 'm2',
+          'status': 'completed',
+          'text': 'Venta lista para cobrar · 2 artículos · \$32.50',
+          'ui': [_summaryContract()],
+          'correlation_id': 'c2',
+        });
+      }
+      return _json({
+        'message_id': 'm1',
+        'status': 'completed',
+        'text': 'Agregué 0.900 kg de Zanahoria · \$22.50',
+        'ui': [_goldenContract()],
+        'correlation_id': 'c1',
+      });
+    });
+    await tester.pumpWidget(LumoApp(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      apiClient: _client(httpClient),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '900gr zanahoria');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'totalizar');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'efectivo');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '900gr zanahoria');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    expect(conversationIds, hasLength(4));
+    expect(conversationIds.toSet(), hasLength(1));
+    expect(conversationIds.first, isNotEmpty);
   });
 
   testWidgets('whitespace Enter does not send', (tester) async {

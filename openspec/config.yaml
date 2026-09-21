@@ -17,18 +17,21 @@ context: |
   - Change `build-a-core-foundation` is archived and complete.
   - Change `build-a-conversational-sale-foundation` is archived and complete.
   - Change `build-a-conversational-sale-session` is archived and complete.
-  - There is no active OpenSpec change. Do not start the next change until it is requested.
+  - Change `build-a-sale-payment-and-completion` is archived and complete.
+  - There is no active OpenSpec change.
   - Baseline OpenSpec specs under openspec/specs/ include foundation capabilities
     (backend-platform, persistence, tenant-isolation, integrity-foundation,
     ai-native-contracts, mobile-shell, lumo-design-system) plus catalog-foundation,
     sales-session-foundation, conversational-sale-runtime, sale-item-added-ui,
-    conversational-sale-session, and sale-summary-ui.
+    conversational-sale-session, sale-summary-ui, sale-payment, and
+    sale-confirmed-ui.
   - Registered tools: `catalog.resolve_product@1`, `sale.start@1`,
-    `sale.add_item@1`, `sale.totalize@1`. `sale.commit@1` remains unregistered.
-    Registered UI: `sale_item_added@1`, `sale_summary@1`.
-  - `SaleSession.status` is `open` or `ready_to_charge`. `ready_to_charge` is a
-    pre-payment state, not PRD `confirmed`.
-  - Product changes MAY introduce payment, closing, or export logic when that
+    `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`.
+    Registered UI: `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`.
+  - `SaleSession.status` is `open`, `ready_to_charge`, or `confirmed`.
+    `ready_to_charge` is a pre-payment state. `confirmed` is operational completion
+    with one recorded `Payment` in `sales.payments`.
+  - Product changes MAY introduce closing or export logic when that
     logic is explicitly owned by an approved OpenSpec change.
   - Tasks and specs MUST stay within an approved change's goals and non-goals.
     Do not implement adjacent Build A capabilities just because the PRD lists them.

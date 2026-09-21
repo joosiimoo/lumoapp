@@ -26,6 +26,7 @@ class AgentDecision(BaseModel):
     product_query: str | None = None
     quantity: str | None = None
     unit: Literal["gram", "kilogram", "unit", "package"] | None = None
+    payment_method: Literal["cash", "card", "transfer"] | None = None
 
     @field_validator("intent")
     @classmethod

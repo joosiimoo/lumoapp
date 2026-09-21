@@ -26,6 +26,20 @@ class TotalizeWorkflowResult:
     payload: dict[str, Any]
 
 
+def _item_payloads(items: list[SaleItem]) -> list[dict[str, Any]]:
+    return [
+        {
+            "sale_item_id": str(item.id),
+            "product_name": item.product_name_snapshot,
+            "quantity_normalized": format_normalized_quantity(item.quantity_normalized, item.unit_normalized),
+            "unit_normalized": item.unit_normalized.value,
+            "unit_price": item.unit_price.to_json(),
+            "line_total": item.line_total.to_json(),
+        }
+        for item in items
+    ]
+
+
 def build_sale_summary(session: SaleSession, items: list[SaleItem]) -> dict[str, Any]:
     total = sum_session_total(items, currency=session.currency)
     count = len(items)
@@ -38,17 +52,7 @@ def build_sale_summary(session: SaleSession, items: list[SaleItem]) -> dict[str,
         "item_count": count,
         "subtotal": total.to_json(),
         "total": total.to_json(),
-        "items": [
-            {
-                "sale_item_id": str(item.id),
-                "product_name": item.product_name_snapshot,
-                "quantity_normalized": format_normalized_quantity(item.quantity_normalized, item.unit_normalized),
-                "unit_normalized": item.unit_normalized.value,
-                "unit_price": item.unit_price.to_json(),
-                "line_total": item.line_total.to_json(),
-            }
-            for item in items
-        ],
+        "items": _item_payloads(items),
         "text": f"Venta lista para cobrar · {count} {noun} · ${amount}",
     }
 

@@ -168,7 +168,7 @@ class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "sale_sessions"
     __table_args__ = (
         Index("ix_sale_sessions_business_id", "business_id"),
-        CheckConstraint("status IN ('open', 'ready_to_charge')", name="ck_sale_sessions_status"),
+        CheckConstraint("status IN ('open', 'ready_to_charge', 'confirmed')", name="ck_sale_sessions_status"),
         {"schema": "sales"},
     )
 
@@ -206,3 +206,28 @@ class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+
+
+class PaymentRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "payments"
+    __table_args__ = (
+        Index("ix_payments_business_id", "business_id"),
+        UniqueConstraint("sale_session_id", name="uq_payments_sale_session_id"),
+        CheckConstraint("method IN ('cash', 'card', 'transfer')", name="ck_payments_method"),
+        CheckConstraint("status IN ('recorded')", name="ck_payments_status"),
+        CheckConstraint("source IN ('manual_capture')", name="ck_payments_source"),
+        {"schema": "sales"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    sale_session_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("sales.sale_sessions.id"),
+        nullable=False,
+    )
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    method: Mapped[str] = mapped_column(String(32), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="recorded")
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual_capture")

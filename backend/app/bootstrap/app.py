@@ -12,6 +12,7 @@ from app.agent.orchestrator import FoundationOrchestrator
 from app.agent.providers.scripted import ScriptedLLMProvider
 from app.agent.registrations import (
     register_conversational_sale_tools,
+    register_sale_confirmed_ui,
     register_sale_item_added_ui,
     register_sale_summary_ui,
 )
@@ -50,6 +51,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     ui_registry = GenerativeUIRegistry()
     register_sale_item_added_ui(ui_registry)
     register_sale_summary_ui(ui_registry)
+    register_sale_confirmed_ui(ui_registry)
     policies = build_policy_engine()
     provider = ScriptedLLMProvider()
     orchestrator = FoundationOrchestrator(

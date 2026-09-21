@@ -78,3 +78,21 @@ class SaleEmptyError(AppError):
     code = "SALE_EMPTY"
     http_status = 409
     retryable = False
+
+
+class SaleNotReadyToChargeError(AppError):
+    code = "SALE_NOT_READY_TO_CHARGE"
+    http_status = 409
+    retryable = False
+
+
+class SaleNotFoundError(AppError):
+    code = "SALE_NOT_FOUND"
+    http_status = 404
+    retryable = False
+
+
+class PaymentMethodUnknownError(AppError):
+    code = "PAYMENT_METHOD_UNKNOWN"
+    http_status = 422
+    retryable = False

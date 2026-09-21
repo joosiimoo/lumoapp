@@ -7,7 +7,13 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
-from app.agent.registrations import register_conversational_sale_tools, register_sale_item_added_ui, register_sale_summary_ui
+from app.agent.registrations import (
+    START_SALE,
+    register_conversational_sale_tools,
+    register_sale_confirmed_ui,
+    register_sale_item_added_ui,
+    register_sale_summary_ui,
+)
 from app.agent.generative_ui import GenerativeUIComposer, GenerativeUIContract, GenerativeUIRegistry
 from app.agent.tools import ToolRegistry
 from app.domain.catalog import ProductMatch
@@ -17,6 +23,7 @@ from app.infrastructure.persistence.models import (
     AuditEventRow,
     IdempotencyRecordRow,
     OutboxEventRow,
+    PaymentRow,
     ProductRow,
     SaleItemRow,
     SaleSessionRow,
@@ -68,14 +75,22 @@ def _seed_carrota(db_session):
     return tenant, token
 
 
-def test_registered_tools_do_not_include_commit() -> None:
+def test_registered_tools_include_commit_and_start_never_confirmed() -> None:
     registry = ToolRegistry()
     register_conversational_sale_tools(registry)
     assert registry.is_registered("catalog.resolve_product@1")
     assert registry.is_registered("sale.start@1")
     assert registry.is_registered("sale.add_item@1")
     assert registry.is_registered("sale.totalize@1")
-    assert registry.get("sale.commit@1") is None
+    assert registry.is_registered("sale.commit@1")
+    assert registry.get("closing.confirm@1") is None
+    assert START_SALE.output_schema["properties"]["status"]["enum"] == ["open", "ready_to_charge"]
+    assert "confirmed" not in START_SALE.output_schema["properties"]["status"]["enum"]
+    from app.agent.registrations import COMMIT_SALE
+
+    assert "amount" not in COMMIT_SALE.input_schema.get("properties", {})
+    assert "total" not in COMMIT_SALE.input_schema.get("properties", {})
+    assert "change" not in COMMIT_SALE.input_schema.get("properties", {})
 
 
 def test_golden_path_900gr_zanahoria(client: TestClient, db_session) -> None:
@@ -485,6 +500,7 @@ def test_active_index_preserves_coalesce_and_widens_status(db_session) -> None:
     assert "COALESCE(conversation_id" in definition
     assert "open" in definition
     assert "ready_to_charge" in definition
+    assert "confirmed" not in definition
     column = db_session.execute(
         text(
             """
@@ -747,8 +763,10 @@ def test_sale_summary_and_confirmed_card_registry() -> None:
     registry = GenerativeUIRegistry()
     register_sale_item_added_ui(registry)
     register_sale_summary_ui(registry)
+    register_sale_confirmed_ui(registry)
     composer = GenerativeUIComposer(registry)
     assert registry.get("sale_summary", 1) is not None
+    assert registry.get("sale_confirmed", 1) is not None
     try:
         composer.compose(GenerativeUIContract(component="sale_ready_to_charge", version=1, fallback_text="no"))
         raise AssertionError("expected unregistered component to fail")
@@ -759,3 +777,497 @@ def test_sale_summary_and_confirmed_card_registry() -> None:
         raise AssertionError("expected unregistered component to fail")
     except Exception as exc:
         assert "unregistered" in str(exc).lower()
+    try:
+        composer.compose(GenerativeUIContract(component="sale_completed", version=1, fallback_text="no"))
+        raise AssertionError("expected unregistered component to fail")
+    except Exception as exc:
+        assert "unregistered" in str(exc).lower()
+
+
+def _payments_for(db_session, business_id):
+    set_current_business_id(db_session, business_id)
+    db_session.expire_all()
+    return db_session.scalars(select(PaymentRow).where(PaymentRow.business_id == business_id)).all()
+
+
+def _commit_outbox(db_session, business_id):
+    return db_session.scalars(
+        select(OutboxEventRow).where(
+            OutboxEventRow.business_id == business_id,
+            OutboxEventRow.event_type == "sale.confirmed",
+        )
+    ).all()
+
+
+def _payment_outbox(db_session, business_id):
+    return db_session.scalars(
+        select(OutboxEventRow).where(
+            OutboxEventRow.business_id == business_id,
+            OutboxEventRow.event_type == "payment.recorded",
+        )
+    ).all()
+
+
+def _commit_keys(db_session, business_id):
+    return db_session.scalars(
+        select(IdempotencyRecordRow).where(
+            IdempotencyRecordRow.business_id == business_id,
+            IdempotencyRecordRow.operation_type == "lumo.message.commit_sale",
+        )
+    ).all()
+
+
+def _commit_audits(db_session, business_id):
+    return db_session.scalars(
+        select(AuditEventRow).where(
+            AuditEventRow.business_id == business_id,
+            AuditEventRow.action == "sale.commit@1",
+        )
+    ).all()
+
+
+def _three_item_ready(client, token, conversation_id, prefix: str):
+    assert _post(client, token, "900gr zanahoria", f"{prefix}-1", conversation_id).status_code == 200
+    assert _post(client, token, "500gr tomate", f"{prefix}-2", conversation_id).status_code == 200
+    galleta = _post(client, token, "2 galletas A", f"{prefix}-3", conversation_id)
+    assert galleta.status_code == 200, galleta.text
+    totalize = _post(client, token, "totalizar", f"{prefix}-tot", conversation_id)
+    assert totalize.status_code == 200, totalize.text
+    return totalize
+
+
+def _assert_confirmed_card(card, *, method: str, session_id: str | None = None) -> None:
+    assert card["component"] == "sale_confirmed"
+    assert card["version"] == 1
+    assert card["actions"] == []
+    assert card["data"]["status"] == "confirmed"
+    assert card["data"]["item_count"] == 3
+    assert card["data"]["total"]["amount"] == "56.50"
+    assert card["data"]["payment"]["method"] == method
+    assert card["data"]["payment"]["amount"]["amount"] == "56.50"
+    assert card["data"]["payment"]["status"] == "recorded"
+    if session_id is not None:
+        assert card["data"]["sale_session_id"] == session_id
+    labels = {"cash": "Efectivo", "card": "Tarjeta", "transfer": "Transferencia"}
+    assert labels[method] in card["fallback_text"]
+    assert "56.50" in card["fallback_text"]
+
+
+@pytest.mark.parametrize(
+    ("message", "method"),
+    [
+        ("efectivo", "cash"),
+        ("tarjeta", "card"),
+        ("transferencia", "transfer"),
+    ],
+)
+def test_cash_card_transfer_completion(client: TestClient, db_session, message: str, method: str) -> None:
+    tenant, token = _seed_carrota(db_session)
+    conversation_id = f"conv-pay-{method}"
+    totalize = _three_item_ready(client, token, conversation_id, method)
+    session_id = totalize.json()["ui"][0]["data"]["sale_session_id"]
+    response = _post(client, token, message, f"{method}-pay", conversation_id)
+    assert response.status_code == 200, response.text
+    card = response.json()["ui"][0]
+    _assert_confirmed_card(card, method=method, session_id=session_id)
+    sessions, items = _sales_for(db_session, tenant.business_id)
+    payments = _payments_for(db_session, tenant.business_id)
+    assert len(sessions) == 1
+    assert sessions[0].status == "confirmed"
+    assert len(items) == 3
+    assert len(payments) == 1
+    assert payments[0].method == method
+    assert str(payments[0].amount) in {"56.50", "56.500000"}
+    assert payments[0].status == "recorded"
+    assert payments[0].source == "manual_capture"
+    assert payments[0].business_id == tenant.business_id
+    assert payments[0].sale_session_id == sessions[0].id
+    assert str(payments[0].id) == card["data"]["payment_id"]
+    assert len(_commit_outbox(db_session, tenant.business_id)) == 1
+    assert len(_payment_outbox(db_session, tenant.business_id)) == 1
+    assert len(_commit_audits(db_session, tenant.business_id)) == 1
+    assert sale_integrity_orphans(db_session, tenant.business_id) == []
+
+
+def test_payment_before_totalize_and_with_no_sale(client: TestClient, db_session) -> None:
+    tenant, token = _seed_carrota(db_session)
+    open_sale = _post(client, token, "900gr zanahoria", "open-1", "conv-open-pay")
+    assert open_sale.status_code == 200
+    early = _post(client, token, "efectivo", "open-pay", "conv-open-pay")
+    assert early.status_code == 200
+    assert early.json()["ui"] == []
+    assert "totaliza" in early.json()["text"].lower()
+    sessions, items = _sales_for(db_session, tenant.business_id)
+    assert sessions[0].status == "open"
+    assert len(items) == 1
+    assert _payments_for(db_session, tenant.business_id) == []
+
+    missing = _post(client, token, "tarjeta", "no-sale-pay", "conv-no-sale")
+    assert missing.status_code == 200
+    assert missing.json()["ui"] == []
+    assert "venta" in missing.json()["text"].lower()
+    sessions, _items = _sales_for(db_session, tenant.business_id)
+    assert all(session.conversation_id != "conv-no-sale" for session in sessions)
+    assert _payments_for(db_session, tenant.business_id) == []
+    assert _commit_outbox(db_session, tenant.business_id) == []
+    assert _commit_keys(db_session, tenant.business_id) == []
+
+
+def test_unknown_method_and_pagar_clarify_without_mutation(client: TestClient, db_session) -> None:
+    tenant, token = _seed_carrota(db_session)
+    _three_item_ready(client, token, "conv-unknown-pay", "unk")
+    for message, key in (("cheque", "cheque-1"), ("pagar", "pagar-1")):
+        response = _post(client, token, message, key, "conv-unknown-pay")
+        assert response.status_code == 200
+        assert response.json()["ui"] == []
+        text = response.json()["text"].lower()
+        assert "efectivo" in text
+        assert "tarjeta" in text
+        assert "transferencia" in text
+    sessions, items = _sales_for(db_session, tenant.business_id)
+    assert sessions[0].status == "ready_to_charge"
+    assert len(items) == 3
+    assert _payments_for(db_session, tenant.business_id) == []
+    assert _commit_outbox(db_session, tenant.business_id) == []
+    assert _commit_keys(db_session, tenant.business_id) == []
+
+
+def test_commit_same_key_replay_and_different_key_read_back(client: TestClient, db_session) -> None:
+    tenant, token = _seed_carrota(db_session)
+    conversation_id = "conv-commit-idemp"
+    totalize = _three_item_ready(client, token, conversation_id, "idemp")
+    session_id = totalize.json()["ui"][0]["data"]["sale_session_id"]
+    first = _post(client, token, "efectivo", "commit-key", conversation_id)
+    assert first.status_code == 200, first.text
+    card = first.json()["ui"][0]
+    _assert_confirmed_card(card, method="cash", session_id=session_id)
+    payment_id = card["data"]["payment_id"]
+    assert len(_payments_for(db_session, tenant.business_id)) == 1
+    assert len(_commit_outbox(db_session, tenant.business_id)) == 1
+    assert len(_commit_keys(db_session, tenant.business_id)) == 1
+    assert len(_commit_audits(db_session, tenant.business_id)) == 1
+
+    replay = _post(client, token, "efectivo", "commit-key", conversation_id)
+    assert replay.status_code == 200
+    assert replay.json()["ui"][0]["data"]["payment_id"] == payment_id
+    assert replay.json()["ui"][0]["data"]["sale_session_id"] == session_id
+    assert len(_payments_for(db_session, tenant.business_id)) == 1
+    assert len(_commit_outbox(db_session, tenant.business_id)) == 1
+    assert len(_commit_keys(db_session, tenant.business_id)) == 1
+    assert len(_commit_audits(db_session, tenant.business_id)) == 1
+
+    other = _post(client, token, "efectivo", "commit-other-key", conversation_id)
+    assert other.status_code == 200
+    assert other.json()["ui"][0]["component"] == "sale_confirmed"
+    assert other.json()["ui"][0]["data"]["payment_id"] == payment_id
+    assert other.json()["ui"][0]["data"]["total"]["amount"] == "56.50"
+    assert len(_payments_for(db_session, tenant.business_id)) == 1
+    assert len(_commit_outbox(db_session, tenant.business_id)) == 1
+    assert len(_payment_outbox(db_session, tenant.business_id)) == 1
+    assert len(_commit_audits(db_session, tenant.business_id)) == 1
+    keys = {row.key for row in _commit_keys(db_session, tenant.business_id)}
+    assert keys == {"commit-key"}
+
+
+def test_add_against_confirmed_rejected_and_next_sale_creates_new_session(
+    client: TestClient, db_session
+) -> None:
+    from decimal import Decimal
+
+    from app.domain.catalog import SaleUnit
+    from app.domain.sales import InputUnit, SaleItem
+    from app.domain.shared.errors import SaleNotOpenError
+    from app.domain.shared.money import Money
+    from app.domain.shared.tenant import TenantContext
+    from app.infrastructure.persistence.catalog_sales import SalesRepository
+
+    tenant, token = _seed_carrota(db_session)
+    conversation_id = "conv-next-sale"
+    totalize = _three_item_ready(client, token, conversation_id, "next")
+    session_id = totalize.json()["ui"][0]["data"]["sale_session_id"]
+    paid = _post(client, token, "efectivo", "next-pay", conversation_id)
+    assert paid.status_code == 200
+    payment_id = paid.json()["ui"][0]["data"]["payment_id"]
+    repo = SalesRepository(db_session)
+    with pytest.raises(SaleNotOpenError):
+        repo.add_item(
+            tenant=TenantContext(business_id=tenant.business_id, actor_id=tenant.actor_id),
+            item=SaleItem(
+                id=new_uuid7(),
+                business_id=tenant.business_id,
+                sale_session_id=sessions_id_uuid(session_id),
+                product_id=new_uuid7(),
+                product_name_snapshot="Zanahoria",
+                quantity_input=Decimal("1"),
+                unit_input=InputUnit.UNIT,
+                quantity_normalized=Decimal("1"),
+                unit_normalized=SaleUnit.UNIT,
+                unit_price=Money(Decimal("1.00"), "MXN"),
+                line_total=Money(Decimal("1.00"), "MXN"),
+            ),
+        )
+    db_session.rollback()
+    nxt = _post(client, token, "900gr zanahoria", "next-item", conversation_id)
+    assert nxt.status_code == 200, nxt.text
+    assert nxt.json()["ui"][0]["component"] == "sale_item_added"
+    new_session_id = nxt.json()["ui"][0]["data"]["sale_session_id"]
+    assert new_session_id != session_id
+    assert nxt.json()["ui"][0]["data"]["product_name"] == ZANAHORIA_NAME
+    sessions, items = _sales_for(db_session, tenant.business_id)
+    payments = _payments_for(db_session, tenant.business_id)
+    by_id = {str(session.id): session for session in sessions}
+    assert by_id[session_id].status == "confirmed"
+    assert by_id[new_session_id].status == "open"
+    assert by_id[new_session_id].conversation_id == conversation_id
+    confirmed_items = [item for item in items if str(item.sale_session_id) == session_id]
+    new_items = [item for item in items if str(item.sale_session_id) == new_session_id]
+    assert len(confirmed_items) == 3
+    assert len(new_items) == 1
+    assert len(payments) == 1
+    assert str(payments[0].id) == payment_id
+    assert str(payments[0].sale_session_id) == session_id
+
+
+def sessions_id_uuid(value: str):
+    from uuid import UUID
+
+    return UUID(value)
+
+
+def test_concurrent_commit_vs_commit(app, db_session) -> None:
+    tenant, token = _seed_carrota(db_session)
+    conversation_id = "conv-race-commit"
+    with TestClient(app, raise_server_exceptions=False) as setup:
+        _three_item_ready(setup, token, conversation_id, "rc")
+
+    def cash_a():
+        with TestClient(app, raise_server_exceptions=False) as client:
+            return _post(client, token, "efectivo", "race-cash-a", conversation_id)
+
+    def cash_b():
+        with TestClient(app, raise_server_exceptions=False) as client:
+            return _post(client, token, "efectivo", "race-cash-b", conversation_id)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(cash_a)
+        second = pool.submit(cash_b)
+        resp_a = first.result(timeout=30)
+        resp_b = second.result(timeout=30)
+
+    assert resp_a.status_code == 200, resp_a.text
+    assert resp_b.status_code == 200, resp_b.text
+    sessions, items = _sales_for(db_session, tenant.business_id)
+    payments = _payments_for(db_session, tenant.business_id)
+    assert len(sessions) == 1
+    assert sessions[0].status == "confirmed"
+    assert len(items) == 3
+    assert len(payments) == 1
+    payment_ids = {resp_a.json()["ui"][0]["data"]["payment_id"], resp_b.json()["ui"][0]["data"]["payment_id"]}
+    assert payment_ids == {str(payments[0].id)}
+    assert len(_commit_outbox(db_session, tenant.business_id)) == 1
+
+
+def test_concurrent_commit_vs_add_item_case_a_or_b(app, db_session) -> None:
+    tenant, token = _seed_carrota(db_session)
+    conversation_id = "conv-race-add-commit"
+    with TestClient(app, raise_server_exceptions=False) as setup:
+        first = _post(setup, token, "900gr zanahoria", "rac-1", conversation_id)
+        totalize = _post(setup, token, "totalizar", "rac-tot", conversation_id)
+    assert first.status_code == 200
+    assert totalize.status_code == 200
+    sale_a = totalize.json()["ui"][0]["data"]["sale_session_id"]
+
+    def add_item():
+        with TestClient(app, raise_server_exceptions=False) as client:
+            return _post(client, token, "500gr tomate", "rac-add", conversation_id)
+
+    def commit():
+        with TestClient(app, raise_server_exceptions=False) as client:
+            return _post(client, token, "efectivo", "rac-pay", conversation_id)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        add_future = pool.submit(add_item)
+        pay_future = pool.submit(commit)
+        add_resp = add_future.result(timeout=30)
+        pay_resp = pay_future.result(timeout=30)
+
+    assert pay_resp.status_code == 200, pay_resp.text
+    assert add_resp.status_code == 200, add_resp.text
+    assert pay_resp.json()["ui"][0]["component"] == "sale_confirmed"
+    sessions, items = _sales_for(db_session, tenant.business_id)
+    payments = _payments_for(db_session, tenant.business_id)
+    confirmed = [session for session in sessions if session.status == "confirmed"]
+    assert len(confirmed) == 1
+    assert str(confirmed[0].id) == sale_a
+    assert len(payments) == 1
+    assert str(payments[0].sale_session_id) == sale_a
+    confirmed_items = [item for item in items if str(item.sale_session_id) == sale_a]
+    assert all(item.product_name_snapshot != TOMATE_NAME for item in confirmed_items)
+    assert len(confirmed_items) == 1
+    if add_resp.json().get("ui"):
+        assert add_resp.json()["ui"][0]["component"] == "sale_item_added"
+        assert add_resp.json()["ui"][0]["data"]["sale_session_id"] != sale_a
+        assert len(sessions) == 2
+        opened = [session for session in sessions if session.status == "open"]
+        assert len(opened) == 1
+        new_items = [item for item in items if item.sale_session_id == opened[0].id]
+        assert len(new_items) == 1
+        assert new_items[0].product_name_snapshot == TOMATE_NAME
+    else:
+        assert len(sessions) == 1
+        assert len(items) == 1
+
+
+def test_case_a_add_after_ready_does_not_start_next_sale(client: TestClient, db_session) -> None:
+    tenant, token = _seed_carrota(db_session)
+    conversation_id = "conv-case-a"
+    _post(client, token, "900gr zanahoria", "ca-1", conversation_id)
+    totalize = _post(client, token, "totalizar", "ca-tot", conversation_id)
+    denied = _post(client, token, "500gr tomate", "ca-add", conversation_id)
+    paid = _post(client, token, "efectivo", "ca-pay", conversation_id)
+    assert totalize.status_code == 200
+    assert denied.status_code == 200
+    assert denied.json()["ui"] == []
+    assert paid.status_code == 200
+    sessions, items = _sales_for(db_session, tenant.business_id)
+    payments = _payments_for(db_session, tenant.business_id)
+    assert len(sessions) == 1
+    assert sessions[0].status == "confirmed"
+    assert len(items) == 1
+    assert items[0].product_name_snapshot == ZANAHORIA_NAME
+    assert len(payments) == 1
+
+
+def test_payment_tenant_mismatch_and_rls(client: TestClient, db_session) -> None:
+    from decimal import Decimal
+
+    from app.domain.sales import Payment, PaymentMethod
+    from app.domain.shared.errors import TenantScopeViolationError
+    from app.domain.shared.money import Money
+    from app.domain.shared.tenant import TenantContext
+    from app.infrastructure.persistence.catalog_sales import SalesRepository
+
+    tenant, token = _seed_carrota(db_session)
+    conversation_id = "conv-tenant-pay"
+    _three_item_ready(client, token, conversation_id, "ten")
+    sessions, _items = _sales_for(db_session, tenant.business_id)
+    sale_id = sessions[0].id
+    business_b, user_b, token_b = seed_business(db_session, name="OtherPay")
+    repo = SalesRepository(db_session)
+    with pytest.raises(TenantScopeViolationError):
+        repo.add_payment(
+            tenant=TenantContext(business_id=tenant.business_id, actor_id=tenant.actor_id),
+            payment=Payment(
+                id=new_uuid7(),
+                business_id=business_b,
+                sale_session_id=sale_id,
+                actor_id=tenant.actor_id,
+                method=PaymentMethod.CASH,
+                amount=Money(Decimal("56.50"), "MXN"),
+            ),
+        )
+    db_session.rollback()
+    with pytest.raises(TenantScopeViolationError):
+        repo.add_payment(
+            tenant=TenantContext(business_id=tenant.business_id, actor_id=tenant.actor_id),
+            payment=Payment(
+                id=new_uuid7(),
+                business_id=tenant.business_id,
+                sale_session_id=new_uuid7(),
+                actor_id=tenant.actor_id,
+                method=PaymentMethod.CASH,
+                amount=Money(Decimal("56.50"), "MXN"),
+            ),
+        )
+    db_session.rollback()
+    paid = _post(client, token, "efectivo", "ten-pay", conversation_id)
+    assert paid.status_code == 200
+    hidden = _post(client, token_b, "efectivo", "ten-other", "conv-other-pay")
+    assert hidden.status_code == 200
+    assert hidden.json()["ui"] == []
+    set_current_business_id(db_session, business_b)
+    db_session.expire_all()
+    seen = db_session.scalars(select(PaymentRow)).all()
+    assert all(row.business_id == business_b for row in seen)
+    assert not any(row.business_id == tenant.business_id for row in seen)
+    set_current_business_id(db_session, tenant.business_id)
+    db_session.expire_all()
+    carrota = db_session.scalars(select(PaymentRow)).all()
+    assert len(carrota) == 1
+    assert carrota[0].business_id == tenant.business_id
+
+
+def test_commit_forced_failure_rolls_back_integrity(client: TestClient, db_session) -> None:
+    tenant, token = _seed_carrota(db_session)
+    conversation_id = "conv-fail-commit"
+    _three_item_ready(client, token, conversation_id, "failc")
+    failed = _post(
+        client,
+        token,
+        "efectivo",
+        "fail-commit-key",
+        conversation_id,
+        **{"X-Debug-Fail-After-Write": "1"},
+    )
+    assert failed.status_code == 500
+    sessions, items = _sales_for(db_session, tenant.business_id)
+    assert len(sessions) == 1
+    assert sessions[0].status == "ready_to_charge"
+    assert len(items) == 3
+    assert _payments_for(db_session, tenant.business_id) == []
+    assert _commit_outbox(db_session, tenant.business_id) == []
+    assert _payment_outbox(db_session, tenant.business_id) == []
+    assert _commit_keys(db_session, tenant.business_id) == []
+    assert _commit_audits(db_session, tenant.business_id) == []
+    assert sale_integrity_orphans(db_session, tenant.business_id) == []
+    retry = _post(client, token, "efectivo", "fail-commit-key", conversation_id)
+    assert retry.status_code == 200
+    sessions, _items = _sales_for(db_session, tenant.business_id)
+    assert sessions[0].status == "confirmed"
+    assert len(_payments_for(db_session, tenant.business_id)) == 1
+
+
+def test_payments_table_and_status_check(db_session) -> None:
+    tables = db_session.scalars(
+        text(
+            """
+            SELECT table_schema || '.' || table_name
+            FROM information_schema.tables
+            WHERE table_schema = 'sales'
+            """
+        )
+    ).all()
+    assert "sales.payments" in tables
+    assert "sales.sales" not in tables
+    assert "sales.sale_lines" not in tables
+    relforced = db_session.execute(
+        text(
+            """
+            SELECT c.relforcerowsecurity
+            FROM pg_class c
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'sales' AND c.relname = 'payments'
+            """
+        )
+    ).scalar_one()
+    assert relforced is True
+    paid = db_session.execute(
+        text(
+            """
+            SELECT conname FROM pg_constraint
+            WHERE conrelid = 'sales.sale_sessions'::regclass AND conname = 'ck_sale_sessions_status'
+            """
+        )
+    ).scalar_one()
+    assert paid == "ck_sale_sessions_status"
+    definition = db_session.execute(
+        text(
+            """
+            SELECT pg_get_constraintdef(oid)
+            FROM pg_constraint
+            WHERE conrelid = 'sales.sale_sessions'::regclass AND conname = 'ck_sale_sessions_status'
+            """
+        )
+    ).scalar_one()
+    assert "confirmed" in definition
+    assert "paid" not in definition

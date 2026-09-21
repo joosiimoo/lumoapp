@@ -14,11 +14,20 @@ from app.domain.catalog import (
     SaleUnit,
     resolve_products,
 )
-from app.domain.sales import InputUnit, SaleItem, SaleSession, SaleSessionStatus
-from app.domain.shared.errors import ProductNotFoundError, TenantScopeViolationError, ValidationAppError
+from app.domain.sales import (
+    InputUnit,
+    Payment,
+    PaymentMethod,
+    PaymentSource,
+    PaymentStatus,
+    SaleItem,
+    SaleSession,
+    SaleSessionStatus,
+)
+from app.domain.shared.errors import ProductNotFoundError, SaleNotOpenError, TenantScopeViolationError, ValidationAppError
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
-from app.infrastructure.persistence.models import ProductAliasRow, ProductRow, SaleItemRow, SaleSessionRow
+from app.infrastructure.persistence.models import PaymentRow, ProductAliasRow, ProductRow, SaleItemRow, SaleSessionRow
 from app.infrastructure.persistence.rls import set_current_business_id
 
 
@@ -167,6 +176,11 @@ class SalesRepository:
     def add_item(self, *, tenant: TenantContext, item: SaleItem) -> SaleItem:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)
+        session_row = self._session.get(SaleSessionRow, item.sale_session_id)
+        if session_row is None or session_row.business_id != tenant.business_id:
+            raise TenantScopeViolationError("sale session not found")
+        if session_row.status != SaleSessionStatus.OPEN.value:
+            raise SaleNotOpenError("sale is not open")
         row = SaleItemRow(
             id=item.id,
             business_id=tenant.business_id,
@@ -197,6 +211,61 @@ class SalesRepository:
             .order_by(SaleItemRow.created_at.asc(), SaleItemRow.id.asc())
         ).all()
         return [_to_item(row) for row in rows]
+
+    def add_payment(self, *, tenant: TenantContext, payment: Payment) -> Payment:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        session_row = self._session.get(SaleSessionRow, payment.sale_session_id)
+        if session_row is None or session_row.business_id != tenant.business_id:
+            raise TenantScopeViolationError("sale session not found")
+        if payment.business_id != tenant.business_id:
+            raise TenantScopeViolationError("payment tenant does not match sale session")
+        row = PaymentRow(
+            id=payment.id,
+            business_id=tenant.business_id,
+            sale_session_id=payment.sale_session_id,
+            actor_id=tenant.actor_id,
+            method=payment.method.value,
+            amount=payment.amount.amount,
+            currency=payment.amount.currency,
+            status=PaymentStatus.RECORDED.value,
+            source=PaymentSource.MANUAL_CAPTURE.value,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _to_payment(row)
+
+    def get_payment_for_session(self, *, tenant: TenantContext, sale_session_id: UUID) -> Payment | None:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(PaymentRow).where(
+                PaymentRow.business_id == tenant.business_id,
+                PaymentRow.sale_session_id == sale_session_id,
+            )
+        )
+        return _to_payment(row) if row is not None else None
+
+    def get_latest_confirmed_session(
+        self,
+        *,
+        tenant: TenantContext,
+        conversation_id: str | None,
+    ) -> SaleSession | None:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        stmt = select(SaleSessionRow).where(
+            SaleSessionRow.business_id == tenant.business_id,
+            SaleSessionRow.actor_id == tenant.actor_id,
+            SaleSessionRow.status == SaleSessionStatus.CONFIRMED.value,
+        )
+        if conversation_id:
+            stmt = stmt.where(SaleSessionRow.conversation_id == conversation_id)
+        else:
+            stmt = stmt.where(SaleSessionRow.conversation_id.is_(None))
+        stmt = stmt.order_by(SaleSessionRow.created_at.desc(), SaleSessionRow.id.desc())
+        row = self._session.scalar(stmt)
+        return _to_session(row) if row is not None else None
 
     def count_sessions(self, *, tenant: TenantContext) -> int:
         tenant = _require_tenant(tenant)
@@ -233,4 +302,19 @@ def _to_item(row: SaleItemRow) -> SaleItem:
         unit_normalized=SaleUnit(row.unit_normalized),
         unit_price=Money(row.unit_price, row.currency),
         line_total=Money(row.line_total, row.currency),
+    )
+
+
+def _to_payment(row: PaymentRow) -> Payment:
+    return Payment(
+        id=row.id,
+        business_id=row.business_id,
+        sale_session_id=row.sale_session_id,
+        actor_id=row.actor_id,
+        method=PaymentMethod(row.method),
+        amount=Money(row.amount, row.currency),
+        status=PaymentStatus(row.status),
+        source=PaymentSource(row.source),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )

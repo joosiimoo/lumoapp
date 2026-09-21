@@ -204,8 +204,11 @@ def test_catalog_and_sales_schemas_are_present(db_session) -> None:
         "catalog.product_aliases",
         "sales.sale_sessions",
         "sales.sale_items",
+        "sales.payments",
     }
     assert expected.issubset(set(tables))
+    assert "sales.sales" not in tables
+    assert "sales.sale_lines" not in tables
 
 
 def test_dev_token_rejected_in_production(db_session) -> None:

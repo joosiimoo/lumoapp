@@ -81,6 +81,47 @@ ADD_ITEM = ToolRegistration(
     side_effect="write",
 )
 
+COMMIT_SALE = ToolRegistration(
+    tool_id="sale.commit",
+    version=1,
+    input_schema={
+        "type": "object",
+        "required": ["payment_method"],
+        "properties": {
+            "conversation_id": {"type": ["string", "null"]},
+            "payment_method": {"enum": ["cash", "card", "transfer"]},
+        },
+    },
+    output_schema={
+        "type": "object",
+        "required": [
+            "sale_session_id",
+            "payment_id",
+            "status",
+            "currency",
+            "item_count",
+            "total",
+            "payment",
+            "items",
+        ],
+        "properties": {
+            "status": {"enum": ["confirmed"]},
+            "payment": {
+                "type": "object",
+                "required": ["method", "amount", "status"],
+                "properties": {
+                    "method": {"enum": ["cash", "card", "transfer"]},
+                    "status": {"enum": ["recorded"]},
+                },
+            },
+        },
+    },
+    permission="sale.create",
+    policy_id="SALE-004",
+    requires_idempotency=True,
+    side_effect="write",
+)
+
 SALE_SUMMARY = GenerativeUIRegistration(
     component="sale_summary",
     version=1,
@@ -105,9 +146,18 @@ SALE_ITEM_ADDED = GenerativeUIRegistration(
     },
 )
 
+SALE_CONFIRMED = GenerativeUIRegistration(
+    component="sale_confirmed",
+    version=1,
+    data_schema={
+        "type": "object",
+        "required": ["sale_session_id", "payment_id", "status", "item_count", "total", "payment", "items"],
+    },
+)
+
 
 def register_conversational_sale_tools(registry: ToolRegistry) -> None:
-    for item in (RESOLVE_PRODUCT, START_SALE, ADD_ITEM, TOTALIZE_SALE):
+    for item in (RESOLVE_PRODUCT, START_SALE, ADD_ITEM, TOTALIZE_SALE, COMMIT_SALE):
         registry.register(item)
 
 
@@ -117,3 +167,7 @@ def register_sale_item_added_ui(registry: GenerativeUIRegistry) -> None:
 
 def register_sale_summary_ui(registry: GenerativeUIRegistry) -> None:
     registry.register(SALE_SUMMARY)
+
+
+def register_sale_confirmed_ui(registry: GenerativeUIRegistry) -> None:
+    registry.register(SALE_CONFIRMED)

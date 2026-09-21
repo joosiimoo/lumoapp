@@ -1,8 +1,4 @@
-## Purpose
-
-Versioned `sale_summary@1` contract for a totalized sale. The backend composes it after a committed `sale.totalize@1` (or as a `ready_to_charge` read-back) and MUST NOT emit it after `sale.commit@1`. Flutter renders server-provided lines and totals without calculating them.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Register sale_summary@1
 `GenerativeUIRegistry` MUST register component `sale_summary` version `1`. `GenerativeUIComposer` MUST emit this contract after a committed `sale.totalize@1` **transition**, and MAY emit the same contract as a current-state read-back when the session is already `ready_to_charge`. It MUST NOT emit `sale_summary@1` after `sale.commit@1` or for a `confirmed` session. It MUST refuse unknown components. The backend MUST NOT render Flutter widgets or HTML. `actions` MUST be empty. Money MUST be decimal strings plus `MXN`. `fallback_text` MUST be server-provided and MUST contain the item count and total.
@@ -61,21 +57,3 @@ The contract MUST be:
 #### Scenario: Unregistered confirmed-sale card still refused
 - **WHEN** the composer is asked to emit `sale_confirmed_card@1` or `sale_ready_to_charge@1`
 - **THEN** the backend MUST refuse to include it
-
-### Requirement: Flutter maps sale_summary@1
-Flutter `GenerativeUIRenderer` MUST register `sale_summary` version `1`. It MUST render a compact conversation card using existing Lumo language: Lumo mark gutter, soft `LumoCard`, accent status chip, product rows (name, user-facing quantity and unit price, right-aligned line total), and a total row. Display labels MUST remain `kilogram`→`kg`, `gram`→`g`, `unit`→`unidad`, `package`→`paquete`. Flutter MUST format server strings only and MUST NOT sum `line_total`s or recompute `total`. It MUST NOT show payment chips, Registrar, Corregir, or a POS table. Unknown versions MUST show `fallback_text` and MUST NOT run actions.
-
-#### Scenario: Summary card content
-- **WHEN** the renderer receives a `sale_summary@1` payload with Zanahoria `22.50` and Tomate `10.00` and `total.amount` `32.50`
-- **THEN** it MUST show both product names, both line totals, item count `2`, status ready to charge, and total `$32.50` without adding 22.50 + 10.00 on the client
-
-#### Scenario: Unknown version falls back
-- **WHEN** the payload is `sale_summary` version `2`
-- **THEN** Flutter MUST show `fallback_text` and MUST NOT execute actions
-
-### Requirement: Summary fits Inicio without redesign
-The summary MUST appear in the existing Inicio conversation stream as an assistant artifact: unbubbled, Lumo-mark gutter, warm canvas, max-width 420px. It MUST be a compact structured card, not a desktop table. Navigation and composer behavior MUST be unchanged.
-
-#### Scenario: Totalizar on Inicio
-- **WHEN** the signed-in Carrota user submits `totalizar` after a multi-item sale
-- **THEN** the stream MUST show the user bubble for that text and a Lumo-mark `sale_summary@1` card whose visible total matches the server payload

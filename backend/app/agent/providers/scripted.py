@@ -32,6 +32,20 @@ _UNIT_ONLY = re.compile(
     re.IGNORECASE,
 )
 _TOTALIZE_SYNONYMS = {"totalizar", "total", "el total"}
+_PAYMENT_PHRASES = {
+    "efectivo": "cash",
+    "pagar en efectivo": "cash",
+    "en efectivo": "cash",
+    "tarjeta": "card",
+    "pagar con tarjeta": "card",
+    "con tarjeta": "card",
+    "transferencia": "transfer",
+    "pagar por transferencia": "transfer",
+    "pagar con transferencia": "transfer",
+    "por transferencia": "transfer",
+}
+_PAYMENT_METHOD_CLARIFY = {"pagar", "cheque"}
+_PAYMENT_CLARIFICATION = "¿Cómo pagó? Puedo registrar *efectivo*, *tarjeta* o *transferencia*."
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,7 +93,20 @@ class ScriptedLLMProvider:
         allowed_tools: list[str],
     ) -> AgentDecision:
         _ = (context, allowed_tools)
-        if message.strip().lower() in _TOTALIZE_SYNONYMS:
+        normalized = message.strip().lower()
+        payment_method = _PAYMENT_PHRASES.get(normalized)
+        if payment_method is not None:
+            return AgentDecision(
+                intent="commit_sale",
+                payment_method=payment_method,  # type: ignore[arg-type]
+                candidate_tool="sale.commit@1",
+            )
+        if normalized in _PAYMENT_METHOD_CLARIFY:
+            return AgentDecision(
+                intent="unsupported",
+                clarification_question=_PAYMENT_CLARIFICATION,
+            )
+        if normalized in _TOTALIZE_SYNONYMS:
             return AgentDecision(
                 intent="totalize_sale",
                 candidate_tool="sale.totalize@1",

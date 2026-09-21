@@ -72,6 +72,7 @@ class GenerativeUIRenderer {
   static const known = <String, int>{
     'sale_item_added': 1,
     'sale_summary': 1,
+    'sale_confirmed': 1,
   };
 
   GenerativeUiRenderResult render(GenerativeUiContract contract) {
@@ -93,6 +94,9 @@ class GenerativeUIRenderer {
     }
     if (contract.component == 'sale_summary') {
       return SaleSummaryView(contract: contract);
+    }
+    if (contract.component == 'sale_confirmed') {
+      return SaleConfirmedView(contract: contract);
     }
     return SaleItemAddedView(contract: contract);
   }
@@ -306,5 +310,79 @@ class SaleSummaryView extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class SaleConfirmedView extends StatelessWidget {
+  const SaleConfirmedView({super.key, required this.contract});
+
+  final GenerativeUiContract contract;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = contract.data;
+    final count = '${data['item_count'] ?? ''}';
+    final total = SaleItemAddedView.formatAmount(data['total']);
+    final payment = Map<String, dynamic>.from(data['payment'] as Map? ?? const {});
+    final methodLabel = SaleConfirmedView.displayMethod('${payment['method'] ?? ''}');
+    final paymentAmount = SaleItemAddedView.formatAmount(payment['amount']);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: LumoMark(),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(contract.fallbackText, style: LumoTypography.body),
+              const SizedBox(height: 8),
+              LumoCard(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Align(
+                      alignment: Alignment.centerLeft,
+                      child: LumoStatusChip(label: 'Venta registrada'),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      '$total · $methodLabel',
+                      style: LumoTypography.metricSm,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '$count ${count == '1' ? 'artículo' : 'artículos'}',
+                      style: LumoTypography.caption,
+                    ),
+                    if (paymentAmount.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(paymentAmount, style: LumoTypography.caption),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String displayMethod(String method) {
+    switch (method) {
+      case 'cash':
+        return 'Efectivo';
+      case 'card':
+        return 'Tarjeta';
+      case 'transfer':
+        return 'Transferencia';
+      default:
+        return method;
+    }
   }
 }

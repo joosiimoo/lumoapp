@@ -16,12 +16,15 @@ CAT_002 = "CAT-002"
 SALE_001 = "SALE-001"
 SALE_002 = "SALE-002"
 SALE_003 = "SALE-003"
+SALE_004 = "SALE-004"
+PAY_001 = "PAY-001"
 
 REGISTERED_SLICE_TOOLS = {
     "catalog.resolve_product@1",
     "sale.start@1",
     "sale.add_item@1",
     "sale.totalize@1",
+    "sale.commit@1",
 }
 
 
@@ -118,6 +121,43 @@ class FoundationPolicyEngine:
                 decision=PolicyDecisionName.DENY,
                 rule_ids=[SALE_003],
                 reason_code="sale_empty",
+            )
+        if request.tool_id == "sale.commit@1":
+            method = arguments.get("payment_method")
+            if method not in {"cash", "card", "transfer"}:
+                return PolicyDecision(
+                    decision=PolicyDecisionName.CLARIFY,
+                    rule_ids=[PAY_001],
+                    reason_code="payment_method_unknown",
+                )
+            if "session_status" not in arguments:
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_004, PAY_001, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="payment_method_present",
+                )
+            if session_status == "ready_to_charge":
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_004, PAY_001, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="ready_to_charge_commit",
+                )
+            if session_status == "confirmed":
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_004, PAY_001, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="confirmed_read_back",
+                )
+            if session_status == "open":
+                return PolicyDecision(
+                    decision=PolicyDecisionName.DENY,
+                    rule_ids=[SALE_004],
+                    reason_code="sale_not_ready_to_charge",
+                )
+            return PolicyDecision(
+                decision=PolicyDecisionName.DENY,
+                rule_ids=[SALE_004],
+                reason_code="sale_not_found",
             )
         return PolicyDecision(
             decision=PolicyDecisionName.ALLOW,

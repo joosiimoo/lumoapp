@@ -1,44 +1,4 @@
-## Purpose
-
-Agent message API, registered catalog/sale tools including `sale.totalize@1` and `sale.commit@1`, policies, scripted local interpreter, and application workflows that resolve then commit start/reuse + add-item, totalize to `ready_to_charge`, or record payment to `confirmed`, each in one write transaction.
-
-## Requirements
-
-### Requirement: Agent message endpoint
-The API MUST expose `POST /api/v1/lumo/messages` under `/api/v1`. The body MUST accept `message` and MAY accept `conversation_id` and `client_context`. Inicio MUST send `conversation_id` on every request. The route MUST authenticate, derive `TenantContext` from the session, require `Idempotency-Key`, and propagate `X-Correlation-ID`. The handler MUST invoke the single `LumoOrchestrator` and MUST NOT contain catalog or pricing rules.
-
-#### Scenario: Authenticated send
-- **WHEN** a Carrota actor posts `{"message": "900gr zanahoria", "conversation_id": "<uuid>"}` with a valid session and idempotency key
-- **THEN** the orchestrator MUST run and the HTTP handler MUST NOT calculate `line_total`
-
-#### Scenario: Conversation id is forwarded
-- **WHEN** Inicio posts a message with a client-generated `conversation_id`
-- **THEN** the orchestrator context MUST include that same `conversation_id`
-
-### Requirement: AgentDecision extension for add-item
-`AgentDecision` MUST keep existing fields and MAY add optional `product_query`, `quantity` (decimal string), and `unit` (`gram` | `kilogram` | `unit` | `package`). Intent for this slice MUST be `add_sale_item` when those fields are present. `candidate_tool` MUST be a registered tool id or null. Invalid provider output MUST be discarded with no mutation.
-
-#### Scenario: Golden interpretation
-- **WHEN** the scripted interpreter receives `900gr zanahoria`
-- **THEN** `AgentDecision` MUST have `intent=add_sale_item`, `product_query` matching zanahoria, `quantity=900`, `unit=gram`, and `candidate_tool=sale.add_item@1`
-
-#### Scenario: Invalid decision discarded
-- **WHEN** the provider returns a payload that fails `AgentDecision`
-- **THEN** no tool MUST run and no `SaleItem` MUST be persisted
-
-### Requirement: LLM cannot mutate
-No `LLMProvider` implementation MUST write PostgreSQL, call repositories, or invoke tools. The orchestrator MUST validate the decision and request policy, then invoke the application workflow. Tool arguments MUST be revalidated server-side (`SEC-003`) from tenant, catalog, and parsed entities — not from model-supplied totals or product ids the catalog did not return.
-
-#### Scenario: Model total ignored
-- **WHEN** a decision includes a response hint or entity claiming total `99.00`
-- **THEN** persisted `line_total` MUST still be the backend value `22.50` MXN for the golden Zanahoria path
-
-### Requirement: Tool catalog.resolve_product@1
-`ToolRegistry` MUST register `catalog.resolve_product@1` as a read tool. Input MUST be `{ "query": string }`. Output MUST be `{ "match": "unique"|"ambiguous"|"none", "product": object|null, "candidates": array }`. Unique `product` MUST include `product_id`, `name`, `normalized_name`, `sale_unit`, `pricing_type`, `current_price` `{amount, currency}`, and `product_status`. Permission MUST be `sale.create`. Side effect MUST be `read`. Idempotency MUST NOT be required.
-
-#### Scenario: Resolve Zanahoria
-- **WHEN** the tool runs with `query=zanahoria` for the Carrota tenant
-- **THEN** `match` MUST be `unique` and `product.name` MUST be `Zanahoria`
+## MODIFIED Requirements
 
 ### Requirement: Tool sale.start@1
 `ToolRegistry` MUST register `sale.start@1` as a write tool. Input MUST be `{ "conversation_id": string|null }`. Output MUST be `{ "sale_session_id": uuid, "status": "open"|"ready_to_charge", "created": boolean, "item_count": integer }`. Output `status` MUST NOT be `confirmed`. A `confirmed` session is historical/inactive and MUST NOT be returned as the started or reused session. Permission MUST be `sale.create`. Idempotency MUST be required when start is invoked as its own public operation. When `conversation_id` is present, the tool MUST reuse the open session for `(business_id, actor_id, conversation_id)` and MUST persist that id on `SaleSession`. If a `ready_to_charge` session exists for that context, start MUST NOT create another session and MUST return that active session with `status=ready_to_charge` and `created=false` without treating it as reusable for add-item. If only a `confirmed` session exists for that context, start MUST create a new `open` session and MUST return `status=open` and `created=true`. When composed on the message path, start/reuse MUST participate in the workflow write transaction (see message-path transaction requirement) and MUST NOT commit an empty session before add-item.
@@ -62,21 +22,6 @@ No `LLMProvider` implementation MUST write PostgreSQL, call repositories, or inv
 #### Scenario: Start output never reports confirmed
 - **WHEN** `sale.start@1` runs against an `open` session, a `ready_to_charge` session, or a context whose only prior session is `confirmed`
 - **THEN** output `status` MUST be `open` or `ready_to_charge` and MUST NOT be `confirmed`
-
-### Requirement: Tool sale.add_item@1
-`ToolRegistry` MUST register `sale.add_item@1` as a write tool. Input MUST be `{ "sale_session_id": uuid, "product_id": uuid, "quantity": decimal-string, "unit": "gram"|"kilogram"|"unit"|"package" }`. Output MUST include `sale_session_id`, `sale_item_id`, `product_id`, `product_name`, `quantity_input`, `unit_input`, `quantity_normalized`, `unit_normalized`, `unit_price`, `line_total`, `session_item_count`, and `session_total` (money as decimal string plus `MXN`). Permission MUST be `sale.create`. Idempotency MUST be required when add-item is invoked as its own public operation. The tool MUST re-read the product, reject inactive/missing products, lock the session row when it exists, reject a session that is not `open`, normalize quantity, calculate `line_total`, persist, and audit. On the message path, those writes MUST share the workflow transaction with session create/reuse.
-
-#### Scenario: Add 900 grams of Zanahoria
-- **WHEN** the tool runs with the seeded Zanahoria `product_id`, `quantity=900`, and `unit=gram` on an open session
-- **THEN** it MUST persist `quantity_normalized=0.900`, `unit_normalized=kilogram`, `unit_price.amount=25.00`, `line_total.amount=22.50`, and an audit event in the same committed state
-
-#### Scenario: Replay identical add-item
-- **WHEN** the same tenant resubmits `sale.add_item@1` with the same idempotency key and payload hash
-- **THEN** the original item id and body MUST be returned and a second `SaleItem` MUST NOT be created
-
-#### Scenario: Add two Galleta A
-- **WHEN** the tool runs with the seeded Galleta A `product_id`, `quantity=2`, and `unit=unit` on an open session
-- **THEN** it MUST persist `quantity_normalized=2`, `unit_normalized=unit`, `unit_price.amount=12.00`, and `line_total.amount=24.00`
 
 ### Requirement: Orchestrator delegates; workflow owns the write transaction
 For intent `add_sale_item` with a resolvable product and a complete unit (explicit, or inferred only for `unit`/`package` products after unique resolve), the orchestrator MUST request interpretation and policy, then invoke the application add-item workflow. For intent `totalize_sale`, it MUST invoke `TotalizeSaleSession` and MUST NOT run add-item. For intent `commit_sale`, it MUST invoke `CommitSaleSession` and MUST NOT run add-item or totalize. It MUST NOT open ORM sessions or database transactions. The add-item workflow MUST: (1) run `catalog.resolve_product@1` as a read **before** any write transaction; (2) if unique and the session is `open` or absent (including when only `confirmed` sessions exist), open one write transaction that **locks** the existing active `SaleSession` when present (`SELECT ... FOR UPDATE`), re-reads status, creates or reuses the open session only if still open, and inserts the `SaleItem` using `sale.start@1` / `sale.add_item@1` semantics without an intervening commit; (3) write audit, outbox, and the message-level idempotency record in that same transaction; (4) compose `sale_item_added@1` only after commit. If the locked session is `ready_to_charge` (CASE A), it MUST deny under `SALE-002` without writing an item and MUST NOT start a second lookup in that same request to create a new sale. If that lookup finds no active session because a concurrent commit already confirmed (CASE B), the same request MAY create a new `open` session. If resolve is ambiguous or none, or policy is not `allow`, it MUST clarify or deny without opening the write transaction. Committing `sale.start@1` before `sale.add_item@1` on this path is forbidden.
@@ -146,66 +91,6 @@ Local and test runtimes MUST use a non-vendor interpreter that can produce a val
 - **WHEN** the scripted interpreter receives `pagar en efectivo`
 - **THEN** `AgentDecision` MUST have `intent=commit_sale`, `payment_method=cash`, and `candidate_tool=sale.commit@1`
 
-### Requirement: Pending missing-unit clarification
-When a message yields an unequivocal product query and quantity but no unit, the runtime MUST ask only for the unit and MUST store those parsed fields keyed by `(business_id, actor_id, conversation_id)`. Inicio MUST use its stable client UUID as `conversation_id` (not null). It MUST NOT create a `SaleSession` or `SaleItem` on that turn. A later unit-only reply in the same scope (`gr`, `g`, `gramos`, `kg`, `kilogramo`, `kilogramos`) MUST reuse the pending product and quantity and complete the normal add-item workflow against the same `conversation_id`. A new complete add-item utterance MUST replace pending state. This MUST NOT be general-purpose memory and MUST NOT create schema `memory`.
-
-#### Scenario: Two-turn 900 zanahoria then gr
-- **WHEN** a Carrota actor posts `"900 zanahoria"` and then `"gr"` with the same `conversation_id`
-- **THEN** the first response MUST clarify with no session or item, and the second MUST persist exactly one open `SaleSession` with that `conversation_id` and one `SaleItem` for 0.900 kg Zanahoria at `22.50` MXN
-
-#### Scenario: Unit-only without pending state
-- **WHEN** the actor posts `"gr"` with no pending missing-unit clarification for that `conversation_id`
-- **THEN** the runtime MUST clarify and MUST NOT persist a sale
-
-### Requirement: Local seed at API boot
-When `APP_ENV=local`, API startup MUST run the idempotent Carrota seed (Zanahoria, Tomate, Galleta A) and commit it. Tests MUST call the same seed helper explicitly. Staging and production MUST NOT insert that seed automatically.
-
-#### Scenario: Local boot seeds catalog
-- **WHEN** the API starts with `APP_ENV=local` against a migrated database
-- **THEN** business Carrota and active products Zanahoria, Tomate, and Galleta A MUST exist for that tenant with the seed prices
-
-### Requirement: AgentDecision extension for totalize
-`AgentDecision` MUST keep existing add-item fields. Intent `totalize_sale` MUST be used for approved totalize synonyms. `candidate_tool` MUST be `sale.totalize@1` or null. Invalid provider output MUST still be discarded with no mutation.
-
-#### Scenario: Golden totalize interpretation
-- **WHEN** the scripted interpreter receives `el total`
-- **THEN** `AgentDecision` MUST have `intent=totalize_sale` and `candidate_tool=sale.totalize@1`
-
-### Requirement: Tool sale.totalize@1
-`ToolRegistry` MUST register `sale.totalize@1` as a write tool. Input MUST be `{ "conversation_id": string|null }`. Output MUST include `sale_session_id`, `status` (`ready_to_charge`), `item_count`, `currency`, `subtotal`, `total`, and `items` (each with product name, normalized quantity, canonical unit, unit price, and line total). Permission MUST be `sale.create`. Idempotency MUST be required for the **transition** when totalize is invoked as its own public operation. On the message path, a transitioning totalize, audit, outbox, and message idempotency MUST share one application-owned write transaction after locking the session row. The tool MUST lock the active session for the interaction context, then:
-
-- if `status=open` and at least one `SaleItem` exists: sum persisted line totals with Decimal, persist `ready_to_charge`, write transition audit and `sale.ready_to_charge` outbox, complete `lumo.message.totalize_sale`, and MUST NOT record payment;
-- if `status=ready_to_charge`: return the current summary as a stable read-back with no status change, no second outbox, no transition audit, and no new idempotency record;
-- if no session or zero items: deny without mutation.
-
-`SALE-003` MUST apply `open` + ≥1 item to the **transition** only. Compose `sale_summary@1` after commit on the transition path, and from current persisted items on the read-back path.
-
-#### Scenario: Totalize open session
-- **WHEN** `sale.totalize@1` runs for an open Carrota session with Zanahoria `22.50` and Tomate `10.00`
-- **THEN** it MUST persist `status=ready_to_charge`, return `total.amount=32.50`, write `sale.totalize@1` audit, and enqueue `sale.ready_to_charge`
-
-#### Scenario: Totalize already ready is a stable read-back
-- **WHEN** totalize runs again for a session that is already `ready_to_charge` with a different idempotency key
-- **THEN** status MUST stay `ready_to_charge`, item rows MUST be unchanged, a second `sale.ready_to_charge` outbox event MUST NOT be written, a second transition audit MUST NOT be written, and no new `lumo.message.totalize_sale` idempotency row MUST be created
-
-### Requirement: Count-product unit completion after resolve
-When interpretation has an unequivocal product query and positive quantity but no unit, the add-item workflow MUST resolve the product as a read before asking. If the unique product `sale_unit` is `unit` or `package`, the workflow MUST complete add-item using that `sale_unit` and MUST NOT ask for a mass unit. If the unique product `sale_unit` is `kilogram`, the workflow MUST keep existing missing-unit clarification and MUST NOT infer `kilogram`. The interpreter MUST NOT write the database.
-
-#### Scenario: Two Galleta A without explicit unit
-- **WHEN** a Carrota actor posts `2 galletas A` on an open or absent session
-- **THEN** Galleta A MUST be added with `unit=unit`, `quantity_normalized=2`, and `line_total.amount=24.00`
-
-#### Scenario: Two Zanahoria still asks for unit
-- **WHEN** a Carrota actor posts `2 zanahoria`
-- **THEN** the system MUST ask only for the unit, MUST NOT persist a `SaleItem`, and MUST NOT treat quantity `2` as kilograms
-
-### Requirement: Clarification inside an active sale
-Missing-unit clarification MUST continue to work while a sale is `open`. Unequivocal fields MUST be preserved, only the missing field MUST be asked, and nothing MUST be written until resolved. The completed item MUST attach to the existing open session for that `conversation_id`.
-
-#### Scenario: 500 tomate then gr
-- **WHEN** an open session already exists and the actor posts `500 tomate` then `gr` with the same `conversation_id`
-- **THEN** the first response MUST clarify with no new item, and the second MUST persist Tomate `0.500` kg at `10.00` MXN on that same session
-
 ### Requirement: Policies for session state
 `PolicyEngine` MUST evaluate `SALE-002` (add-item only while `open`), `SALE-003` (totalize transition vs read-back), `SALE-004` (commit transition vs read-back), and `PAY-001` (explicit method from the closed enum; do not infer cash) in addition to the existing slice policies. `SALE-004` MUST require `ready_to_charge` **to allow the status transition**. `SALE-004` MUST allow a `confirmed` commit only as a stable read-back/no-op. Commit against `open` or missing sale MUST be blocked. Registered `sale.commit@1` MUST be executable only through this policy path.
 
@@ -225,16 +110,7 @@ Missing-unit clarification MUST continue to work while a sale is `open`. Unequiv
 - **WHEN** commit is evaluated against an `open` session
 - **THEN** the decision MUST NOT be `allow` under `SALE-004` and no `Payment` MUST persist
 
-### Requirement: Dev and debug surfaces are local/test only
-`GET /api/v1/dev/carrota-token` MUST be unavailable in staging and production. Header `X-Debug-Fail-After-Write` MUST force a write rollback only when `APP_ENV` is `local` or `test`; it MUST be ignored otherwise.
-
-#### Scenario: Dev token rejected outside local/test
-- **WHEN** `APP_ENV` is `staging` or `production` and a client calls `GET /api/v1/dev/carrota-token`
-- **THEN** the API MUST NOT issue a token (`FORBIDDEN`)
-
-#### Scenario: Debug fail header ignored in production
-- **WHEN** `APP_ENV` is `production` and `POST /api/v1/lumo/messages` includes `X-Debug-Fail-After-Write: 1`
-- **THEN** a successful golden add-item MUST still commit
+## ADDED Requirements
 
 ### Requirement: AgentDecision extension for commit
 `AgentDecision` MUST keep existing add-item and totalize fields and MAY add optional `payment_method` (`cash` | `card` | `transfer`). Intent `commit_sale` MUST be used for approved payment phrases. `candidate_tool` MUST be `sale.commit@1` or null. Invalid provider output MUST still be discarded with no mutation.

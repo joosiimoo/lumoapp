@@ -14,11 +14,18 @@ from app.domain.sales.quantity import (
     parse_quantity,
 )
 from app.domain.sales.session import (
+    CommitKind,
+    PaymentMethod,
+    PaymentSource,
+    PaymentStatus,
     SaleItem,
     SaleSessionStatus,
     TotalizeKind,
     can_add_item,
+    can_commit,
+    classify_commit,
     classify_totalize,
+    payment_amount_matches_total,
     sum_session_total,
 )
 from app.domain.shared.errors import UnitNotSupportedError, ValidationAppError
@@ -51,6 +58,25 @@ def test_line_total_rejects_float() -> None:
 def test_items_only_while_open() -> None:
     assert can_add_item(SaleSessionStatus.OPEN) is True
     assert can_add_item(SaleSessionStatus.READY_TO_CHARGE) is False
+    assert can_add_item(SaleSessionStatus.CONFIRMED) is False
+
+
+def test_payment_enums() -> None:
+    assert {member.value for member in PaymentMethod} == {"cash", "card", "transfer"}
+    assert PaymentStatus.RECORDED.value == "recorded"
+    assert PaymentSource.MANUAL_CAPTURE.value == "manual_capture"
+    assert SaleSessionStatus.CONFIRMED.value == "confirmed"
+
+
+def test_commit_only_from_ready_to_charge() -> None:
+    assert can_commit(SaleSessionStatus.READY_TO_CHARGE) is True
+    assert can_commit(SaleSessionStatus.OPEN) is False
+    assert can_commit(SaleSessionStatus.CONFIRMED) is False
+    assert can_commit(None) is False
+    assert classify_commit(SaleSessionStatus.READY_TO_CHARGE, confirmed_exists=False) is CommitKind.TRANSITION
+    assert classify_commit(SaleSessionStatus.OPEN, confirmed_exists=False) is CommitKind.NOT_READY
+    assert classify_commit(None, confirmed_exists=True) is CommitKind.READ_BACK
+    assert classify_commit(None, confirmed_exists=False) is CommitKind.NOT_FOUND
 
 
 def test_totalize_transition_requires_open_with_items() -> None:
@@ -82,3 +108,5 @@ def test_session_total_is_derived_sum() -> None:
     assert two.to_json() == {"amount": "32.50", "currency": "MXN"}
     three = sum_session_total([_item("22.50"), _item("10.00"), _item("24.00")])
     assert three.to_json() == {"amount": "56.50", "currency": "MXN"}
+    assert payment_amount_matches_total(three, [_item("22.50"), _item("10.00"), _item("24.00")]) is True
+    assert payment_amount_matches_total(Money(Decimal("10.00"), "MXN"), [_item("22.50")]) is False
