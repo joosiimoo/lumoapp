@@ -168,7 +168,7 @@ class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "sale_sessions"
     __table_args__ = (
         Index("ix_sale_sessions_business_id", "business_id"),
-        CheckConstraint("status IN ('open')", name="ck_sale_sessions_status"),
+        CheckConstraint("status IN ('open', 'ready_to_charge')", name="ck_sale_sessions_status"),
         {"schema": "sales"},
     )
 

@@ -10,8 +10,13 @@ import 'package:lumo/core/env/app_config.dart';
 import 'package:lumo/core/session/session_store.dart';
 import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/widgets/lumo_card.dart';
+import 'package:lumo/lumo/widgets/lumo_chips.dart';
 
-Map<String, dynamic> _goldenContract({String lineTotal = '22.50'}) {
+Map<String, dynamic> _goldenContract({
+  String lineTotal = '22.50',
+  int sessionItemCount = 1,
+  String sessionTotal = '22.50',
+}) {
   return {
     'component': 'sale_item_added',
     'version': 1,
@@ -25,11 +30,50 @@ Map<String, dynamic> _goldenContract({String lineTotal = '22.50'}) {
       'unit_normalized': 'kilogram',
       'unit_price': {'amount': '25.00', 'currency': 'MXN'},
       'line_total': {'amount': lineTotal, 'currency': 'MXN'},
-      'session_item_count': 1,
-      'session_total': {'amount': lineTotal, 'currency': 'MXN'},
+      'session_item_count': sessionItemCount,
+      'session_total': {'amount': sessionTotal, 'currency': 'MXN'},
     },
     'actions': [],
     'fallback_text': 'Agregué 0.900 kg de Zanahoria · \$$lineTotal',
+  };
+}
+
+Map<String, dynamic> _summaryContract({
+  String total = '32.50',
+  String zanahoriaLine = '22.50',
+  String tomateLine = '10.00',
+}) {
+  return {
+    'component': 'sale_summary',
+    'version': 1,
+    'data': {
+      'sale_session_id': 'sess',
+      'status': 'ready_to_charge',
+      'currency': 'MXN',
+      'item_count': 2,
+      'subtotal': {'amount': total, 'currency': 'MXN'},
+      'total': {'amount': total, 'currency': 'MXN'},
+      'items': [
+        {
+          'sale_item_id': 'i1',
+          'product_name': 'Zanahoria',
+          'quantity_normalized': '0.900',
+          'unit_normalized': 'kilogram',
+          'unit_price': {'amount': '25.00', 'currency': 'MXN'},
+          'line_total': {'amount': zanahoriaLine, 'currency': 'MXN'},
+        },
+        {
+          'sale_item_id': 'i2',
+          'product_name': 'Tomate',
+          'quantity_normalized': '0.500',
+          'unit_normalized': 'kilogram',
+          'unit_price': {'amount': '20.00', 'currency': 'MXN'},
+          'line_total': {'amount': tomateLine, 'currency': 'MXN'},
+        },
+      ],
+    },
+    'actions': [],
+    'fallback_text': 'Venta lista para cobrar · 2 artículos · \$$total',
   };
 }
 
@@ -106,13 +150,54 @@ void main() {
     expect(find.text('Zanahoria'), findsOneWidget);
     expect(find.text('0.900 kg · \$25.00/kg'), findsOneWidget);
     expect(find.textContaining('\$22.50'), findsWidgets);
+    expect(find.textContaining('1 artículo'), findsOneWidget);
     expect(find.textContaining('kilogram'), findsNothing);
     expect(find.byType(LumoCard), findsOneWidget);
   });
 
+  testWidgets('add-item card shows server session totals without summing lines', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson(
+      _goldenContract(lineTotal: '22.50', sessionItemCount: 2, sessionTotal: '99.00'),
+    );
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.textContaining('2 artículos'), findsOneWidget);
+    expect(find.textContaining('\$99.00'), findsWidgets);
+    expect(find.textContaining('\$32.50'), findsNothing);
+  });
+
+  testWidgets('sale_summary renders payload totals without adding line totals', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson(_summaryContract(total: '99.00'));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('Zanahoria'), findsOneWidget);
+    expect(find.text('Tomate'), findsOneWidget);
+    expect(find.textContaining('\$22.50'), findsWidgets);
+    expect(find.textContaining('\$10.00'), findsWidgets);
+    expect(find.textContaining('\$99.00'), findsWidgets);
+    expect(find.textContaining('\$32.50'), findsNothing);
+    expect(find.text('Lista para cobrar'), findsOneWidget);
+    expect(find.textContaining('2 artículos'), findsWidgets);
+    expect(find.byType(LumoStatusChip), findsOneWidget);
+    expect(find.text('Registrar'), findsNothing);
+    expect(find.text('Corregir'), findsNothing);
+  });
+
+  test('unknown version of sale_summary falls back', () {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._summaryContract(),
+      'version': 2,
+      'fallback_text': 'Resumen no disponible',
+    });
+    expect(renderer.render(contract).handled, isFalse);
+    expect(renderer.canRunActions(contract), isFalse);
+    expect(renderer.render(contract).text, 'Resumen no disponible');
+  });
+
   testWidgets('renderer displays payload line total even when it is not 0.900 × 25', (tester) async {
     const renderer = GenerativeUIRenderer();
-    final contract = GenerativeUiContract.fromJson(_goldenContract(lineTotal: '99.00'));
+    final contract = GenerativeUiContract.fromJson(_goldenContract(lineTotal: '99.00', sessionTotal: '99.00'));
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
     expect(find.textContaining('\$99.00'), findsWidgets);
     expect(find.textContaining('\$22.50'), findsNothing);
@@ -223,6 +308,49 @@ void main() {
     expect(conversationIds[0], isNotEmpty);
     expect(conversationIds[1], conversationIds[0]);
     expect(find.text('Zanahoria'), findsOneWidget);
+  });
+
+  testWidgets('totalizar posts the same conversation_id and renders summary', (tester) async {
+    final conversationIds = <String>[];
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET') {
+        return _sessionOk();
+      }
+      conversationIds.add(jsonDecode(request.body)['conversation_id'] as String);
+      final message = jsonDecode(request.body)['message'] as String;
+      if (message == 'totalizar') {
+        return _json({
+          'message_id': 'm2',
+          'status': 'completed',
+          'text': 'Venta lista para cobrar · 2 artículos · \$32.50',
+          'ui': [_summaryContract()],
+          'correlation_id': 'c2',
+        });
+      }
+      return _json({
+        'message_id': 'm1',
+        'status': 'completed',
+        'text': 'Agregué 0.900 kg de Zanahoria · \$22.50',
+        'ui': [_goldenContract()],
+        'correlation_id': 'c1',
+      });
+    });
+    await tester.pumpWidget(LumoApp(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      apiClient: _client(httpClient),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '900gr zanahoria');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'totalizar');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    expect(conversationIds, hasLength(2));
+    expect(conversationIds[1], conversationIds[0]);
+    expect(find.text('totalizar'), findsOneWidget);
+    expect(find.text('Lista para cobrar'), findsOneWidget);
+    expect(find.textContaining('\$32.50'), findsWidgets);
   });
 
   testWidgets('whitespace Enter does not send', (tester) async {

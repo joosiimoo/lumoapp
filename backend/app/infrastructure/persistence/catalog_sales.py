@@ -106,19 +106,48 @@ class SalesRepository:
         self._session = session
 
     def get_open_session(self, *, tenant: TenantContext, conversation_id: str | None) -> SaleSession | None:
+        return self.get_active_session(tenant=tenant, conversation_id=conversation_id, for_update=False)
+
+    def get_active_session(
+        self,
+        *,
+        tenant: TenantContext,
+        conversation_id: str | None,
+        for_update: bool = False,
+    ) -> SaleSession | None:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)
         stmt = select(SaleSessionRow).where(
             SaleSessionRow.business_id == tenant.business_id,
             SaleSessionRow.actor_id == tenant.actor_id,
-            SaleSessionRow.status == SaleSessionStatus.OPEN.value,
+            SaleSessionRow.status.in_(
+                (SaleSessionStatus.OPEN.value, SaleSessionStatus.READY_TO_CHARGE.value)
+            ),
         )
         if conversation_id:
             stmt = stmt.where(SaleSessionRow.conversation_id == conversation_id)
         else:
             stmt = stmt.where(SaleSessionRow.conversation_id.is_(None))
+        if for_update:
+            stmt = stmt.with_for_update()
         row = self._session.scalar(stmt)
         return _to_session(row) if row is not None else None
+
+    def update_session_status(
+        self,
+        *,
+        tenant: TenantContext,
+        sale_session_id: UUID,
+        status: SaleSessionStatus,
+    ) -> SaleSession:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.get(SaleSessionRow, sale_session_id)
+        if row is None or row.business_id != tenant.business_id:
+            raise ValidationAppError("sale session not found")
+        row.status = status.value
+        self._session.flush()
+        return _to_session(row)
 
     def add_session(self, *, tenant: TenantContext, session: SaleSession) -> SaleSession:
         tenant = _require_tenant(tenant)
@@ -160,10 +189,12 @@ class SalesRepository:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)
         rows = self._session.scalars(
-            select(SaleItemRow).where(
+            select(SaleItemRow)
+            .where(
                 SaleItemRow.business_id == tenant.business_id,
                 SaleItemRow.sale_session_id == sale_session_id,
             )
+            .order_by(SaleItemRow.created_at.asc(), SaleItemRow.id.asc())
         ).all()
         return [_to_item(row) for row in rows]
 

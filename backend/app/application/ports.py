@@ -32,6 +32,15 @@ class IdempotencyService(Protocol):
         request_hash: str,
     ) -> dict[str, Any] | None: ...
 
+    def peek(
+        self,
+        *,
+        tenant: TenantContext,
+        operation_type: str,
+        key: str,
+        request_hash: str,
+    ) -> dict[str, Any] | None: ...
+
     def complete(
         self,
         *,
@@ -51,6 +60,22 @@ class CatalogPort(Protocol):
 
 class SalesPort(Protocol):
     def get_open_session(self, *, tenant: TenantContext, conversation_id: str | None) -> Any: ...
+
+    def get_active_session(
+        self,
+        *,
+        tenant: TenantContext,
+        conversation_id: str | None,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def update_session_status(
+        self,
+        *,
+        tenant: TenantContext,
+        sale_session_id: UUID,
+        status: Any,
+    ) -> Any: ...
 
     def add_session(self, *, tenant: TenantContext, session: Any) -> Any: ...
 

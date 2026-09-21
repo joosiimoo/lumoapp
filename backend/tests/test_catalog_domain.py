@@ -66,3 +66,28 @@ def test_ambiguous_alias_match() -> None:
 def test_invalid_pairing_rejected() -> None:
     with pytest.raises(ValidationAppError):
         require_valid_pairing(SaleUnit.KILOGRAM, PricingType.PER_UNIT)
+
+
+def _count_product(*, name: str) -> Product:
+    return Product(
+        id=uuid4(),
+        business_id=uuid4(),
+        name=name,
+        normalized_name=normalize_product_name(name),
+        sale_unit=SaleUnit.UNIT,
+        pricing_type=PricingType.PER_UNIT,
+        current_price=Money(Decimal("12.00"), "MXN"),
+        status=ProductStatus.ACTIVE,
+    )
+
+
+def test_galleta_alias_resolves_uniquely() -> None:
+    galleta = _count_product(name="Galleta A")
+    aliases = [ProductAlias(product_id=galleta.id, normalized_alias="galletas a")]
+    by_name = resolve_products("galleta a", [galleta], aliases)
+    by_alias = resolve_products("galletas a", [galleta], aliases)
+    papa = resolve_products("papa", [galleta], aliases)
+    assert by_name.match is ProductMatch.UNIQUE
+    assert by_alias.match is ProductMatch.UNIQUE
+    assert by_alias.product is galleta
+    assert papa.match is ProductMatch.NONE

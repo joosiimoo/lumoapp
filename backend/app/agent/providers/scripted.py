@@ -31,6 +31,7 @@ _UNIT_ONLY = re.compile(
     r"^\s*(?P<unit>gramos?|gr|g|kilogramos?|kilogramo|kilos?|kg)\s*$",
     re.IGNORECASE,
 )
+_TOTALIZE_SYNONYMS = {"totalizar", "total", "el total"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +79,11 @@ class ScriptedLLMProvider:
         allowed_tools: list[str],
     ) -> AgentDecision:
         _ = (context, allowed_tools)
+        if message.strip().lower() in _TOTALIZE_SYNONYMS:
+            return AgentDecision(
+                intent="totalize_sale",
+                candidate_tool="sale.totalize@1",
+            )
         parsed = parse_sale_utterance(message)
         if parsed is None:
             return AgentDecision(

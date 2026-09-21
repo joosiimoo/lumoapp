@@ -66,3 +66,15 @@ class UnitNotSupportedError(AppError):
     code = "UNIT_NOT_SUPPORTED"
     http_status = 422
     retryable = False
+
+
+class SaleNotOpenError(AppError):
+    code = "SALE_NOT_OPEN"
+    http_status = 409
+    retryable = False
+
+
+class SaleEmptyError(AppError):
+    code = "SALE_EMPTY"
+    http_status = 409
+    retryable = False

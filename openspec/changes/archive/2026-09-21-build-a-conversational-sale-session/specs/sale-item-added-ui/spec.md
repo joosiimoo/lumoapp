@@ -1,45 +1,4 @@
-## Purpose
-
-Versioned `sale_item_added@1` contract, backend composition after committed add-item, and Flutter rendering on Inicio.
-
-## Requirements
-
-### Requirement: Register sale_item_added@1
-`GenerativeUIRegistry` MUST register component `sale_item_added` version `1`. `GenerativeUIComposer` MUST emit this contract only after a committed `sale.add_item@1` and MUST refuse unknown components. The backend MUST NOT render Flutter widgets or HTML.
-
-The contract MUST be:
-
-```json
-{
-  "component": "sale_item_added",
-  "version": 1,
-  "data": {
-    "sale_session_id": "<uuid>",
-    "sale_item_id": "<uuid>",
-    "product_name": "Zanahoria",
-    "quantity_input": "900",
-    "unit_input": "gram",
-    "quantity_normalized": "0.900",
-    "unit_normalized": "kilogram",
-    "unit_price": {"amount": "25.00", "currency": "MXN"},
-    "line_total": {"amount": "22.50", "currency": "MXN"},
-    "session_item_count": 1,
-    "session_total": {"amount": "22.50", "currency": "MXN"}
-  },
-  "actions": [],
-  "fallback_text": "Agregué 0.900 kg de Zanahoria · $22.50"
-}
-```
-
-`actions` MUST be empty for this contract. Money MUST be decimal strings plus `MXN`. `fallback_text` MUST be server-provided and MUST contain the confirmed product and line total.
-
-#### Scenario: Composer emits after commit
-- **WHEN** `sale.add_item@1` has committed the golden Zanahoria item
-- **THEN** the agent response `ui` MUST include exactly one `sale_item_added` version `1` payload whose `data.line_total.amount` is `22.50`
-
-#### Scenario: Unregistered component still refused
-- **WHEN** the composer is asked to emit `sale_confirmed_card@1`
-- **THEN** the backend MUST refuse to include it
+## MODIFIED Requirements
 
 ### Requirement: Flutter maps sale_item_added@1
 Flutter `GenerativeUIRenderer` MUST register `sale_item_added` version `1`. It MUST render using existing Lumo visual language: `LumoCard` / product-row pattern from the design system (accent thumbnail, name, user-facing quantity and unit price, right-aligned subtotal), wrapped with the Lumo mark gutter. Canonical payload fields `quantity_normalized`, `unit_normalized`, and `unit_price` MUST remain server values. Display labels MUST be `kilogram`→`kg`, `gram`→`g`, `unit`→`unidad`, `package`→`paquete`. The visible golden detail line MUST be `0.900 kg · $25.00/kg`. The card MUST also display server-provided `session_item_count` and `session_total` so the accumulated sale is visible after each add. Flutter MUST format those server strings only and MUST NOT recompute line or session totals. It MUST NOT show payment chips, Registrar, Corregir, or a POS form. Unknown versions MUST show `fallback_text` and MUST NOT run actions. The JSON contract version MUST remain `1`; existing fields MUST keep their meaning.

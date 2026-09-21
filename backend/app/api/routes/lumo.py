@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.agent.orchestrator import FoundationOrchestrator
 from app.api.dependencies import get_correlation_id, get_db, get_tenant
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
+from app.application.workflows.totalize_sale_session import TotalizeSaleSession
 from app.domain.shared.errors import ForbiddenError, ValidationAppError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
@@ -48,19 +49,32 @@ def post_lumo_message(
 ) -> dict:
     if not idempotency_key:
         raise ValidationAppError("Idempotency-Key is required")
+    catalog = CatalogRepository(session)
+    sales = SalesRepository(session)
+    identities = IdentityRepository(session)
+    audit = SqlAlchemyAuditService(session)
+    idempotency = SqlAlchemyIdempotencyService(session)
+    outbox = SqlAlchemyOutbox(session)
     workflow = AddCatalogSaleItem(
-        catalog=CatalogRepository(session),
-        sales=SalesRepository(session),
-        identities=IdentityRepository(session),
-        audit=SqlAlchemyAuditService(session),
-        idempotency=SqlAlchemyIdempotencyService(session),
-        outbox=SqlAlchemyOutbox(session),
+        catalog=catalog,
+        sales=sales,
+        identities=identities,
+        audit=audit,
+        idempotency=idempotency,
+        outbox=outbox,
+    )
+    totalize = TotalizeSaleSession(
+        sales=sales,
+        audit=audit,
+        idempotency=idempotency,
+        outbox=outbox,
     )
     orchestrator = FoundationOrchestrator(
         provider=request.app.state.llm_provider,
         tools=request.app.state.tool_registry,
         policies=request.app.state.policies,
         workflow=workflow,
+        totalize=totalize,
         ui_composer=request.app.state.generative_ui_composer,
         pending=getattr(request.app.state, "pending_clarifications", None),
     )

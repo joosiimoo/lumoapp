@@ -6,10 +6,11 @@ from app.agent.contracts import AgentDecision
 from app.agent.generative_ui import GenerativeUIComposer, GenerativeUIContract, GenerativeUIRegistry
 from app.agent.orchestrator import FoundationOrchestrator, validate_decision_payload
 from app.agent.providers.fake import FakeLLMProvider, inspect_llm_provider_contract
+from app.agent.providers.scripted import ScriptedLLMProvider
 from app.agent.tools import ToolRegistry
 from app.application.workflows.outcomes import EmptyOutcomeEngine, OutcomeStatus
 from app.policies import PolicyDecisionName, PolicyRequest
-from app.policies.engine import SEC_002, FoundationPolicyEngine
+from app.policies.engine import SALE_002, SALE_003, SEC_002, FoundationPolicyEngine
 import inspect
 
 from app.agent.contracts import LLMProvider
@@ -94,3 +95,68 @@ class _BrokenProvider(FakeLLMProvider):
 class _ToolHappyProvider(FakeLLMProvider):
     def interpret(self, message, context, allowed_tools):  # type: ignore[no-untyped-def]
         return AgentDecision(intent="sale.create", candidate_tool="sale.commit@1")
+
+
+def test_sale_002_denies_add_item_when_ready_to_charge() -> None:
+    engine = FoundationPolicyEngine()
+    decision = engine.evaluate(
+        PolicyRequest(
+            action="execute_tool",
+            tool_id="sale.add_item@1",
+            tool_registered=True,
+            arguments={"session_status": "ready_to_charge", "quantity": "1"},
+        )
+    )
+    assert decision.decision is PolicyDecisionName.DENY
+    assert SALE_002 in decision.rule_ids
+
+
+def test_sale_003_blocks_empty_and_allows_ready_read_back() -> None:
+    engine = FoundationPolicyEngine()
+    empty = engine.evaluate(
+        PolicyRequest(
+            action="execute_tool",
+            tool_id="sale.totalize@1",
+            tool_registered=True,
+            arguments={"session_status": "open", "item_count": 0},
+        )
+    )
+    assert empty.decision is PolicyDecisionName.DENY
+    assert SALE_003 in empty.rule_ids
+    ready = engine.evaluate(
+        PolicyRequest(
+            action="execute_tool",
+            tool_id="sale.totalize@1",
+            tool_registered=True,
+            arguments={"session_status": "ready_to_charge", "item_count": 2},
+        )
+    )
+    assert ready.decision is PolicyDecisionName.ALLOW
+    assert SALE_003 in ready.rule_ids
+    transition = engine.evaluate(
+        PolicyRequest(
+            action="execute_tool",
+            tool_id="sale.totalize@1",
+            tool_registered=True,
+            arguments={"session_status": "open", "item_count": 2},
+        )
+    )
+    assert transition.decision is PolicyDecisionName.ALLOW
+    assert SALE_003 in transition.rule_ids
+
+
+def test_scripted_interpreter_totalize_synonyms_and_missing_unit() -> None:
+    provider = ScriptedLLMProvider()
+    for message in ("totalizar", "TOTAL", " El total "):
+        decision = provider.interpret(message, {}, ["sale.totalize@1"])
+        assert decision.intent == "totalize_sale"
+        assert decision.candidate_tool == "sale.totalize@1"
+    cobrar = provider.interpret("cobrar", {}, ["sale.totalize@1"])
+    pagar = provider.interpret("pagar", {}, ["sale.totalize@1"])
+    assert cobrar.intent != "totalize_sale"
+    assert pagar.intent != "totalize_sale"
+    missing = provider.interpret("2 galletas A", {}, ["sale.add_item@1"])
+    assert missing.intent == "add_sale_item"
+    assert missing.unit is None
+    assert "unit" in missing.missing_fields
+    assert missing.product_query == "galletas a"

@@ -57,6 +57,32 @@ class SqlAlchemyIdempotencyService:
             return None
         return None
 
+    def peek(
+        self,
+        *,
+        tenant: TenantContext,
+        operation_type: str,
+        key: str,
+        request_hash: str,
+    ) -> dict[str, Any] | None:
+        existing = self._session.scalar(
+            select(IdempotencyRecordRow).where(
+                IdempotencyRecordRow.business_id == tenant.business_id,
+                IdempotencyRecordRow.operation_type == operation_type,
+                IdempotencyRecordRow.key == key,
+            )
+        )
+        if existing is None:
+            return None
+        if existing.request_hash != request_hash:
+            raise IdempotencyConflictError("Idempotency key reused with a different payload")
+        if existing.status == "completed" and existing.response_body is not None:
+            return {
+                "status_code": existing.response_status or 200,
+                "body": existing.response_body,
+            }
+        return None
+
     def complete(
         self,
         *,

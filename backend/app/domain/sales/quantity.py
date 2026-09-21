@@ -48,7 +48,7 @@ def format_normalized_quantity(quantity: Decimal, unit: SaleUnit) -> str:
     if unit is SaleUnit.KILOGRAM:
         quantized = quantity.quantize(Decimal("0.001"))
         return f"{quantized:.3f}"
-    return format(quantity, "f")
+    return format(quantity.normalize(), "f")
 
 
 def calculate_line_total(quantity_normalized: Decimal, unit_price: Money) -> Money:

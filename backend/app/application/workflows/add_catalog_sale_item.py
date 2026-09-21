@@ -6,22 +6,24 @@ from typing import Any
 
 from app.agent.contracts import AgentDecision
 from app.application.ports import AuditService, CatalogPort, IdempotencyService, IdentityPort, Outbox, SalesPort
-from app.domain.catalog import ProductMatch
+from app.domain.catalog import ProductMatch, SaleUnit
 from app.domain.sales import (
     InputUnit,
     SaleItem,
     SaleSession,
     SaleSessionStatus,
     calculate_line_total,
+    can_add_item,
     format_normalized_quantity,
     normalize_quantity,
     parse_quantity,
+    sum_session_total,
 )
 from app.domain.shared.errors import ProductNotFoundError
 from app.domain.shared.ids import new_uuid7
-from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
-from app.policies import PolicyDecision
+from app.policies import PolicyDecision, PolicyDecisionName, PolicyRequest
+from app.policies.engine import FoundationPolicyEngine
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +52,7 @@ class AddCatalogSaleItem:
         self._audit = audit
         self._idempotency = idempotency
         self._outbox = outbox
+        self._policies = FoundationPolicyEngine()
 
     def execute(
         self,
@@ -63,6 +66,28 @@ class AddCatalogSaleItem:
         fail_after_write: bool = False,
         raw_message: str = "",
     ) -> AddItemWorkflowResult:
+        existing = self._sales.get_active_session(
+            tenant=tenant,
+            conversation_id=conversation_id,
+            for_update=True,
+        )
+        if existing is not None:
+            gate = self._policies.evaluate(
+                PolicyRequest(
+                    action="execute_tool",
+                    tool_id="sale.add_item@1",
+                    tool_registered=True,
+                    from_llm=True,
+                    arguments={"session_status": existing.status.value, "quantity": decision.quantity},
+                )
+            )
+            if gate.decision is PolicyDecisionName.DENY or not can_add_item(existing.status):
+                return AddItemWorkflowResult(
+                    kind="deny",
+                    text="Esta venta ya está lista para cobrar. No puedo agregar más artículos.",
+                    payload={"code": "SALE_NOT_OPEN"},
+                )
+
         resolved = self._catalog.resolve(tenant=tenant, query=decision.product_query or "")
         if resolved.match is ProductMatch.AMBIGUOUS:
             return AddItemWorkflowResult(
@@ -81,6 +106,22 @@ class AddCatalogSaleItem:
                 text="No encontré ese producto en el catálogo.",
                 payload={"match": "none"},
             )
+
+        if decision.unit is None:
+            if resolved.product.sale_unit in {SaleUnit.UNIT, SaleUnit.PACKAGE}:
+                decision = decision.model_copy(
+                    update={
+                        "unit": resolved.product.sale_unit.value,
+                        "missing_fields": [],
+                        "candidate_tool": "sale.add_item@1",
+                    }
+                )
+            else:
+                return AddItemWorkflowResult(
+                    kind="clarify_unit",
+                    text="¿En qué unidad está esa cantidad? Por ejemplo gramos o kilogramos.",
+                    payload={"missing_fields": ["unit"]},
+                )
 
         request_hash = sha256(
             f"{raw_message}|{conversation_id or ''}|{decision.quantity}|{decision.unit}|{decision.product_query}".encode()
@@ -104,7 +145,6 @@ class AddCatalogSaleItem:
         quantity_normalized, unit_normalized = normalize_quantity(quantity, unit, product.sale_unit)
         line_total = calculate_line_total(quantity_normalized, product.current_price)
         business = self._identities.get_business(tenant)
-        existing = self._sales.get_open_session(tenant=tenant, conversation_id=conversation_id)
         created = existing is None
         if existing is None:
             session = self._sales.add_session(
@@ -120,6 +160,12 @@ class AddCatalogSaleItem:
             )
         else:
             session = existing
+            if not can_add_item(session.status):
+                return AddItemWorkflowResult(
+                    kind="deny",
+                    text="Esta venta ya está lista para cobrar. No puedo agregar más artículos.",
+                    payload={"code": "SALE_NOT_OPEN"},
+                )
 
         item = self._sales.add_item(
             tenant=tenant,
@@ -138,7 +184,7 @@ class AddCatalogSaleItem:
             ),
         )
         items = self._sales.list_items(tenant=tenant, sale_session_id=session.id)
-        session_total = _money_sum(items)
+        session_total = sum_session_total(items, currency=session.currency)
         add_payload = {
             "sale_session_id": str(session.id),
             "sale_item_id": str(item.id),
@@ -194,13 +240,3 @@ class AddCatalogSaleItem:
             body=body,
         )
         return AddItemWorkflowResult(kind="committed", text=text, payload=body)
-
-
-def _money_sum(items: list[SaleItem]) -> Money:
-    if not items:
-        return Money("0.00", "MXN")
-    total = items[0].line_total.amount
-    currency = items[0].line_total.currency
-    for item in items[1:]:
-        total = total + item.line_total.amount
-    return Money(total, currency)

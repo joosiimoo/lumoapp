@@ -10,7 +10,11 @@ from starlette.exceptions import HTTPException
 from app.agent.generative_ui import GenerativeUIComposer, GenerativeUIRegistry
 from app.agent.orchestrator import FoundationOrchestrator
 from app.agent.providers.scripted import ScriptedLLMProvider
-from app.agent.registrations import register_conversational_sale_tools, register_sale_item_added_ui
+from app.agent.registrations import (
+    register_conversational_sale_tools,
+    register_sale_item_added_ui,
+    register_sale_summary_ui,
+)
 from app.agent.tools import ToolRegistry
 from app.api.middleware import CorrelationMiddleware
 from app.api.routes.health import router as health_router
@@ -45,6 +49,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_conversational_sale_tools(tools)
     ui_registry = GenerativeUIRegistry()
     register_sale_item_added_ui(ui_registry)
+    register_sale_summary_ui(ui_registry)
     policies = build_policy_engine()
     provider = ScriptedLLMProvider()
     orchestrator = FoundationOrchestrator(

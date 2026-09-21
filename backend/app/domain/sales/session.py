@@ -13,6 +13,13 @@ from app.domain.shared.money import Money
 
 class SaleSessionStatus(StrEnum):
     OPEN = "open"
+    READY_TO_CHARGE = "ready_to_charge"
+
+
+class TotalizeKind(StrEnum):
+    TRANSITION = "transition"
+    READ_BACK = "read_back"
+    EMPTY = "empty"
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,3 +47,27 @@ class SaleItem:
     unit_normalized: SaleUnit
     unit_price: Money
     line_total: Money
+
+
+def can_add_item(status: SaleSessionStatus) -> bool:
+    return status is SaleSessionStatus.OPEN
+
+
+def classify_totalize(status: SaleSessionStatus | None, item_count: int) -> TotalizeKind:
+    if status is None or item_count < 1:
+        return TotalizeKind.EMPTY
+    if status is SaleSessionStatus.READY_TO_CHARGE:
+        return TotalizeKind.READ_BACK
+    if status is SaleSessionStatus.OPEN:
+        return TotalizeKind.TRANSITION
+    return TotalizeKind.EMPTY
+
+
+def sum_session_total(items: list[SaleItem], *, currency: str = "MXN") -> Money:
+    if not items:
+        return Money("0.00", currency)
+    total = items[0].line_total.amount
+    code = items[0].line_total.currency
+    for item in items[1:]:
+        total = total + item.line_total.amount
+    return Money(total, code)

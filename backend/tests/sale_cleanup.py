@@ -20,7 +20,9 @@ from app.infrastructure.persistence.models import (
 )
 from app.infrastructure.persistence.rls import set_current_business_id
 
-SALE_AUDIT_ACTIONS = ("sale.start@1", "sale.add_item@1")
+SALE_AUDIT_ACTIONS = ("sale.start@1", "sale.add_item@1", "sale.totalize@1")
+SALE_OUTBOX_EVENTS = ("sale.item.added", "sale.ready_to_charge")
+SALE_MESSAGE_OPERATIONS = ("lumo.message.add_sale_item", "lumo.message.totalize_sale")
 SALE_OUTBOX_EVENT = "sale.item.added"
 SALE_MESSAGE_OPERATION = "lumo.message.add_sale_item"
 
@@ -32,13 +34,13 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(
         OutboxEventRow.__table__.delete().where(
             OutboxEventRow.business_id == business_id,
-            OutboxEventRow.event_type == SALE_OUTBOX_EVENT,
+            OutboxEventRow.event_type.in_(SALE_OUTBOX_EVENTS),
         )
     )
     session.execute(
         IdempotencyRecordRow.__table__.delete().where(
             IdempotencyRecordRow.business_id == business_id,
-            IdempotencyRecordRow.operation_type == SALE_MESSAGE_OPERATION,
+            IdempotencyRecordRow.operation_type.in_(SALE_MESSAGE_OPERATIONS),
         )
     )
     session.execute(
@@ -64,13 +66,15 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
     for event in session.scalars(
         select(OutboxEventRow).where(
             OutboxEventRow.business_id == business_id,
-            OutboxEventRow.event_type == SALE_OUTBOX_EVENT,
+            OutboxEventRow.event_type.in_(SALE_OUTBOX_EVENTS),
         )
     ).all():
         payload = event.payload or {}
         sid = payload.get("sale_session_id")
         iid = payload.get("sale_item_id")
-        if sid not in session_ids or iid not in item_ids:
+        if sid and sid not in session_ids:
+            orphans.append(f"outbox:{event.id}:session={sid}:item={iid}")
+        if iid and iid not in item_ids:
             orphans.append(f"outbox:{event.id}:session={sid}:item={iid}")
     for event in session.scalars(
         select(AuditEventRow).where(

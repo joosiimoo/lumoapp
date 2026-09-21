@@ -11,15 +11,21 @@ from app.domain.catalog import PricingType, Product, ProductStatus, SaleUnit, no
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.catalog_sales import CatalogRepository
-from app.infrastructure.persistence.models import BusinessRow, MembershipRow, ProductRow, UserRow
+from app.infrastructure.persistence.models import BusinessRow, MembershipRow, ProductAliasRow, ProductRow, UserRow
 from app.infrastructure.persistence.rls import set_current_business_id
 
 CARROTA_NAME = "Carrota"
 ZANAHORIA_NAME = "Zanahoria"
+TOMATE_NAME = "Tomate"
+GALLETA_A_NAME = "Galleta A"
 ZANAHORIA_PRICE = Decimal("25.00")
+TOMATE_PRICE = Decimal("20.00")
+GALLETA_A_PRICE = Decimal("12.00")
 CARROTA_BUSINESS_ID = UUID("01900000-0000-7000-8000-000000000001")
 CARROTA_OWNER_ID = UUID("01900000-0000-7000-8000-000000000002")
 ZANAHORIA_PRODUCT_ID = UUID("01900000-0000-7000-8000-000000000003")
+TOMATE_PRODUCT_ID = UUID("01900000-0000-7000-8000-000000000004")
+GALLETA_A_PRODUCT_ID = UUID("01900000-0000-7000-8000-000000000005")
 
 
 def ensure_carrota_seed(session: Session, *, token_secret: str | None = None) -> tuple[TenantContext, str | None]:
@@ -64,6 +70,54 @@ def ensure_carrota_seed(session: Session, *, token_secret: str | None = None) ->
                 current_price=Money(ZANAHORIA_PRICE, "MXN"),
                 status=ProductStatus.ACTIVE,
             ),
+        )
+        session.flush()
+    catalog = CatalogRepository(session)
+    tomate = session.get(ProductRow, TOMATE_PRODUCT_ID)
+    if tomate is None:
+        catalog.add(
+            tenant=tenant,
+            product=Product(
+                id=TOMATE_PRODUCT_ID,
+                business_id=CARROTA_BUSINESS_ID,
+                name=TOMATE_NAME,
+                normalized_name=normalize_product_name(TOMATE_NAME),
+                sale_unit=SaleUnit.KILOGRAM,
+                pricing_type=PricingType.PER_KILOGRAM,
+                current_price=Money(TOMATE_PRICE, "MXN"),
+                status=ProductStatus.ACTIVE,
+            ),
+        )
+        session.flush()
+    galleta = session.get(ProductRow, GALLETA_A_PRODUCT_ID)
+    if galleta is None:
+        catalog.add(
+            tenant=tenant,
+            product=Product(
+                id=GALLETA_A_PRODUCT_ID,
+                business_id=CARROTA_BUSINESS_ID,
+                name=GALLETA_A_NAME,
+                normalized_name=normalize_product_name(GALLETA_A_NAME),
+                sale_unit=SaleUnit.UNIT,
+                pricing_type=PricingType.PER_UNIT,
+                current_price=Money(GALLETA_A_PRICE, "MXN"),
+                status=ProductStatus.ACTIVE,
+            ),
+        )
+        session.flush()
+    alias = session.scalar(
+        select(ProductAliasRow).where(
+            ProductAliasRow.business_id == CARROTA_BUSINESS_ID,
+            ProductAliasRow.product_id == GALLETA_A_PRODUCT_ID,
+            ProductAliasRow.normalized_alias == "galletas a",
+        )
+    )
+    if alias is None:
+        catalog.add_alias(
+            tenant=tenant,
+            product_id=GALLETA_A_PRODUCT_ID,
+            alias="galletas a",
+            normalized_alias=normalize_product_name("galletas a"),
         )
         session.flush()
     token = None

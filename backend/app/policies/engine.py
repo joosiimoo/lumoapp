@@ -14,11 +14,14 @@ INTP_002 = "INTP-002"
 CAT_001 = "CAT-001"
 CAT_002 = "CAT-002"
 SALE_001 = "SALE-001"
+SALE_002 = "SALE-002"
+SALE_003 = "SALE-003"
 
 REGISTERED_SLICE_TOOLS = {
     "catalog.resolve_product@1",
     "sale.start@1",
     "sale.add_item@1",
+    "sale.totalize@1",
 }
 
 
@@ -82,6 +85,39 @@ class FoundationPolicyEngine:
                 decision=PolicyDecisionName.DENY,
                 rule_ids=[CAT_002],
                 reason_code="unit_not_supported",
+            )
+        session_status = arguments.get("session_status")
+        if request.tool_id == "sale.add_item@1" and session_status is not None:
+            if session_status != "open":
+                return PolicyDecision(
+                    decision=PolicyDecisionName.DENY,
+                    rule_ids=[SALE_002],
+                    reason_code="sale_not_open",
+                )
+        if request.tool_id == "sale.totalize@1" and (
+            "session_status" in arguments or "item_count" in arguments
+        ):
+            item_count = arguments.get("item_count") or 0
+            try:
+                count = int(item_count)
+            except (TypeError, ValueError):
+                count = 0
+            if session_status == "ready_to_charge":
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_003, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="ready_to_charge_read_back",
+                )
+            if session_status == "open" and count >= 1:
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_003, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="open_session_with_items",
+                )
+            return PolicyDecision(
+                decision=PolicyDecisionName.DENY,
+                rule_ids=[SALE_003],
+                reason_code="sale_empty",
             )
         return PolicyDecision(
             decision=PolicyDecisionName.ALLOW,
