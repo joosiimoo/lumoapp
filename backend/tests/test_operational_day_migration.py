@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, text
 from app.bootstrap.settings import get_settings
 from app.domain.shared.ids import new_uuid7
 from tests.conftest import DEFAULT_ADMIN_URL, DEFAULT_APP_URL, TEST_SECRET, postgres_available, settings_kwargs
+from tests.sale_cleanup import isolate_database_for_0007_downgrade
 from app.bootstrap.settings import Settings
 
 BACKEND = Path(__file__).resolve().parents[1]
@@ -56,6 +57,7 @@ def admin_engine():
     engine = _engine()
     cfg = _config()
     command.upgrade(cfg, "head")
+    isolate_database_for_0007_downgrade(engine)
     command.downgrade(cfg, "0004_confirmed_payment")
     try:
         yield engine
@@ -194,7 +196,7 @@ def test_legacy_backfill_from_0004(admin_engine) -> None:
     with admin_engine.begin() as connection:
         seeded = _insert_legacy(connection, timezone_name="America/Mexico_City")
     command.upgrade(_config(), "head")
-    assert _revision(admin_engine) == "0006_cash_count"
+    assert _revision(admin_engine) == "0007_daily_close_confirmation"
     business_id = seeded["business_id"]
     with admin_engine.begin() as connection:
         connection.execute(

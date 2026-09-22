@@ -20,6 +20,7 @@ context: |
   - Change `build-a-sale-payment-and-completion` is archived and complete.
   - Change `build-a-operational-day-foundation` is archived and complete.
   - Change `build-a-daily-close-foundation` is archived and complete.
+  - Change `build-a-daily-close-confirmation` is archived and complete.
   - There is no active OpenSpec change.
   - Baseline OpenSpec specs under openspec/specs/ include foundation capabilities
     (backend-platform, persistence, tenant-isolation, integrity-foundation,
@@ -27,14 +28,17 @@ context: |
     sales-session-foundation, conversational-sale-runtime, sale-item-added-ui,
     conversational-sale-session, sale-summary-ui, sale-payment,
     sale-confirmed-ui, operational-day-foundation, operational-day-summary-ui,
-    cash-count-foundation, daily-close-preparation, and daily-close-preparation-ui.
+    cash-count-foundation, daily-close-preparation, daily-close-preparation-ui,
+    closing-snapshot-foundation, daily-close-confirmation, and
+    daily-close-confirmed-ui.
   - Registered tools: `catalog.resolve_product@1`, `sale.start@1`,
     `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`,
     `operational_day.summary@1`, `closing.submit_cash_count@1`,
-    `closing.prepare@1`.
+    `closing.prepare@1`, `closing.confirm@1`.
     Registered UI: `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`,
-    `operational_day_summary@1`, `daily_close_preparation@1`.
-    `closing.confirm@1` and `closing.reopen@1` are NOT registered.
+    `operational_day_summary@1`, `daily_close_preparation@1`,
+    `daily_close_confirmed@1`.
+    `closing.reopen@1` is NOT registered.
   - `SaleSession.status` is `open`, `ready_to_charge`, or `confirmed`.
     `ready_to_charge` is a pre-payment state. `confirmed` is operational completion
     with one recorded `Payment` in `sales.payments`.
@@ -54,11 +58,18 @@ context: |
     default host mappings to 5433.
   - Foundation schemas present: identity, audit, platform
   - Product schemas present: catalog, sales, operations
-  - Schema `operations` holds `operational_days` and `cash_counts`
+  - Schema `operations` holds `operational_days`, `cash_counts`, and
+    `closing_snapshots`
   - Product schemas still absent: workflow, memory
-  - Daily Close confirmation is not implemented. `OperationalDay.status` is `open`
-    only. Cash counts and close preparation exist; the close is never confirmed,
-    and `cash_difference` is always derived, never stored.
+  - Daily Close confirmation is implemented. `OperationalDay.status` is `open`
+    or `closed`. Only `closing.confirm@1` moves a day from `open` to `closed`.
+    A closed day has exactly one immutable `ClosingSnapshot`. Short and over
+    may close. `closing.reopen@1` is not implemented.
+  - The cardinality validator saves `app.current_business_id`, sets the
+    affected tenant locally, and restores the caller. On PostgreSQL 16.14 a
+    previously unset custom GUC restores to `''` via `SET LOCAL ... TO DEFAULT`.
+    `NULL` and `''` both mean no active tenant. A caller UUID is restored
+    exactly. RLS is not changed to match `''`.
   - The API image installs Alpine `tzdata` so stdlib `zoneinfo` can resolve the business IANA timezone. The domain does not hardcode a zone.
   - Money: numeric/Decimal only; never binary float; server-side deterministic calc
   - IDs: UUIDv7; timestamps timestamptz UTC; operational date in business timezone

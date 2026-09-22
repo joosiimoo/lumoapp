@@ -16,6 +16,7 @@ from app.bootstrap.settings import Settings, get_settings
 from app.domain.shared.ids import new_uuid7
 from app.infrastructure.persistence.models import CashCountRow
 from tests.conftest import DEFAULT_ADMIN_URL, DEFAULT_APP_URL, TEST_SECRET, postgres_available, settings_kwargs
+from tests.sale_cleanup import isolate_database_for_0007_downgrade
 
 BACKEND = Path(__file__).resolve().parents[1]
 CONFIRMED_AT = datetime(2026, 1, 15, 18, 0, 0, tzinfo=UTC)
@@ -51,6 +52,7 @@ def at_0005():
     engine = _engine()
     cfg = _config()
     command.upgrade(cfg, "head")
+    isolate_database_for_0007_downgrade(engine)
     command.downgrade(cfg, "0005_operational_day")
     try:
         yield engine
@@ -226,7 +228,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
         ).scalar_one()
         seeded = _seed_day_with_cash_sale(connection)
     command.upgrade(_config(), "head")
-    assert _revision(at_0005) == "0006_cash_count"
+    assert _revision(at_0005) == "0007_daily_close_confirmation"
     business_id = seeded["business_id"]
     with at_0005.begin() as connection:
         _tenant(connection, business_id)
@@ -292,6 +294,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
         assert "ck_cash_counts_amount_non_negative" in str(negative.value)
         connection.rollback()
 
+    isolate_database_for_0007_downgrade(at_0005)
     command.downgrade(_config(), "0005_operational_day")
     assert _revision(at_0005) == "0005_operational_day"
     with at_0005.begin() as connection:
@@ -312,7 +315,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
             {"b": business_id},
         ).scalar_one() == 1
     command.upgrade(_config(), "head")
-    assert _revision(at_0005) == "0006_cash_count"
+    assert _revision(at_0005) == "0007_daily_close_confirmation"
 
 
 def test_supersede_constraints_are_composite_and_correctly_deferred(at_head) -> None:

@@ -8,11 +8,26 @@ import 'package:lumo/features/inicio/inicio_page.dart';
 import 'package:lumo/features/memoria/memoria_page.dart';
 import 'package:lumo/features/negocio/negocio_page.dart';
 import 'package:lumo/features/onboarding/onboarding_page.dart';
+import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/tokens.dart';
 import 'package:lumo/lumo/widgets/lumo_composer.dart';
 import 'package:lumo/lumo/widgets/lumo_scaffold.dart';
 import 'package:lumo/lumo/widgets/lumo_bottom_navigation.dart';
 import 'package:uuid/uuid.dart';
+
+/// Keeps the latest non-null preparation token. A null token or a confirmed card clears it.
+String? nextConfirmationToken(List<GenerativeUiContract> ui, String? current) {
+  var token = current;
+  for (final contract in ui) {
+    if (contract.component == 'daily_close_confirmed') {
+      token = null;
+    } else if (contract.component == 'daily_close_preparation') {
+      final value = contract.data['confirmation_token'];
+      token = value is String && value.isNotEmpty ? value : null;
+    }
+  }
+  return token;
+}
 
 class LumoApp extends StatelessWidget {
   const LumoApp({super.key, required this.config, this.apiClient});
@@ -60,6 +75,7 @@ class _LumoHomeState extends State<LumoHome> {
   bool _sending = false;
   String? _pendingOperation;
   String? _businessName;
+  String? _confirmationToken;
   late final String _conversationId;
 
   @override
@@ -113,12 +129,14 @@ class _LumoHomeState extends State<LumoHome> {
         text,
         operation: operation,
         conversationId: _conversationId,
+        confirmationToken: _confirmationToken,
       );
       if (!mounted) {
         return;
       }
       setState(() {
         _inicio.add(InicioTurn.assistant(response.text, response.ui));
+        _confirmationToken = nextConfirmationToken(response.ui, _confirmationToken);
         _sending = false;
         _pendingOperation = null;
       });

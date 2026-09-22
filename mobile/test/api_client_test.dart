@@ -99,4 +99,37 @@ void main() {
     expect(keys[0], isNotEmpty);
     expect(keys[1], keys[0]);
   });
+
+  test('postMessage echoes a confirmation token and never puts it in the message', () async {
+    String? body;
+    final httpClient = MockClient((request) async {
+      body = request.body;
+      return http.Response(
+        jsonEncode({
+          'message_id': 'm-close',
+          'status': 'completed',
+          'text': 'ok',
+          'ui': [],
+          'correlation_id': 'c-close',
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    final client = LumoApiClient(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      session: SessionStore()..accessToken = 'tok',
+      httpClient: httpClient,
+    );
+    await client.postMessage(
+      'confirmar cierre',
+      operation: 'lumo.message.send.1',
+      conversationId: 'conv-close',
+      confirmationToken: 'header.payload.sig',
+    );
+    final decoded = jsonDecode(body!) as Map<String, dynamic>;
+    expect(decoded['message'], 'confirmar cierre');
+    expect(decoded['client_context'], {'confirmation_token': 'header.payload.sig'});
+    expect(decoded['message'].toString().contains('header.payload.sig'), isFalse);
+  });
 }

@@ -82,10 +82,18 @@ class LumoApiClient {
     String message, {
     required String operation,
     required String conversationId,
+    String? confirmationToken,
   }) async {
+    final body = <String, dynamic>{
+      'message': message,
+      'conversation_id': conversationId,
+    };
+    if (confirmationToken != null) {
+      body['client_context'] = {'confirmation_token': confirmationToken};
+    }
     final decoded = await post(
       '/api/v1/lumo/messages',
-      body: {'message': message, 'conversation_id': conversationId},
+      body: body,
       operation: operation,
     );
     return LumoMessageResponse.fromJson(decoded);

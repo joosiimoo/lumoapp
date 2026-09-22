@@ -83,7 +83,12 @@ def test_registered_tools_include_commit_and_start_never_confirmed() -> None:
     assert registry.is_registered("sale.add_item@1")
     assert registry.is_registered("sale.totalize@1")
     assert registry.is_registered("sale.commit@1")
-    assert registry.get("closing.confirm@1") is None
+    confirm = registry.get("closing.confirm@1")
+    assert confirm is not None
+    assert confirm.policy_id == "CLOSE-003"
+    assert confirm.side_effect == "write"
+    assert confirm.requires_idempotency is True
+    assert registry.get("closing.reopen@1") is None
     assert START_SALE.output_schema["properties"]["status"]["enum"] == ["open", "ready_to_charge"]
     assert "confirmed" not in START_SALE.output_schema["properties"]["status"]["enum"]
     from app.agent.registrations import COMMIT_SALE

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import UUID
 
 from pydantic import ValidationError
 
@@ -9,16 +10,24 @@ from app.agent.contracts import AgentDecision, AgentResponse, LLMProvider
 from app.agent.generative_ui import GenerativeUIComposer, GenerativeUIContract
 from app.agent.tools import ToolRegistry
 from app.application.pending import InMemoryPendingClarificationStore
+from app.application.closing_confirmation_token import issue_closing_confirmation_token
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
 from app.application.workflows.commit_sale_session import CommitSaleSession
+from app.application.workflows.confirm_daily_close import ConfirmDailyClose
 from app.application.workflows.get_daily_close_preparation import (
+    CASH_COUNT_REQUIRED_TEXT,
+    NO_OPEN_DAY_TEXT,
     GetDailyClosePreparation,
+    confirmed_ui_data,
+    fingerprint_for_preparation,
     preparation_ui_data,
+    request_close_text,
 )
 from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
 from app.application.workflows.record_cash_count import RecordCashCount
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
 from app.domain.shared.tenant import TenantContext
+from app.infrastructure.persistence.base import utcnow
 from app.policies import PolicyEngine, PolicyRequest
 
 
@@ -37,6 +46,8 @@ class FoundationOrchestrator:
     day_summary: GetOperationalDaySummary | None = None
     record_cash_count: RecordCashCount | None = None
     close_preparation: GetDailyClosePreparation | None = None
+    confirm_close: ConfirmDailyClose | None = None
+    token_secret: str = ""
     ui_composer: GenerativeUIComposer | None = None
     pending: InMemoryPendingClarificationStore | None = None
 
@@ -58,6 +69,12 @@ class FoundationOrchestrator:
 
         if decision.intent == "record_cash_count" or decision.candidate_tool == "closing.submit_cash_count@1":
             return self._handle_cash_count(decision, message, context, tenant, conversation_id)
+
+        if decision.intent == "request_close":
+            return self._handle_request_close(decision, context, tenant)
+
+        if decision.intent == "confirm_close" or decision.candidate_tool == "closing.confirm@1":
+            return self._handle_confirm_close(decision, message, context, tenant, conversation_id)
 
         if decision.intent == "close_preparation" or decision.candidate_tool == "closing.prepare@1":
             return self._handle_close_preparation(decision, context, tenant)
@@ -384,7 +401,101 @@ class FoundationOrchestrator:
         if self.close_preparation is None or tenant is None:
             return AgentResponse(text="That action is not available.", ui=[])
         payload = self.close_preparation.execute(tenant=tenant, now=context.get("now"))
+        if payload.get("day_status") == "closed":
+            return AgentResponse(text=payload["text"], ui=self._confirmed_ui(payload))
         return AgentResponse(text=payload["text"], ui=self._preparation_ui(payload))
+
+    def _handle_request_close(
+        self,
+        decision: AgentDecision,
+        context: dict[str, Any],
+        tenant: TenantContext | None,
+    ) -> AgentResponse:
+        registered = self.tools.is_registered("closing.prepare@1")
+        policy = self.policies.evaluate(
+            PolicyRequest(
+                action="execute_tool",
+                tool_id="closing.prepare@1",
+                tool_registered=registered,
+                from_llm=True,
+                arguments={},
+            )
+        )
+        if not registered or policy.decision.value == "deny":
+            return AgentResponse(
+                text=decision.clarification_question or "That action is not available.",
+                ui=[],
+            )
+        if self.close_preparation is None or tenant is None:
+            return AgentResponse(text="That action is not available.", ui=[])
+        payload = self.close_preparation.execute(tenant=tenant, now=context.get("now"))
+        if payload.get("day_status") == "closed":
+            return AgentResponse(text=payload["text"], ui=self._confirmed_ui(payload))
+        if payload.get("operational_day_id") is None:
+            return AgentResponse(text=NO_OPEN_DAY_TEXT, ui=self._preparation_ui(payload))
+        if payload.get("cash_count_id") is None or payload.get("cash_status") == "not_counted":
+            return AgentResponse(text=CASH_COUNT_REQUIRED_TEXT, ui=self._preparation_ui(payload))
+        issued_at = context.get("now") or utcnow()
+        fingerprint = fingerprint_for_preparation(payload, business_id=tenant.business_id)
+        payload = dict(payload)
+        payload["confirmation_token"] = issue_closing_confirmation_token(
+            secret=self.token_secret,
+            business_id=tenant.business_id,
+            actor_id=tenant.actor_id,
+            operational_day_id=UUID(str(payload["operational_day_id"])),
+            cash_count_id=UUID(str(payload["cash_count_id"])),
+            fingerprint=fingerprint,
+            issued_at=issued_at,
+        )
+        text = request_close_text(payload)
+        payload["text"] = text
+        return AgentResponse(text=text, ui=self._preparation_ui(payload))
+
+    def _handle_confirm_close(
+        self,
+        decision: AgentDecision,
+        message: str,
+        context: dict[str, Any],
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+    ) -> AgentResponse:
+        client_context = context.get("client_context") or {}
+        confirmation_token = client_context.get("confirmation_token")
+        if not isinstance(confirmation_token, str):
+            confirmation_token = None
+        registered = self.tools.is_registered("closing.confirm@1")
+        policy = self.policies.evaluate(
+            PolicyRequest(
+                action="execute_tool",
+                tool_id="closing.confirm@1",
+                tool_registered=registered,
+                from_llm=True,
+                arguments={"confirmation_token": confirmation_token} if confirmation_token else {},
+            )
+        )
+        if not registered or policy.decision.value == "deny":
+            return AgentResponse(
+                text=decision.clarification_question or "That action is not available.",
+                ui=[],
+            )
+        if self.confirm_close is None or tenant is None:
+            return AgentResponse(text="That action is not available.", ui=[])
+        result = self.confirm_close.execute(
+            tenant=tenant,
+            conversation_id=conversation_id,
+            confirmation_token=confirmation_token,
+            idempotency_key=context["idempotency_key"],
+            correlation_id=context.get("correlation_id", "unknown"),
+            policy=policy,
+            fail_after_write=bool(context.get("fail_after_write")),
+            raw_message=message,
+            now=context.get("now"),
+        )
+        if result.kind == "stale":
+            return AgentResponse(text=result.text, ui=self._preparation_ui(result.payload))
+        if result.kind in {"committed", "read_back", "replay"} and result.payload.get("day_status") == "closed":
+            return AgentResponse(text=result.text, ui=self._confirmed_ui(result.payload))
+        return AgentResponse(text=result.text, ui=[])
 
     def _preparation_ui(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
         if self.ui_composer is None:
@@ -393,6 +504,18 @@ class FoundationOrchestrator:
             component="daily_close_preparation",
             version=1,
             data=preparation_ui_data(payload),
+            actions=[],
+            fallback_text=payload["text"],
+        )
+        return [self.ui_composer.compose(contract)]
+
+    def _confirmed_ui(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if self.ui_composer is None:
+            return []
+        contract = GenerativeUIContract(
+            component="daily_close_confirmed",
+            version=1,
+            data=confirmed_ui_data(payload),
             actions=[],
             fallback_text=payload["text"],
         )

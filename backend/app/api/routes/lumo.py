@@ -10,6 +10,7 @@ from app.agent.orchestrator import FoundationOrchestrator
 from app.api.dependencies import get_correlation_id, get_db, get_tenant
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
 from app.application.workflows.commit_sale_session import CommitSaleSession
+from app.application.workflows.confirm_daily_close import ConfirmDailyClose
 from app.application.workflows.get_daily_close_preparation import GetDailyClosePreparation
 from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
 from app.application.workflows.record_cash_count import RecordCashCount
@@ -94,6 +95,14 @@ def post_lumo_message(
         outbox=outbox,
     )
     close_preparation = GetDailyClosePreparation(identities=identities, operations=operations)
+    confirm_close = ConfirmDailyClose(
+        identities=identities,
+        operations=operations,
+        audit=audit,
+        idempotency=idempotency,
+        outbox=outbox,
+        token_secret=request.app.state.settings.dev_token_secret,
+    )
     orchestrator = FoundationOrchestrator(
         provider=request.app.state.llm_provider,
         tools=request.app.state.tool_registry,
@@ -104,6 +113,8 @@ def post_lumo_message(
         day_summary=day_summary,
         record_cash_count=record_cash_count,
         close_preparation=close_preparation,
+        confirm_close=confirm_close,
+        token_secret=request.app.state.settings.dev_token_secret,
         ui_composer=request.app.state.generative_ui_composer,
         pending=getattr(request.app.state, "pending_clarifications", None),
     )

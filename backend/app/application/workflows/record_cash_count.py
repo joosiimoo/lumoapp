@@ -11,7 +11,7 @@ from app.application.workflows.get_daily_close_preparation import (
     build_close_preparation,
     business_date_now,
 )
-from app.domain.operations import CashCount, CashCountSource, parse_counted_amount
+from app.domain.operations import CashCount, CashCountSource, OperationalDayStatus, parse_counted_amount
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.operations import OperationsRepository
@@ -102,6 +102,13 @@ class RecordCashCount:
                 kind="clarify",
                 text=NO_DAY_TEXT,
                 payload={"code": "OPERATIONAL_DAY_NOT_STARTED", "reason_code": gate.reason_code},
+            )
+
+        if day.status is OperationalDayStatus.CLOSED:
+            return RecordCashCountResult(
+                kind="clarify",
+                text="La jornada de hoy ya está cerrada. No puedo cambiar el conteo.",
+                payload={"code": "OPERATIONAL_DAY_CLOSED", "reason_code": "operational_day_closed"},
             )
 
         # E. Expected cash under the lock.

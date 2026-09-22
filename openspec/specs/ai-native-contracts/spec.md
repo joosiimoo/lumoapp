@@ -1,6 +1,6 @@
 ## Purpose
 
-AI-native ports for Build A: LLM provider, orchestrator, tool registry, policy engine, outcome engine, and split generative UI (backend compose, Flutter render). Registered product tools are `catalog.resolve_product@1`, `sale.start@1`, `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`, `operational_day.summary@1`, `closing.submit_cash_count@1`, and `closing.prepare@1`. Registered UI contracts are `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`, `operational_day_summary@1`, and `daily_close_preparation@1`. `closing.confirm`, `closing.reopen`, export, and payment-resolve tools remain unregistered.
+AI-native ports for Build A: LLM provider, orchestrator, tool registry, policy engine, outcome engine, and split generative UI (backend compose, Flutter render). Registered product tools are `catalog.resolve_product@1`, `sale.start@1`, `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`, `operational_day.summary@1`, `closing.submit_cash_count@1`, `closing.prepare@1`, and `closing.confirm@1`. Registered UI contracts are `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`, `operational_day_summary@1`, `daily_close_preparation@1`, and `daily_close_confirmed@1`. `closing.reopen`, export, and payment-resolve tools remain unregistered.
 
 ## Requirements
 
@@ -34,7 +34,7 @@ Build A MUST expose exactly one `LumoOrchestrator` port. The orchestrator MAY lo
 - **THEN** it MUST contain a single orchestrator composition root and MUST NOT define independent agent runtimes
 
 ### Requirement: ToolRegistry contract
-`ToolRegistry` MUST be a closed catalog of versioned tools. Each registration MUST declare id, version, input schema, output schema, required permission, policy id, idempotency needs, and side-effect class. The registry MUST include the product tools `catalog.resolve_product@1`, `sale.start@1`, `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`, `operational_day.summary@1`, `closing.submit_cash_count@1`, and `closing.prepare@1`. `operational_day.summary@1` MUST be `side_effect=read`, `requires_idempotency=false`, and permission `sale.create`. `closing.submit_cash_count@1` MUST be `side_effect=write`, `requires_idempotency=true`, permission `closing.submit_cash_count`, policy `CLOSE-001`, and its input schema MUST have `amount` as its only property. `closing.prepare@1` MUST be `side_effect=read`, `requires_idempotency=false`, permission `closing.submit_cash_count`, policy `CLOSE-002`, and an empty input object. `closing.confirm`, `closing.reopen`, export, payment-resolve, and `operational_day.get` tools MUST remain unregistered.
+`ToolRegistry` MUST be a closed catalog of versioned tools. Each registration MUST declare id, version, input schema, output schema, required permission, policy id, idempotency needs, and side-effect class. The registry MUST include the product tools `catalog.resolve_product@1`, `sale.start@1`, `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`, `operational_day.summary@1`, `closing.submit_cash_count@1`, `closing.prepare@1`, and `closing.confirm@1`. `operational_day.summary@1` MUST be `side_effect=read`, `requires_idempotency=false`, and permission `sale.create`. `closing.submit_cash_count@1` MUST be `side_effect=write`, `requires_idempotency=true`, permission `closing.submit_cash_count`, policy `CLOSE-001`, and its input schema MUST have `amount` as its only property. `closing.prepare@1` MUST be `side_effect=read`, `requires_idempotency=false`, permission `closing.submit_cash_count`, policy `CLOSE-002`, and an empty input object. `closing.confirm@1` MUST be `side_effect=write`, `requires_idempotency=true`, permission `closing.confirm`, policy `CLOSE-003`, and its input schema MUST have `confirmation_token` as its only property. `closing.reopen`, export, payment-resolve, and `operational_day.get` tools MUST remain unregistered.
 
 #### Scenario: Conversational sale tools registered
 - **WHEN** the application boots
@@ -44,12 +44,16 @@ Build A MUST expose exactly one `LumoOrchestrator` port. The orchestrator MAY lo
 - **WHEN** the application boots
 - **THEN** `ToolRegistry` MUST report `closing.submit_cash_count@1` as a write tool requiring idempotency and `closing.prepare@1` as a read tool that does not require idempotency
 
+#### Scenario: Close confirm tool registered
+- **WHEN** the application boots
+- **THEN** `ToolRegistry` MUST report `closing.confirm@1` as a write tool requiring idempotency, with permission `closing.confirm`, policy `CLOSE-003`, and an input schema whose only property is `confirmation_token`
+
 #### Scenario: Unknown tool lookup
-- **WHEN** a caller asks the registry for `closing.confirm@1`, `closing.reopen@1`, or `operational_day.get@1`
+- **WHEN** a caller asks the registry for `closing.reopen@1` or `operational_day.get@1`
 - **THEN** the registry MUST report the tool as unregistered
 
 ### Requirement: PolicyEngine contract
-`PolicyEngine` MUST evaluate a proposed action and return `allow`, `deny`, `clarify`, or `confirm` with rule ids, a reason code, and evidence requirements. Evaluation order MUST be security, integrity, tenant and permissions, workflow gates, business rules, catalog and pricing, confidence, then user experience. Registered policies MUST include `SEC-001`, `SEC-002`, `SEC-003`, `INT-001`, `INT-003`, `INTP-001`, `INTP-002`, `CAT-001`, `CAT-002`, `SALE-001`, `SALE-002`, `SALE-003`, `SALE-004`, `PAY-001`, `DAY-001`, `CLOSE-001`, and `CLOSE-002`. `DAY-001` MUST allow `operational_day.summary@1` only as a registered read and MUST NOT treat model-supplied totals or dates as operational truth. `CLOSE-001` MUST allow `closing.submit_cash_count@1` only for a server-parsed non-negative amount when an `OperationalDay` exists for today's business date, MUST clarify with reason `operational_day_not_started` when no such day exists, and MUST NOT treat model-supplied expected cash, counted cash, difference, status, `operational_day_id`, or business date as operational truth. `CLOSE-002` MUST allow `closing.prepare@1` only as a registered read with the same prohibition on model-supplied values.
+`PolicyEngine` MUST evaluate a proposed action and return `allow`, `deny`, `clarify`, or `confirm` with rule ids, a reason code, and evidence requirements. Evaluation order MUST be security, integrity, tenant and permissions, workflow gates, business rules, catalog and pricing, confidence, then user experience. Registered policies MUST include `SEC-001`, `SEC-002`, `SEC-003`, `INT-001`, `INT-003`, `INTP-001`, `INTP-002`, `CAT-001`, `CAT-002`, `SALE-001`, `SALE-002`, `SALE-003`, `SALE-004`, `PAY-001`, `DAY-001`, `CLOSE-001`, `CLOSE-002`, and `CLOSE-003`. `DAY-001` MUST allow `operational_day.summary@1` only as a registered read and MUST NOT treat model-supplied totals or dates as operational truth. `CLOSE-001` MUST allow `closing.submit_cash_count@1` only for a server-parsed non-negative amount when an `OperationalDay` exists for today's business date, MUST clarify with reason `operational_day_not_started` when no such day exists, and MUST NOT treat model-supplied expected cash, counted cash, difference, status, `operational_day_id`, or business date as operational truth. `CLOSE-002` MUST allow `closing.prepare@1` only as a registered read with the same prohibition on model-supplied values. `CLOSE-003` MUST deny `closing.confirm@1` when arguments include `expected_cash`, `counted_cash`, `cash_difference`, `cash_status`, `operational_day_id`, `closing_snapshot_id`, `business_date`, `closed_at`, `sale_count`, `gross_sales_total`, `cash_total`, `card_total`, `transfer_total`, `currency`, `actor_id`, or `cash_count_id`. The confirm workflow under the day lock remains the authority for whether the token matches current state.
 
 #### Scenario: Deny unregistered tool
 - **WHEN** policy evaluates a request to execute an unregistered tool
@@ -99,8 +103,12 @@ Build A MUST expose exactly one `LumoOrchestrator` port. The orchestrator MAY lo
 - **WHEN** policy evaluates `closing.prepare@1`
 - **THEN** the decision MUST allow it only as a registered read and MUST NOT authorize any write, status change, or close confirmation
 
+#### Scenario: CLOSE-003 rejects model-supplied close figures
+- **WHEN** policy evaluates `closing.confirm@1` with model arguments carrying `counted_cash`, `closing_snapshot_id`, or `closed_at`
+- **THEN** the decision MUST be `deny` under `CLOSE-003` and no snapshot MUST be written
+
 ### Requirement: OutcomeEngine contract
-`OutcomeEngine` MUST accept versioned outcome definitions and evaluate gates deterministically from confirmed state. The LLM MUST NOT overwrite a gate result. The engine port MUST exist with an empty definition registry. This change MUST NOT register `daily_sales_operations_ready@1` or `daily_close_ready@1`, and cash-count or preparation activity MUST NOT mark any outcome ready.
+`OutcomeEngine` MUST accept versioned outcome definitions and evaluate gates deterministically from confirmed state. The LLM MUST NOT overwrite a gate result. The engine port MUST exist with an empty definition registry. This change MUST NOT register `daily_sales_operations_ready@1` or `daily_close_ready@1`, and cash-count, preparation, or close-confirmation activity MUST NOT mark any outcome ready.
 
 #### Scenario: Unknown outcome fails closed
 - **WHEN** a caller evaluates `daily_close_ready@1` before it is registered
@@ -114,8 +122,12 @@ Build A MUST expose exactly one `LumoOrchestrator` port. The orchestrator MAY lo
 - **WHEN** a balanced cash count is recorded for today's OperationalDay
 - **THEN** the definition registry MUST remain empty, no OutcomeRun MUST be created, and no gate MUST report ready
 
+#### Scenario: Confirmed close does not create an outcome
+- **WHEN** `closing.confirm@1` commits a snapshot
+- **THEN** no OutcomeRun MUST be created and `daily_close_ready@1` MUST remain unregistered
+
 ### Requirement: Backend generative UI contracts
-The backend MUST expose `GenerativeUIRegistry` and `GenerativeUIComposer` ports. The shared versioned contract is `component`, `version`, `data`, `actions`, and `fallback_text`. Actions MUST carry opaque `action_id`, optional `option_id`, `context_token`, and an idempotency key. `GenerativeUIRegistry` MUST include `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`, `operational_day_summary@1`, and `daily_close_preparation@1`, and MUST NOT include `closing_ready_card`, `cash_difference_card`, `daily_summary_card`, `sale_confirmed_card`, or `sale_completed`. `GenerativeUIComposer` MUST validate against the registry and emit only registered versioned contracts. The backend MUST NOT render widgets.
+The backend MUST expose `GenerativeUIRegistry` and `GenerativeUIComposer` ports. The shared versioned contract is `component`, `version`, `data`, `actions`, and `fallback_text`. Actions MUST carry opaque `action_id`, optional `option_id`, `context_token`, and an idempotency key. `GenerativeUIRegistry` MUST include `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`, `operational_day_summary@1`, `daily_close_preparation@1`, and `daily_close_confirmed@1`, and MUST NOT include `closing_ready_card`, `cash_difference_card`, `daily_summary_card`, `sale_confirmed_card`, or `sale_completed`. `GenerativeUIComposer` MUST validate against the registry and emit only registered versioned contracts. The backend MUST NOT render widgets. `daily_close_preparation@1` and `daily_close_confirmed@1` MUST keep `actions` empty. The close confirmation token MUST travel in `daily_close_preparation@1.data.confirmation_token`, not in an action.
 
 #### Scenario: Closed registry on backend
 - **WHEN** the composer is asked to emit an unregistered component
@@ -144,6 +156,10 @@ The backend MUST expose `GenerativeUIRegistry` and `GenerativeUIComposer` ports.
 #### Scenario: daily_close_preparation registered
 - **WHEN** the registry is queried for component `daily_close_preparation` version `1`
 - **THEN** it MUST be present, and `closing_ready_card` and `cash_difference_card` MUST be absent
+
+#### Scenario: daily_close_confirmed registered
+- **WHEN** the registry is queried for component `daily_close_confirmed` version `1`
+- **THEN** it MUST be present and its contract MUST allow an empty `actions` array
 
 ### Requirement: Flutter GenerativeUIRenderer
 Flutter MUST own `GenerativeUIRenderer`. It is solely responsible for rendering backend-emitted contracts. The renderer MUST reject unknown component names, versions, fields, or actions and show `fallback_text`. It MUST NOT execute actions from an unknown payload.

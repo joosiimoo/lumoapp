@@ -62,16 +62,16 @@ _CLOSE_PREPARATION_PHRASES = {
     "cuanto deberia haber en caja",
     "efectivo esperado",
 }
-_FINAL_CLOSE_PHRASES = {
+_REQUEST_CLOSE_PHRASES = {
     "cerrar el dia",
     "cerrar la jornada",
     "cerrar caja",
-    "confirmar cierre",
 }
-_FINAL_CLOSE_CLARIFICATION = (
-    "Puedo preparar el cierre y comparar el efectivo contado con el esperado. "
-    "Confirmar el cierre del día todavía no está disponible."
-)
+_CONFIRM_CLOSE_PHRASES = {
+    "confirmar cierre",
+    "si, cerrar",
+    "confirmar",
+}
 
 
 def normalize_closed_phrase(message: str) -> str:
@@ -176,10 +176,15 @@ class ScriptedLLMProvider:
                 intent="close_preparation",
                 candidate_tool="closing.prepare@1",
             )
-        if normalized in _FINAL_CLOSE_PHRASES:
+        if normalized in _REQUEST_CLOSE_PHRASES:
             return AgentDecision(
-                intent="unsupported",
-                clarification_question=_FINAL_CLOSE_CLARIFICATION,
+                intent="request_close",
+                candidate_tool="closing.prepare@1",
+            )
+        if normalized in _CONFIRM_CLOSE_PHRASES:
+            return AgentDecision(
+                intent="confirm_close",
+                candidate_tool="closing.confirm@1",
             )
         parsed = parse_sale_utterance(message)
         if parsed is None:

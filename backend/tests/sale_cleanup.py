@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.persistence.models import (
     AuditEventRow,
     CashCountRow,
+    ClosingSnapshotRow,
     IdempotencyRecordRow,
     OperationalDayRow,
     OutboxEventRow,
@@ -30,6 +31,7 @@ SALE_AUDIT_ACTIONS = (
     "sale.commit@1",
     "operational_day.opened",
     "closing.submit_cash_count@1",
+    "closing.confirm@1",
 )
 SALE_OUTBOX_EVENTS = (
     "sale.item.added",
@@ -38,15 +40,39 @@ SALE_OUTBOX_EVENTS = (
     "payment.recorded",
     "operational_day.opened",
     "cash_count.recorded",
+    "closing.confirmed",
 )
 SALE_MESSAGE_OPERATIONS = (
     "lumo.message.add_sale_item",
     "lumo.message.totalize_sale",
     "lumo.message.commit_sale",
     "lumo.message.record_cash_count",
+    "lumo.message.confirm_close",
 )
 SALE_OUTBOX_EVENT = "sale.item.added"
 SALE_MESSAGE_OPERATION = "lumo.message.add_sale_item"
+
+
+def isolate_database_for_0007_downgrade(engine) -> None:
+    """Test isolation only. Product downgrade must still refuse a real close.
+
+    Deletes snapshots and reopens days so a later Alembic downgrade of this
+    disposable database is not blocked by rows a previous test committed.
+    """
+    from sqlalchemy import text
+
+    with engine.begin() as connection:
+        if connection.execute(text("SELECT to_regclass('operations.closing_snapshots')")).scalar() is None:
+            return
+        connection.execute(text("ALTER TABLE operations.closing_snapshots DISABLE ROW LEVEL SECURITY"))
+        connection.execute(text("ALTER TABLE operations.operational_days DISABLE ROW LEVEL SECURITY"))
+        connection.execute(text("DELETE FROM operations.closing_snapshots"))
+        connection.execute(text("UPDATE operations.operational_days SET status = 'open' WHERE status = 'closed'"))
+        connection.execute(text("SET CONSTRAINTS ALL IMMEDIATE"))
+        connection.execute(text("ALTER TABLE operations.closing_snapshots ENABLE ROW LEVEL SECURITY"))
+        connection.execute(text("ALTER TABLE operations.closing_snapshots FORCE ROW LEVEL SECURITY"))
+        connection.execute(text("ALTER TABLE operations.operational_days ENABLE ROW LEVEL SECURITY"))
+        connection.execute(text("ALTER TABLE operations.operational_days FORCE ROW LEVEL SECURITY"))
 
 
 def clear_tenant_sale_mutations(session: Session, business_id) -> None:
@@ -54,6 +80,7 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(PaymentRow.__table__.delete().where(PaymentRow.business_id == business_id))
     session.execute(SaleItemRow.__table__.delete().where(SaleItemRow.business_id == business_id))
     session.execute(SaleSessionRow.__table__.delete().where(SaleSessionRow.business_id == business_id))
+    session.execute(ClosingSnapshotRow.__table__.delete().where(ClosingSnapshotRow.business_id == business_id))
     session.execute(CashCountRow.__table__.delete().where(CashCountRow.business_id == business_id))
     session.execute(OperationalDayRow.__table__.delete().where(OperationalDayRow.business_id == business_id))
     session.execute(
@@ -117,6 +144,52 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
     for day_id, current in current_per_day.items():
         if current > 1:
             orphans.append(f"cash_count:day={day_id}:current_rows={current}")
+    snapshots = session.scalars(
+        select(ClosingSnapshotRow).where(ClosingSnapshotRow.business_id == business_id)
+    ).all()
+    snapshots_per_day: dict[str, int] = {}
+    current_count_ids = {str(count.id) for count in cash_counts if count.superseded_by_id is None}
+    days_by_id = {
+        str(row.id): row
+        for row in session.scalars(select(OperationalDayRow).where(OperationalDayRow.business_id == business_id)).all()
+    }
+    for snapshot in snapshots:
+        day_key = str(snapshot.operational_day_id)
+        snapshots_per_day[day_key] = snapshots_per_day.get(day_key, 0) + 1
+        day = days_by_id.get(day_key)
+        if day is None or day.business_id != snapshot.business_id:
+            orphans.append(f"snapshot:{snapshot.id}:missing_or_cross_tenant_day={snapshot.operational_day_id}")
+        if str(snapshot.cash_count_id) not in cash_count_ids:
+            orphans.append(f"snapshot:{snapshot.id}:missing_or_cross_tenant_count={snapshot.cash_count_id}")
+        elif str(snapshot.cash_count_id) not in current_count_ids:
+            orphans.append(f"snapshot:{snapshot.id}:count_not_current={snapshot.cash_count_id}")
+        matching = next((count for count in cash_counts if str(count.id) == str(snapshot.cash_count_id)), None)
+        if matching is not None and matching.operational_day_id != snapshot.operational_day_id:
+            orphans.append(f"snapshot:{snapshot.id}:count_day_mismatch")
+        if snapshot.expected_cash != snapshot.cash_total:
+            orphans.append(f"snapshot:{snapshot.id}:expected_cash")
+        if snapshot.gross_sales_total != snapshot.cash_total + snapshot.card_total + snapshot.transfer_total:
+            orphans.append(f"snapshot:{snapshot.id}:gross")
+        if snapshot.cash_difference != snapshot.counted_cash - snapshot.expected_cash:
+            orphans.append(f"snapshot:{snapshot.id}:difference")
+        sign = (
+            "over"
+            if snapshot.cash_difference > 0
+            else "short"
+            if snapshot.cash_difference < 0
+            else "balanced"
+        )
+        if snapshot.cash_status != sign or snapshot.sale_count < 0:
+            orphans.append(f"snapshot:{snapshot.id}:inconsistent")
+    for day_id, count in snapshots_per_day.items():
+        if count != 1:
+            orphans.append(f"snapshot:day={day_id}:rows={count}")
+    for day in days_by_id.values():
+        present = snapshots_per_day.get(str(day.id), 0)
+        if day.status == "closed" and present != 1:
+            orphans.append(f"day:{day.id}:closed_snapshots={present}")
+        if day.status == "open" and present != 0:
+            orphans.append(f"day:{day.id}:open_snapshots={present}")
     for sale in session.scalars(select(SaleSessionRow).where(SaleSessionRow.business_id == business_id)).all():
         if sale.operational_day_id is not None and str(sale.operational_day_id) not in day_ids:
             orphans.append(f"session:{sale.id}:missing_day={sale.operational_day_id}")
@@ -148,6 +221,10 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
         ccid = payload.get("cash_count_id")
         if ccid and ccid not in cash_count_ids:
             orphans.append(f"outbox:{event.id}:missing_cash_count={ccid}")
+        snap = payload.get("closing_snapshot_id")
+        snapshot_ids = {str(row.id) for row in snapshots}
+        if snap and snap not in snapshot_ids:
+            orphans.append(f"outbox:{event.id}:missing_snapshot={snap}")
     for event in session.scalars(
         select(AuditEventRow).where(
             AuditEventRow.business_id == business_id,
@@ -170,4 +247,7 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
         ccid = payload.get("cash_count_id")
         if ccid and ccid not in cash_count_ids:
             orphans.append(f"audit:{event.id}:missing_cash_count={ccid}")
+        snap = payload.get("closing_snapshot_id")
+        if snap and snap not in {str(row.id) for row in snapshots}:
+            orphans.append(f"audit:{event.id}:missing_snapshot={snap}")
     return orphans

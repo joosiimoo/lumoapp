@@ -174,7 +174,7 @@ class OperationalDayRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         UniqueConstraint("business_id", "business_date", name="uq_operational_days_business_date"),
         UniqueConstraint("id", "business_id", name="uq_operational_days_id_business"),
         Index("ix_operational_days_business_id", "business_id"),
-        CheckConstraint("status IN ('open')", name="ck_operational_days_status"),
+        CheckConstraint("status IN ('open', 'closed')", name="ck_operational_days_status"),
         {"schema": "operations"},
     )
 
@@ -188,6 +188,12 @@ class CashCountRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "cash_counts"
     __table_args__ = (
         UniqueConstraint("id", "business_id", name="uq_cash_counts_id_business"),
+        UniqueConstraint(
+            "id",
+            "business_id",
+            "operational_day_id",
+            name="uq_cash_counts_id_business_day",
+        ),
         UniqueConstraint("supersedes_cash_count_id", name="uq_cash_counts_supersedes"),
         UniqueConstraint("superseded_by_id", name="uq_cash_counts_superseded_by"),
         Index("ix_cash_counts_business_id", "business_id"),
@@ -237,6 +243,67 @@ class CashCountRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     counted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     supersedes_cash_count_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     superseded_by_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+
+
+class ClosingSnapshotRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Immutable close record. Application code inserts and reads; it never updates."""
+
+    __tablename__ = "closing_snapshots"
+    __table_args__ = (
+        UniqueConstraint("operational_day_id", name="uq_closing_snapshots_operational_day"),
+        UniqueConstraint("id", "business_id", name="uq_closing_snapshots_id_business"),
+        UniqueConstraint("cash_count_id", name="uq_closing_snapshots_cash_count"),
+        Index("ix_closing_snapshots_business_id", "business_id"),
+        CheckConstraint("sale_count >= 0", name="ck_closing_snapshots_sale_count"),
+        CheckConstraint(
+            "gross_sales_total >= 0 AND cash_total >= 0 AND card_total >= 0 "
+            "AND transfer_total >= 0 AND expected_cash >= 0 AND counted_cash >= 0",
+            name="ck_closing_snapshots_money_non_negative",
+        ),
+        CheckConstraint("expected_cash = cash_total", name="ck_closing_snapshots_expected_is_cash"),
+        CheckConstraint(
+            "gross_sales_total = cash_total + card_total + transfer_total",
+            name="ck_closing_snapshots_gross",
+        ),
+        CheckConstraint(
+            "cash_difference = counted_cash - expected_cash",
+            name="ck_closing_snapshots_difference",
+        ),
+        CheckConstraint(
+            "(cash_difference > 0 AND cash_status = 'over') "
+            "OR (cash_difference < 0 AND cash_status = 'short') "
+            "OR (cash_difference = 0 AND cash_status = 'balanced')",
+            name="ck_closing_snapshots_cash_status",
+        ),
+        ForeignKeyConstraint(
+            ["operational_day_id", "business_id"],
+            ["operations.operational_days.id", "operations.operational_days.business_id"],
+            name="fk_closing_snapshots_operational_day",
+        ),
+        ForeignKeyConstraint(
+            ["cash_count_id", "business_id", "operational_day_id"],
+            ["operations.cash_counts.id", "operations.cash_counts.business_id", "operations.cash_counts.operational_day_id"],
+            name="fk_closing_snapshots_cash_count",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    operational_day_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    cash_count_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    business_date: Mapped[date] = mapped_column(Date, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    sale_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    gross_sales_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    cash_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    card_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    transfer_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    expected_cash: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    counted_cash: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    cash_difference: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    cash_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):

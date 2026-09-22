@@ -13,6 +13,7 @@ from app.agent.providers.scripted import ScriptedLLMProvider
 from app.agent.registrations import (
     register_conversational_sale_tools,
     register_daily_close_preparation_ui,
+    register_daily_close_confirmed_ui,
     register_operational_day_summary_ui,
     register_sale_confirmed_ui,
     register_sale_item_added_ui,
@@ -56,6 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_sale_confirmed_ui(ui_registry)
     register_operational_day_summary_ui(ui_registry)
     register_daily_close_preparation_ui(ui_registry)
+    register_daily_close_confirmed_ui(ui_registry)
     policies = build_policy_engine()
     provider = ScriptedLLMProvider()
     orchestrator = FoundationOrchestrator(

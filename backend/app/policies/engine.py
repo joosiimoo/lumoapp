@@ -21,6 +21,7 @@ PAY_001 = "PAY-001"
 DAY_001 = "DAY-001"
 CLOSE_001 = "CLOSE-001"
 CLOSE_002 = "CLOSE-002"
+CLOSE_003 = "CLOSE-003"
 
 REGISTERED_SLICE_TOOLS = {
     "catalog.resolve_product@1",
@@ -31,9 +32,14 @@ REGISTERED_SLICE_TOOLS = {
     "operational_day.summary@1",
     "closing.submit_cash_count@1",
     "closing.prepare@1",
+    "closing.confirm@1",
 }
 
-CLOSING_TOOLS = {"closing.submit_cash_count@1": CLOSE_001, "closing.prepare@1": CLOSE_002}
+CLOSING_TOOLS = {
+    "closing.submit_cash_count@1": CLOSE_001,
+    "closing.prepare@1": CLOSE_002,
+    "closing.confirm@1": CLOSE_003,
+}
 SERVER_OWNED_CASH_ARGUMENTS = frozenset(
     {
         "expected_cash",
@@ -42,6 +48,26 @@ SERVER_OWNED_CASH_ARGUMENTS = frozenset(
         "cash_status",
         "operational_day_id",
         "business_date",
+    }
+)
+SERVER_OWNED_CLOSE_ARGUMENTS = frozenset(
+    {
+        "expected_cash",
+        "counted_cash",
+        "cash_difference",
+        "cash_status",
+        "operational_day_id",
+        "closing_snapshot_id",
+        "business_date",
+        "closed_at",
+        "sale_count",
+        "gross_sales_total",
+        "cash_total",
+        "card_total",
+        "transfer_total",
+        "currency",
+        "actor_id",
+        "cash_count_id",
     }
 )
 
@@ -193,7 +219,9 @@ class FoundationPolicyEngine:
 
     def _evaluate_closing(self, tool_id: str, arguments: dict[str, object]) -> PolicyDecision:
         rule_id = CLOSING_TOOLS[tool_id]
-        if SERVER_OWNED_CASH_ARGUMENTS & set(arguments):
+        if SERVER_OWNED_CASH_ARGUMENTS & set(arguments) or (
+            tool_id == "closing.confirm@1" and SERVER_OWNED_CLOSE_ARGUMENTS & set(arguments)
+        ):
             return PolicyDecision(
                 decision=PolicyDecisionName.DENY,
                 rule_ids=[rule_id],
@@ -204,6 +232,12 @@ class FoundationPolicyEngine:
                 decision=PolicyDecisionName.ALLOW,
                 rule_ids=[CLOSE_002, SEC_003, INT_001, INT_003, INTP_001],
                 reason_code="close_preparation_read",
+            )
+        if tool_id == "closing.confirm@1":
+            return PolicyDecision(
+                decision=PolicyDecisionName.ALLOW,
+                rule_ids=[CLOSE_003, SEC_003, INT_001, INT_003, INTP_001],
+                reason_code="closing_confirmation",
             )
         if arguments.get("day_exists") is False:
             return PolicyDecision(

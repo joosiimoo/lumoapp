@@ -769,4 +769,84 @@ void main() {
     expect(find.text('EFECTIVO ESPERADO'), findsWidgets);
     expect(find.text('Confirmar cierre'), findsNothing);
   });
+
+  testWidgets('confirmed close renders server amounts and no client math', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      'component': 'daily_close_confirmed',
+      'version': 1,
+      'fallback_text': 'Cierre confirmado · 2026-09-22 · 1 venta · \$22.50 · Sobrante',
+      'actions': [],
+      'data': {
+        'operational_day_id': '01900000-0000-7000-8000-000000000099',
+        'business_date': '2026-09-22',
+        'currency': 'MXN',
+        'sale_count': 1,
+        'gross_sales_total': {'amount': '22.50', 'currency': 'MXN'},
+        'expected_cash': {'amount': '22.50', 'currency': 'MXN'},
+        'counted_cash': {'amount': '25.00', 'currency': 'MXN'},
+        'cash_difference': {'amount': '9.99', 'currency': 'MXN'},
+        'cash_status': 'over',
+        'closed_at': '2026-09-22T18:00:00+00:00',
+        'confirmation_token': 'must-not-appear',
+      },
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('Cierre confirmado'), findsOneWidget);
+    expect(find.text('\$9.99'), findsOneWidget);
+    expect(find.text('\$2.50'), findsNothing);
+    expect(find.text('Sobrante'), findsOneWidget);
+    expect(find.text('must-not-appear'), findsNothing);
+    expect(find.text('Confirmar cierre'), findsNothing);
+    expect(find.text('Reabrir'), findsNothing);
+  });
+
+  testWidgets('closed summary shows the server Cerrado label', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      'component': 'operational_day_summary',
+      'version': 1,
+      'fallback_text': 'Hoy 2026-09-22 · 1 venta · \$22.50',
+      'actions': [],
+      'data': {
+        'operational_day_id': '01900000-0000-7000-8000-000000000099',
+        'business_date': '2026-09-22',
+        'status': 'closed',
+        'currency': 'MXN',
+        'sale_count': 1,
+        'gross_sales_total': '22.50',
+        'cash_total': '22.50',
+        'card_total': '0.00',
+        'transfer_total': '0.00',
+      },
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('Cerrado'), findsOneWidget);
+  });
+
+  test('confirmation token is kept, echoed only in memory, and cleared', () {
+    const token = 'header.payload.sig';
+    GenerativeUiContract card(String component, Map<String, dynamic> data) {
+      return GenerativeUiContract.fromJson({
+        'component': component,
+        'version': 1,
+        'fallback_text': 'Cierre',
+        'actions': [],
+        'data': data,
+      });
+    }
+
+    final kept = nextConfirmationToken([
+      card('daily_close_preparation', {'confirmation_token': token}),
+    ], null);
+    expect(kept, token);
+    final clearedByNull = nextConfirmationToken([
+      card('daily_close_preparation', {'confirmation_token': null}),
+    ], token);
+    expect(clearedByNull, isNull);
+    final clearedByClose = nextConfirmationToken([
+      card('daily_close_confirmed', {}),
+    ], token);
+    expect(clearedByClose, isNull);
+  });
 }

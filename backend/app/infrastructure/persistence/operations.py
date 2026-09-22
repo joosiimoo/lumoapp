@@ -11,6 +11,8 @@ from sqlalchemy.orm import Session
 from app.domain.operations import (
     CashCount,
     CashCountSource,
+    CashStatus,
+    ClosingSnapshot,
     DaySummaryTotals,
     OperationalDay,
     OperationalDayStatus,
@@ -21,6 +23,7 @@ from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.models import (
     CashCountRow,
+    ClosingSnapshotRow,
     OperationalDayRow,
     PaymentRow,
     SaleSessionRow,
@@ -238,6 +241,75 @@ class OperationsRepository:
         self._session.flush()
         return _to_cash_count(row)
 
+    def get_snapshot_for_day(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+    ) -> ClosingSnapshot | None:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(ClosingSnapshotRow).where(
+                ClosingSnapshotRow.business_id == tenant.business_id,
+                ClosingSnapshotRow.operational_day_id == operational_day_id,
+            )
+        )
+        return _to_snapshot(row) if row is not None else None
+
+    def insert_snapshot(self, *, tenant: TenantContext, snapshot: ClosingSnapshot) -> ClosingSnapshot:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        if snapshot.business_id != tenant.business_id:
+            raise TenantScopeViolationError("snapshot business does not match the tenant")
+        row = ClosingSnapshotRow(
+            id=snapshot.id,
+            business_id=tenant.business_id,
+            operational_day_id=snapshot.operational_day_id,
+            cash_count_id=snapshot.cash_count_id,
+            actor_id=snapshot.actor_id,
+            business_date=snapshot.business_date,
+            currency=snapshot.currency,
+            sale_count=snapshot.sale_count,
+            gross_sales_total=snapshot.gross_sales_total,
+            cash_total=snapshot.cash_total,
+            card_total=snapshot.card_total,
+            transfer_total=snapshot.transfer_total,
+            expected_cash=snapshot.expected_cash,
+            counted_cash=snapshot.counted_cash,
+            cash_difference=snapshot.cash_difference,
+            cash_status=snapshot.cash_status.value,
+            closed_at=snapshot.closed_at,
+            created_at=snapshot.created_at,
+            updated_at=snapshot.updated_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _to_snapshot(row)
+
+    def close_open_day(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+        closed_at: datetime,
+    ) -> None:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        result = self._session.execute(
+            update(OperationalDayRow)
+            .where(
+                OperationalDayRow.id == operational_day_id,
+                OperationalDayRow.business_id == tenant.business_id,
+                OperationalDayRow.status == OperationalDayStatus.OPEN.value,
+            )
+            .values(status=OperationalDayStatus.CLOSED.value, updated_at=closed_at)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ValidationAppError("operational day could not be closed")
+        self._session.expire_all()
+
 
 def _money(amount: Decimal | int | str, currency: str) -> str:
     if isinstance(amount, float):
@@ -259,6 +331,30 @@ def _to_cash_count(row: CashCountRow) -> CashCount:
         counted_at=row.counted_at,
         supersedes_cash_count_id=row.supersedes_cash_count_id,
         superseded_by_id=row.superseded_by_id,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _to_snapshot(row: ClosingSnapshotRow) -> ClosingSnapshot:
+    return ClosingSnapshot(
+        id=row.id,
+        business_id=row.business_id,
+        operational_day_id=row.operational_day_id,
+        cash_count_id=row.cash_count_id,
+        actor_id=row.actor_id,
+        business_date=row.business_date,
+        currency=row.currency,
+        sale_count=row.sale_count,
+        gross_sales_total=row.gross_sales_total,
+        cash_total=row.cash_total,
+        card_total=row.card_total,
+        transfer_total=row.transfer_total,
+        expected_cash=row.expected_cash,
+        counted_cash=row.counted_cash,
+        cash_difference=row.cash_difference,
+        cash_status=CashStatus(row.cash_status),
+        closed_at=row.closed_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

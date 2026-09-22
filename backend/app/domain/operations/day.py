@@ -8,6 +8,7 @@ from uuid import UUID
 
 class OperationalDayStatus(StrEnum):
     OPEN = "open"
+    CLOSED = "closed"
 
 
 @dataclass(frozen=True, slots=True)

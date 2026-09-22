@@ -166,12 +166,14 @@ def test_closed_preparation_phrases_and_no_close_guard() -> None:
         decision = provider.interpret(phrase, {}, [])
         assert decision.intent == "close_preparation", phrase
         assert decision.candidate_tool == "closing.prepare@1"
-    for phrase in ("cerrar el día", "cerrar la jornada", "cerrar caja", "confirmar cierre"):
+    for phrase in ("cerrar el día", "cerrar la jornada", "cerrar caja"):
         decision = provider.interpret(phrase, {}, [])
-        assert decision.intent == "unsupported", phrase
-        assert decision.candidate_tool is None
-        assert "preparar el cierre" in (decision.clarification_question or "").lower()
-        assert "no está disponible" in (decision.clarification_question or "")
+        assert decision.intent == "request_close", phrase
+        assert decision.candidate_tool == "closing.prepare@1"
+    for phrase in ("confirmar cierre", "sí, cerrar", "confirmar"):
+        decision = provider.interpret(phrase, {}, [])
+        assert decision.intent == "confirm_close", phrase
+        assert decision.candidate_tool == "closing.confirm@1"
 
 
 def test_sale_utterances_keep_their_path() -> None:

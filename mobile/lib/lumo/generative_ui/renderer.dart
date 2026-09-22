@@ -75,6 +75,7 @@ class GenerativeUIRenderer {
     'sale_confirmed': 1,
     'operational_day_summary': 1,
     'daily_close_preparation': 1,
+    'daily_close_confirmed': 1,
   };
 
   GenerativeUiRenderResult render(GenerativeUiContract contract) {
@@ -105,6 +106,9 @@ class GenerativeUIRenderer {
     }
     if (contract.component == 'daily_close_preparation') {
       return DailyClosePreparationView(contract: contract);
+    }
+    if (contract.component == 'daily_close_confirmed') {
+      return DailyCloseConfirmedView(contract: contract);
     }
     return SaleItemAddedView(contract: contract);
   }
@@ -438,6 +442,13 @@ class OperationalDaySummaryView extends StatelessWidget {
                       ),
                       const SizedBox(height: 10),
                       Text('$count $noun · $gross', style: LumoTypography.metricSm),
+                      if ('${data['status'] ?? ''}' == 'closed') ...[
+                        const SizedBox(height: 8),
+                        const Align(
+                          alignment: Alignment.centerLeft,
+                          child: LumoStatusChip(label: 'Cerrado'),
+                        ),
+                      ],
                       const SizedBox(height: 8),
                       Text('Efectivo $cash', style: LumoTypography.caption),
                       Text('Tarjeta $card', style: LumoTypography.caption),
@@ -580,5 +591,66 @@ class DailyClosePreparationView extends StatelessWidget {
       return '-${MoneyDisplay.format(amount: amount.substring(1), currency: currency)}';
     }
     return MoneyDisplay.format(amount: amount, currency: currency);
+  }
+}
+
+class DailyCloseConfirmedView extends StatelessWidget {
+  const DailyCloseConfirmedView({super.key, required this.contract});
+
+  final GenerativeUiContract contract;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = contract.data;
+    final businessDate = OperationalDaySummaryView.displayBusinessDate('${data['business_date'] ?? ''}');
+    final closedAt = '${data['closed_at'] ?? ''}';
+    final gross = DailyClosePreparationView.formatMoney(data['gross_sales_total']);
+    final expected = DailyClosePreparationView.formatMoney(data['expected_cash']);
+    final counted = DailyClosePreparationView.formatMoney(data['counted_cash']);
+    final difference = DailyClosePreparationView.formatMoney(data['cash_difference']);
+    final status = DailyClosePreparationView.statusLabel('${data['cash_status'] ?? ''}');
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: LumoMark(),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: LumoSizes.contentMaxWidth),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(contract.fallbackText, style: LumoTypography.body),
+                const SizedBox(height: 8),
+                LumoCard(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: LumoStatusChip(label: 'Cierre confirmado'),
+                      ),
+                      const SizedBox(height: 10),
+                      Text('Cierre $businessDate', style: LumoTypography.caption),
+                      Text(closedAt, style: LumoTypography.caption),
+                      DailyClosePreparationView._metricRow('VENTAS', gross),
+                      DailyClosePreparationView._metricRow('EFECTIVO ESPERADO', expected),
+                      DailyClosePreparationView._metricRow('CONTADO', counted),
+                      DailyClosePreparationView._metricRow('DIFERENCIA', difference),
+                      const SizedBox(height: 8),
+                      Text(status, style: LumoTypography.cardTitle),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
 }

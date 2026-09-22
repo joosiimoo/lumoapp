@@ -171,6 +171,21 @@ class CommitSaleSession:
             payload = build_sale_confirmed(confirmed, items, payment)
             return CommitWorkflowResult(kind="read_back", text=payload["text"], payload=payload)
 
+        assert session is not None
+        business = self._identities.get_business(tenant)
+        instant = _utc_instant(confirmed_at)
+        try:
+            business_date = business_date_for(instant, business.timezone)
+        except InvalidBusinessTimezone as exc:
+            raise ValidationAppError("invalid business timezone") from exc
+        existing_day = self._operations.lock_day_for_update(tenant=tenant, business_date=business_date)
+        if existing_day is not None and existing_day.status.value == "closed":
+            return CommitWorkflowResult(
+                kind="clarify",
+                text="La jornada de hoy ya está cerrada. No puedo registrar otra venta en ese día.",
+                payload={"code": "OPERATIONAL_DAY_CLOSED", "reason_code": "operational_day_closed"},
+            )
+
         replay = self._idempotency.begin(
             tenant=tenant,
             operation_type=self.operation_type,
@@ -181,13 +196,6 @@ class CommitSaleSession:
             body = replay["body"]
             return CommitWorkflowResult(kind="replay", text=body.get("text", "Listo."), payload=body)
 
-        assert session is not None
-        business = self._identities.get_business(tenant)
-        instant = _utc_instant(confirmed_at)
-        try:
-            business_date = business_date_for(instant, business.timezone)
-        except InvalidBusinessTimezone as exc:
-            raise ValidationAppError("invalid business timezone") from exc
         day, created = self._operations.ensure_open_day(
             tenant=tenant,
             business_date=business_date,

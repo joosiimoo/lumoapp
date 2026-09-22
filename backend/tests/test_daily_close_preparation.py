@@ -530,52 +530,24 @@ def test_unsupported_phrases_never_mutate(client: TestClient, db_session) -> Non
     assert _rows(db_session, tenant.business_id, AuditEventRow, action="closing.submit_cash_count@1") == []
 
 
-def test_final_close_phrases_clarify_and_tools_stay_unregistered(client: TestClient, db_session) -> None:
+def test_final_close_phrases_do_not_close_without_a_token(client: TestClient, db_session) -> None:
     tenant, token = _seed(db_session)
     _cash_sale(client, token, "cash", "900gr zanahoria")
     counted = _post(client, token, "conté 22.50", "close-count", "conv-close")
     assert counted.status_code == 200, counted.text
-    for index, phrase in enumerate(("cerrar el día", "confirmar cierre", "cerrar caja", "cerrar la jornada")):
-        response = _post(client, token, phrase, f"close-{index}", "conv-close")
-        assert response.status_code == 200, response.text
-        assert response.json()["ui"] == []
-        assert "no está disponible" in response.json()["text"]
+    requested = _post(client, token, "cerrar el día", "close-request", "conv-close")
+    assert requested.status_code == 200, requested.text
+    assert "¿Confirmas el cierre?" in requested.json()["text"]
+    bare = _post(client, token, "confirmar cierre", "close-bare", "conv-close")
+    assert bare.status_code == 200, bare.text
+    assert bare.json()["ui"] == []
     registry = ToolRegistry()
     register_conversational_sale_tools(registry)
-    assert registry.get("closing.confirm@1") is None
+    assert registry.get("closing.confirm@1") is not None
     assert registry.get("closing.reopen@1") is None
-    assert registry.get("closing.submit_cash_count@1") is SUBMIT_CASH_COUNT
-    assert registry.get("closing.prepare@1") is CLOSING_PREPARE
     days = _rows(db_session, tenant.business_id, OperationalDayRow)
     assert [day.status for day in days] == ["open"]
-    events = {
-        row.event_type
-        for row in _rows(db_session, tenant.business_id, OutboxEventRow)
-    }
-    assert not {event for event in events if "clos" in event and event != "cash_count.recorded"}
-    assert len(_counts(db_session, tenant.business_id)) == 1
-    absent = db_session.execute(
-        text(
-            """
-            SELECT
-                to_regclass('operations.closing_snapshots'),
-                to_regclass('workflow.work_items'),
-                to_regclass('workflow.outcome_runs'),
-                to_regnamespace('workflow'),
-                to_regnamespace('memory')
-            """
-        )
-    ).one()
-    assert all(item is None for item in absent)
-    statuses = db_session.execute(
-        text(
-            """
-            SELECT pg_get_constraintdef(oid) FROM pg_constraint
-            WHERE conname = 'ck_operational_days_status'
-            """
-        )
-    ).scalar_one()
-    assert "'open'" in statuses and "closed" not in statuses
+    assert _rows(db_session, tenant.business_id, OutboxEventRow, event_type="closing.confirmed") == []
 
 
 def test_tool_and_ui_registrations() -> None:

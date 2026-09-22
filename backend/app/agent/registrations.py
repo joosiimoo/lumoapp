@@ -180,6 +180,42 @@ SUBMIT_CASH_COUNT = ToolRegistration(
     side_effect="write",
 )
 
+CLOSING_CONFIRM = ToolRegistration(
+    tool_id="closing.confirm",
+    version=1,
+    input_schema={
+        "type": "object",
+        "required": ["confirmation_token"],
+        "additionalProperties": False,
+        "properties": {"confirmation_token": {"type": "string"}},
+    },
+    output_schema={
+        "type": "object",
+        "required": [
+            "operational_day_id",
+            "closing_snapshot_id",
+            "business_date",
+            "day_status",
+            "closed_at",
+            "currency",
+            "sale_count",
+            "gross_sales_total",
+            "expected_cash",
+            "counted_cash",
+            "cash_difference",
+            "cash_status",
+        ],
+        "properties": {
+            "day_status": {"enum": ["closed"]},
+            "cash_status": {"enum": ["balanced", "over", "short"]},
+        },
+    },
+    permission="closing.confirm",
+    policy_id="CLOSE-003",
+    requires_idempotency=True,
+    side_effect="write",
+)
+
 CLOSING_PREPARE = ToolRegistration(
     tool_id="closing.prepare",
     version=1,
@@ -256,6 +292,33 @@ DAILY_CLOSE_PREPARATION_UI = GenerativeUIRegistration(
         "required": _PREPARATION_OUTPUT_REQUIRED,
         "properties": {
             "cash_status": {"enum": ["not_counted", "balanced", "over", "short"]},
+            "confirmation_token": {"type": ["string", "null"]},
+        },
+    },
+)
+
+DAILY_CLOSE_CONFIRMED_UI = GenerativeUIRegistration(
+    component="daily_close_confirmed",
+    version=1,
+    data_schema={
+        "type": "object",
+        "required": [
+            "operational_day_id",
+            "closing_snapshot_id",
+            "business_date",
+            "day_status",
+            "closed_at",
+            "currency",
+            "sale_count",
+            "gross_sales_total",
+            "expected_cash",
+            "counted_cash",
+            "cash_difference",
+            "cash_status",
+        ],
+        "properties": {
+            "day_status": {"enum": ["closed"]},
+            "cash_status": {"enum": ["balanced", "over", "short"]},
         },
     },
 )
@@ -271,6 +334,7 @@ def register_conversational_sale_tools(registry: ToolRegistry) -> None:
         OPERATIONAL_DAY_SUMMARY,
         SUBMIT_CASH_COUNT,
         CLOSING_PREPARE,
+        CLOSING_CONFIRM,
     ):
         registry.register(item)
 
@@ -293,3 +357,7 @@ def register_operational_day_summary_ui(registry: GenerativeUIRegistry) -> None:
 
 def register_daily_close_preparation_ui(registry: GenerativeUIRegistry) -> None:
     registry.register(DAILY_CLOSE_PREPARATION_UI)
+
+
+def register_daily_close_confirmed_ui(registry: GenerativeUIRegistry) -> None:
+    registry.register(DAILY_CLOSE_CONFIRMED_UI)
