@@ -19,6 +19,8 @@ SALE_003 = "SALE-003"
 SALE_004 = "SALE-004"
 PAY_001 = "PAY-001"
 DAY_001 = "DAY-001"
+CLOSE_001 = "CLOSE-001"
+CLOSE_002 = "CLOSE-002"
 
 REGISTERED_SLICE_TOOLS = {
     "catalog.resolve_product@1",
@@ -27,7 +29,21 @@ REGISTERED_SLICE_TOOLS = {
     "sale.totalize@1",
     "sale.commit@1",
     "operational_day.summary@1",
+    "closing.submit_cash_count@1",
+    "closing.prepare@1",
 }
+
+CLOSING_TOOLS = {"closing.submit_cash_count@1": CLOSE_001, "closing.prepare@1": CLOSE_002}
+SERVER_OWNED_CASH_ARGUMENTS = frozenset(
+    {
+        "expected_cash",
+        "counted_cash",
+        "cash_difference",
+        "cash_status",
+        "operational_day_id",
+        "business_date",
+    }
+)
 
 
 class FoundationPolicyEngine:
@@ -51,6 +67,8 @@ class FoundationPolicyEngine:
                 reason_code="operational_day_summary_read",
             )
         arguments = request.arguments or {}
+        if request.tool_id in CLOSING_TOOLS:
+            return self._evaluate_closing(request.tool_id, arguments)
         if arguments.get("missing_essentials"):
             return PolicyDecision(
                 decision=PolicyDecisionName.CLARIFY,
@@ -172,6 +190,52 @@ class FoundationPolicyEngine:
             rule_ids=[SEC_003, INT_001, INT_003, INTP_001],
             reason_code="arguments_must_be_revalidated",
         )
+
+    def _evaluate_closing(self, tool_id: str, arguments: dict[str, object]) -> PolicyDecision:
+        rule_id = CLOSING_TOOLS[tool_id]
+        if SERVER_OWNED_CASH_ARGUMENTS & set(arguments):
+            return PolicyDecision(
+                decision=PolicyDecisionName.DENY,
+                rule_ids=[rule_id],
+                reason_code="model_supplied_cash_values",
+            )
+        if tool_id == "closing.prepare@1":
+            return PolicyDecision(
+                decision=PolicyDecisionName.ALLOW,
+                rule_ids=[CLOSE_002, SEC_003, INT_001, INT_003, INTP_001],
+                reason_code="close_preparation_read",
+            )
+        if arguments.get("day_exists") is False:
+            return PolicyDecision(
+                decision=PolicyDecisionName.CLARIFY,
+                rule_ids=[CLOSE_001],
+                reason_code="operational_day_not_started",
+            )
+        amount = arguments.get("counted_amount")
+        if amount is not None and not _is_cash_amount(amount):
+            return PolicyDecision(
+                decision=PolicyDecisionName.DENY,
+                rule_ids=[CLOSE_001],
+                reason_code="counted_amount_invalid",
+            )
+        return PolicyDecision(
+            decision=PolicyDecisionName.ALLOW,
+            rule_ids=[CLOSE_001, SEC_003, INT_001, INT_003, INTP_001],
+            reason_code="cash_count_amount_present",
+        )
+
+
+def _is_cash_amount(value: object) -> bool:
+    if isinstance(value, float):
+        return False
+    try:
+        amount = Decimal(str(value))
+    except (ArithmeticError, TypeError, ValueError):
+        return False
+    exponent = amount.as_tuple().exponent
+    if not isinstance(exponent, int):
+        return False
+    return amount >= 0 and exponent >= -2
 
 
 def build_policy_engine() -> PolicyEngine:

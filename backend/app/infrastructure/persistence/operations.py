@@ -4,16 +4,27 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.domain.operations import DaySummaryTotals, OperationalDay, OperationalDayStatus
+from app.domain.operations import (
+    CashCount,
+    CashCountSource,
+    DaySummaryTotals,
+    OperationalDay,
+    OperationalDayStatus,
+)
 from app.domain.sales import PaymentStatus, SaleSessionStatus
 from app.domain.shared.errors import TenantScopeViolationError, ValidationAppError
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
-from app.infrastructure.persistence.models import OperationalDayRow, PaymentRow, SaleSessionRow
+from app.infrastructure.persistence.models import (
+    CashCountRow,
+    OperationalDayRow,
+    PaymentRow,
+    SaleSessionRow,
+)
 from app.infrastructure.persistence.rls import set_current_business_id
 
 
@@ -60,6 +71,25 @@ class OperationsRepository:
         if existing is None:
             raise ValidationAppError("operational day could not be ensured")
         return _to_day(existing), False
+
+    def lock_day_for_update(
+        self,
+        *,
+        tenant: TenantContext,
+        business_date: date,
+    ) -> OperationalDay | None:
+        """Serialize cash-count writes on the day row. Never inserts."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(OperationalDayRow)
+            .where(
+                OperationalDayRow.business_id == tenant.business_id,
+                OperationalDayRow.business_date == business_date,
+            )
+            .with_for_update()
+        )
+        return _to_day(row) if row is not None else None
 
     def get_by_date(self, *, tenant: TenantContext, business_date: date) -> OperationalDay | None:
         tenant = _require_tenant(tenant)
@@ -124,6 +154,90 @@ class OperationsRepository:
             currency=currency,
         )
 
+    def expected_cash(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+        currency: str,
+    ) -> str:
+        """Expected cash is that day's `cash_total`; one aggregation, no second SQL path."""
+        totals = self.summarize_day(
+            tenant=tenant,
+            operational_day_id=operational_day_id,
+            currency=currency,
+        )
+        return totals.cash_total
+
+    def get_current_cash_count(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+    ) -> CashCount | None:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(CashCountRow).where(
+                CashCountRow.business_id == tenant.business_id,
+                CashCountRow.operational_day_id == operational_day_id,
+                CashCountRow.superseded_by_id.is_(None),
+            )
+        )
+        return _to_cash_count(row) if row is not None else None
+
+    def mark_superseded(
+        self,
+        *,
+        tenant: TenantContext,
+        previous_id: UUID,
+        new_id: UUID,
+        updated_at: datetime,
+    ) -> None:
+        """Retire the current count before the replacement row exists.
+
+        Issued as an explicit UPDATE and flushed so PostgreSQL sees it before the INSERT of
+        `new_id`: the previous row leaves `uq_cash_counts_current` first, so the immediate partial
+        unique index never holds two current rows. The forward reference is valid at COMMIT through
+        the deferred fk_cash_counts_superseded_by.
+        """
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        result = self._session.execute(
+            update(CashCountRow)
+            .where(
+                CashCountRow.id == previous_id,
+                CashCountRow.business_id == tenant.business_id,
+                CashCountRow.superseded_by_id.is_(None),
+            )
+            .values(superseded_by_id=new_id, updated_at=updated_at)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ValidationAppError("cash count could not be superseded")
+        self._session.flush()
+
+    def insert_cash_count(self, *, tenant: TenantContext, cash_count: CashCount) -> CashCount:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        if cash_count.business_id != tenant.business_id:
+            raise TenantScopeViolationError("cash count business does not match the tenant")
+        row = CashCountRow(
+            id=cash_count.id,
+            business_id=tenant.business_id,
+            operational_day_id=cash_count.operational_day_id,
+            actor_id=cash_count.actor_id,
+            amount=cash_count.amount,
+            currency=cash_count.currency,
+            source=CashCountSource(cash_count.source).value,
+            counted_at=cash_count.counted_at,
+            supersedes_cash_count_id=cash_count.supersedes_cash_count_id,
+            superseded_by_id=None,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _to_cash_count(row)
+
 
 def _money(amount: Decimal | int | str, currency: str) -> str:
     if isinstance(amount, float):
@@ -131,6 +245,23 @@ def _money(amount: Decimal | int | str, currency: str) -> str:
     if not isinstance(amount, (Decimal, str)):
         amount = Decimal(str(amount))
     return Money(amount, currency).to_json()["amount"]
+
+
+def _to_cash_count(row: CashCountRow) -> CashCount:
+    return CashCount(
+        id=row.id,
+        business_id=row.business_id,
+        operational_day_id=row.operational_day_id,
+        actor_id=row.actor_id,
+        amount=row.amount,
+        currency=row.currency,
+        source=CashCountSource(row.source),
+        counted_at=row.counted_at,
+        supersedes_cash_count_id=row.supersedes_cash_count_id,
+        superseded_by_id=row.superseded_by_id,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
 
 
 def _to_day(row: OperationalDayRow) -> OperationalDay:

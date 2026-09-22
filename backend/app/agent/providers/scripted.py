@@ -49,6 +49,30 @@ _PAYMENT_METHOD_CLARIFY = {"pagar", "cheque"}
 _PAYMENT_CLARIFICATION = "¿Cómo pagó? Puedo registrar *efectivo*, *tarjeta* o *transferencia*."
 _DAY_SUMMARY_PHRASES = {"como vamos hoy", "ventas de hoy", "cuanto vendimos hoy"}
 
+_AMOUNT_SLOT = r"\$?\d+(?:[.,]\d{1,2})?"
+_CASH_COUNT_PATTERNS = (
+    re.compile(rf"^tengo (?P<amount>{_AMOUNT_SLOT}) en caja$"),
+    re.compile(rf"^hay (?P<amount>{_AMOUNT_SLOT}) en caja$"),
+    re.compile(rf"^conte (?P<amount>{_AMOUNT_SLOT})$"),
+    re.compile(rf"^caja (?P<amount>{_AMOUNT_SLOT})$"),
+)
+_CLOSE_PREPARATION_PHRASES = {
+    "preparar el cierre",
+    "preparar cierre",
+    "cuanto deberia haber en caja",
+    "efectivo esperado",
+}
+_FINAL_CLOSE_PHRASES = {
+    "cerrar el dia",
+    "cerrar la jornada",
+    "cerrar caja",
+    "confirmar cierre",
+}
+_FINAL_CLOSE_CLARIFICATION = (
+    "Puedo preparar el cierre y comparar el efectivo contado con el esperado. "
+    "Confirmar el cierre del día todavía no está disponible."
+)
+
 
 def normalize_closed_phrase(message: str) -> str:
     folded = unicodedata.normalize("NFKD", message)
@@ -60,6 +84,15 @@ def normalize_closed_phrase(message: str) -> str:
     if folded[-1:] in "?!":
         folded = folded[:-1].rstrip()
     return folded
+
+
+def parse_counted_phrase(normalized: str) -> str | None:
+    """Closed cash-count grammar. One numeric slot, no thousands separators, no bare amount."""
+    for pattern in _CASH_COUNT_PATTERNS:
+        matched = pattern.match(normalized)
+        if matched is not None:
+            return matched.group("amount").lstrip("$").replace(",", ".")
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +162,24 @@ class ScriptedLLMProvider:
             return AgentDecision(
                 intent="day_summary",
                 candidate_tool="operational_day.summary@1",
+            )
+        counted_amount = parse_counted_phrase(normalized)
+        if counted_amount is not None:
+            return AgentDecision(
+                intent="record_cash_count",
+                counted_amount=counted_amount,
+                candidate_tool="closing.submit_cash_count@1",
+                entities=[AgentEntity(name="counted_amount", value=counted_amount, provenance="user")],
+            )
+        if normalized in _CLOSE_PREPARATION_PHRASES:
+            return AgentDecision(
+                intent="close_preparation",
+                candidate_tool="closing.prepare@1",
+            )
+        if normalized in _FINAL_CLOSE_PHRASES:
+            return AgentDecision(
+                intent="unsupported",
+                clarification_question=_FINAL_CLOSE_CLARIFICATION,
             )
         parsed = parse_sale_utterance(message)
         if parsed is None:

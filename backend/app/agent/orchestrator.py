@@ -11,7 +11,12 @@ from app.agent.tools import ToolRegistry
 from app.application.pending import InMemoryPendingClarificationStore
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
 from app.application.workflows.commit_sale_session import CommitSaleSession
+from app.application.workflows.get_daily_close_preparation import (
+    GetDailyClosePreparation,
+    preparation_ui_data,
+)
 from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
+from app.application.workflows.record_cash_count import RecordCashCount
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
 from app.domain.shared.tenant import TenantContext
 from app.policies import PolicyEngine, PolicyRequest
@@ -30,6 +35,8 @@ class FoundationOrchestrator:
     totalize: TotalizeSaleSession | None = None
     commit: CommitSaleSession | None = None
     day_summary: GetOperationalDaySummary | None = None
+    record_cash_count: RecordCashCount | None = None
+    close_preparation: GetDailyClosePreparation | None = None
     ui_composer: GenerativeUIComposer | None = None
     pending: InMemoryPendingClarificationStore | None = None
 
@@ -48,6 +55,12 @@ class FoundationOrchestrator:
 
         if decision.intent == "day_summary" or decision.candidate_tool == "operational_day.summary@1":
             return self._handle_day_summary(decision, context, tenant)
+
+        if decision.intent == "record_cash_count" or decision.candidate_tool == "closing.submit_cash_count@1":
+            return self._handle_cash_count(decision, message, context, tenant, conversation_id)
+
+        if decision.intent == "close_preparation" or decision.candidate_tool == "closing.prepare@1":
+            return self._handle_close_preparation(decision, context, tenant)
 
         if decision.intent == "commit_sale" or decision.candidate_tool == "sale.commit@1":
             return self._handle_commit(decision, message, context, tenant, conversation_id)
@@ -306,6 +319,84 @@ class FoundationOrchestrator:
             )
             ui = [self.ui_composer.compose(contract)]
         return AgentResponse(text=result["text"], ui=ui)
+
+    def _handle_cash_count(
+        self,
+        decision: AgentDecision,
+        message: str,
+        context: dict[str, Any],
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+    ) -> AgentResponse:
+        registered = self.tools.is_registered("closing.submit_cash_count@1")
+        policy = self.policies.evaluate(
+            PolicyRequest(
+                action="execute_tool",
+                tool_id="closing.submit_cash_count@1",
+                tool_registered=registered,
+                from_llm=True,
+                arguments={"counted_amount": decision.counted_amount},
+            )
+        )
+        if not registered or policy.decision.value == "deny":
+            return AgentResponse(
+                text=decision.clarification_question or "That action is not available.",
+                ui=[],
+            )
+        if self.record_cash_count is None or tenant is None or decision.counted_amount is None:
+            return AgentResponse(text="That action is not available.", ui=[])
+        result = self.record_cash_count.execute(
+            tenant=tenant,
+            conversation_id=conversation_id,
+            counted_amount=decision.counted_amount,
+            idempotency_key=context["idempotency_key"],
+            correlation_id=context.get("correlation_id", "unknown"),
+            policy=policy,
+            fail_after_write=bool(context.get("fail_after_write")),
+            raw_message=message,
+            counted_at=context.get("now"),
+        )
+        if result.kind in {"clarify", "deny"}:
+            return AgentResponse(text=result.text, ui=[])
+        return AgentResponse(text=result.text, ui=self._preparation_ui(result.payload))
+
+    def _handle_close_preparation(
+        self,
+        decision: AgentDecision,
+        context: dict[str, Any],
+        tenant: TenantContext | None,
+    ) -> AgentResponse:
+        registered = self.tools.is_registered("closing.prepare@1")
+        policy = self.policies.evaluate(
+            PolicyRequest(
+                action="execute_tool",
+                tool_id="closing.prepare@1",
+                tool_registered=registered,
+                from_llm=True,
+                arguments={},
+            )
+        )
+        if not registered or policy.decision.value == "deny":
+            return AgentResponse(
+                text=decision.clarification_question or "That action is not available.",
+                ui=[],
+            )
+        if self.close_preparation is None or tenant is None:
+            return AgentResponse(text="That action is not available.", ui=[])
+        payload = self.close_preparation.execute(tenant=tenant, now=context.get("now"))
+        return AgentResponse(text=payload["text"], ui=self._preparation_ui(payload))
+
+    def _preparation_ui(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if self.ui_composer is None:
+            return []
+        contract = GenerativeUIContract(
+            component="daily_close_preparation",
+            version=1,
+            data=preparation_ui_data(payload),
+            actions=[],
+            fallback_text=payload["text"],
+        )
+        return [self.ui_composer.compose(contract)]
 
     def _merge_pending(
         self,

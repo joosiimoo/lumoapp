@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+_COUNTED_AMOUNT = re.compile(r"^\d+(?:\.\d{1,2})?$")
 
 
 class AgentEntity(BaseModel):
@@ -27,12 +30,22 @@ class AgentDecision(BaseModel):
     quantity: str | None = None
     unit: Literal["gram", "kilogram", "unit", "package"] | None = None
     payment_method: Literal["cash", "card", "transfer"] | None = None
+    counted_amount: str | None = None
 
     @field_validator("intent")
     @classmethod
     def intent_not_empty(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("intent is required")
+        return value
+
+    @field_validator("counted_amount")
+    @classmethod
+    def counted_amount_is_cash(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        if not _COUNTED_AMOUNT.match(value):
+            raise ValueError("counted_amount must be non-negative with at most two decimals")
         return value
 
 

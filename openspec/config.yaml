@@ -19,18 +19,22 @@ context: |
   - Change `build-a-conversational-sale-session` is archived and complete.
   - Change `build-a-sale-payment-and-completion` is archived and complete.
   - Change `build-a-operational-day-foundation` is archived and complete.
+  - Change `build-a-daily-close-foundation` is archived and complete.
   - There is no active OpenSpec change.
   - Baseline OpenSpec specs under openspec/specs/ include foundation capabilities
     (backend-platform, persistence, tenant-isolation, integrity-foundation,
     ai-native-contracts, mobile-shell, lumo-design-system) plus catalog-foundation,
     sales-session-foundation, conversational-sale-runtime, sale-item-added-ui,
     conversational-sale-session, sale-summary-ui, sale-payment,
-    sale-confirmed-ui, operational-day-foundation, and operational-day-summary-ui.
+    sale-confirmed-ui, operational-day-foundation, operational-day-summary-ui,
+    cash-count-foundation, daily-close-preparation, and daily-close-preparation-ui.
   - Registered tools: `catalog.resolve_product@1`, `sale.start@1`,
     `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`,
-    `operational_day.summary@1`.
+    `operational_day.summary@1`, `closing.submit_cash_count@1`,
+    `closing.prepare@1`.
     Registered UI: `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`,
-    `operational_day_summary@1`.
+    `operational_day_summary@1`, `daily_close_preparation@1`.
+    `closing.confirm@1` and `closing.reopen@1` are NOT registered.
   - `SaleSession.status` is `open`, `ready_to_charge`, or `confirmed`.
     `ready_to_charge` is a pre-payment state. `confirmed` is operational completion
     with one recorded `Payment` in `sales.payments`.
@@ -50,8 +54,11 @@ context: |
     default host mappings to 5433.
   - Foundation schemas present: identity, audit, platform
   - Product schemas present: catalog, sales, operations
+  - Schema `operations` holds `operational_days` and `cash_counts`
   - Product schemas still absent: workflow, memory
-  - Daily Close is not implemented. `OperationalDay.status` is `open` only.
+  - Daily Close confirmation is not implemented. `OperationalDay.status` is `open`
+    only. Cash counts and close preparation exist; the close is never confirmed,
+    and `cash_difference` is always derived, never stored.
   - The API image installs Alpine `tzdata` so stdlib `zoneinfo` can resolve the business IANA timezone. The domain does not hardcode a zone.
   - Money: numeric/Decimal only; never binary float; server-side deterministic calc
   - IDs: UUIDv7; timestamps timestamptz UTC; operational date in business timezone

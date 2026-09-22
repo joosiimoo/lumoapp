@@ -74,6 +74,7 @@ class GenerativeUIRenderer {
     'sale_summary': 1,
     'sale_confirmed': 1,
     'operational_day_summary': 1,
+    'daily_close_preparation': 1,
   };
 
   GenerativeUiRenderResult render(GenerativeUiContract contract) {
@@ -101,6 +102,9 @@ class GenerativeUIRenderer {
     }
     if (contract.component == 'operational_day_summary') {
       return OperationalDaySummaryView(contract: contract);
+    }
+    if (contract.component == 'daily_close_preparation') {
+      return DailyClosePreparationView(contract: contract);
     }
     return SaleItemAddedView(contract: contract);
   }
@@ -468,5 +472,113 @@ class OperationalDaySummaryView extends StatelessWidget {
       return '';
     }
     return MoneyDisplay.format(amount: value, currency: currency);
+  }
+}
+
+class DailyClosePreparationView extends StatelessWidget {
+  const DailyClosePreparationView({super.key, required this.contract});
+
+  final GenerativeUiContract contract;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = contract.data;
+    final status = '${data['cash_status'] ?? ''}';
+    final businessDate = OperationalDaySummaryView.displayBusinessDate('${data['business_date'] ?? ''}');
+    final expected = formatMoney(data['expected_cash']);
+    final counted = formatMoney(data['counted_cash']);
+    final difference = formatMoney(data['cash_difference']);
+    final notCounted = status == 'not_counted';
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: LumoMark(),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: LumoSizes.contentMaxWidth),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(contract.fallbackText, style: LumoTypography.body),
+                const SizedBox(height: 8),
+                LumoCard(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: LumoStatusChip(label: statusLabel(status)),
+                      ),
+                      const SizedBox(height: 10),
+                      Text('Cierre $businessDate', style: LumoTypography.caption),
+                      const SizedBox(height: 8),
+                      _metricRow('EFECTIVO ESPERADO', expected),
+                      if (notCounted)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text('Falta contar efectivo', style: LumoTypography.cardTitle),
+                        )
+                      else ...[
+                        _metricRow('CONTADO', counted),
+                        _metricRow('DIFERENCIA', difference),
+                      ],
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static Widget _metricRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: LumoTypography.sectionLabel)),
+          Text(value, style: LumoTypography.metricSm),
+        ],
+      ),
+    );
+  }
+
+  static String statusLabel(String status) {
+    switch (status) {
+      case 'not_counted':
+        return 'Sin contar';
+      case 'balanced':
+        return 'Caja cuadrada';
+      case 'over':
+        return 'Sobrante';
+      case 'short':
+        return 'Faltante';
+      default:
+        return status;
+    }
+  }
+
+  /// Formats the server decimal string. The sign is moved in front of the symbol; no amount is
+  /// derived, compared, or summed on the client.
+  static String formatMoney(Object? value) {
+    if (value is! Map) {
+      return '';
+    }
+    final amount = '${value['amount'] ?? ''}';
+    final currency = '${value['currency'] ?? 'MXN'}';
+    if (amount.isEmpty) {
+      return '';
+    }
+    if (amount.startsWith('-')) {
+      return '-${MoneyDisplay.format(amount: amount.substring(1), currency: currency)}';
+    }
+    return MoneyDisplay.format(amount: amount, currency: currency);
   }
 }

@@ -144,6 +144,59 @@ OPERATIONAL_DAY_SUMMARY = ToolRegistration(
     side_effect="read",
 )
 
+_PREPARATION_OUTPUT_REQUIRED = [
+    "operational_day_id",
+    "business_date",
+    "day_status",
+    "currency",
+    "sale_count",
+    "expected_cash",
+    "counted_cash",
+    "cash_difference",
+    "cash_status",
+    "counted_at",
+    "cash_count_id",
+]
+
+SUBMIT_CASH_COUNT = ToolRegistration(
+    tool_id="closing.submit_cash_count",
+    version=1,
+    input_schema={
+        "type": "object",
+        "required": ["amount"],
+        "additionalProperties": False,
+        "properties": {"amount": {"type": "string"}},
+    },
+    output_schema={
+        "type": "object",
+        "required": [*_PREPARATION_OUTPUT_REQUIRED, "supersedes_cash_count_id"],
+        "properties": {
+            "cash_status": {"enum": ["not_counted", "balanced", "over", "short"]},
+        },
+    },
+    permission="closing.submit_cash_count",
+    policy_id="CLOSE-001",
+    requires_idempotency=True,
+    side_effect="write",
+)
+
+CLOSING_PREPARE = ToolRegistration(
+    tool_id="closing.prepare",
+    version=1,
+    input_schema={"type": "object", "additionalProperties": False, "properties": {}},
+    output_schema={
+        "type": "object",
+        "required": _PREPARATION_OUTPUT_REQUIRED,
+        "properties": {
+            "cash_status": {"enum": ["not_counted", "balanced", "over", "short"]},
+        },
+    },
+    permission="closing.submit_cash_count",
+    policy_id="CLOSE-002",
+    requires_idempotency=False,
+    side_effect="read",
+)
+
 SALE_SUMMARY = GenerativeUIRegistration(
     component="sale_summary",
     version=1,
@@ -195,8 +248,30 @@ OPERATIONAL_DAY_SUMMARY_UI = GenerativeUIRegistration(
 )
 
 
+DAILY_CLOSE_PREPARATION_UI = GenerativeUIRegistration(
+    component="daily_close_preparation",
+    version=1,
+    data_schema={
+        "type": "object",
+        "required": _PREPARATION_OUTPUT_REQUIRED,
+        "properties": {
+            "cash_status": {"enum": ["not_counted", "balanced", "over", "short"]},
+        },
+    },
+)
+
+
 def register_conversational_sale_tools(registry: ToolRegistry) -> None:
-    for item in (RESOLVE_PRODUCT, START_SALE, ADD_ITEM, TOTALIZE_SALE, COMMIT_SALE, OPERATIONAL_DAY_SUMMARY):
+    for item in (
+        RESOLVE_PRODUCT,
+        START_SALE,
+        ADD_ITEM,
+        TOTALIZE_SALE,
+        COMMIT_SALE,
+        OPERATIONAL_DAY_SUMMARY,
+        SUBMIT_CASH_COUNT,
+        CLOSING_PREPARE,
+    ):
         registry.register(item)
 
 
@@ -214,3 +289,7 @@ def register_sale_confirmed_ui(registry: GenerativeUIRegistry) -> None:
 
 def register_operational_day_summary_ui(registry: GenerativeUIRegistry) -> None:
     registry.register(OPERATIONAL_DAY_SUMMARY_UI)
+
+
+def register_daily_close_preparation_ui(registry: GenerativeUIRegistry) -> None:
+    registry.register(DAILY_CLOSE_PREPARATION_UI)

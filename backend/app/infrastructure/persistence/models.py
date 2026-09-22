@@ -17,6 +17,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     Uuid,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
@@ -181,6 +182,61 @@ class OperationalDayRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     business_date: Mapped[date] = mapped_column(Date, nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
     timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class CashCountRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "cash_counts"
+    __table_args__ = (
+        UniqueConstraint("id", "business_id", name="uq_cash_counts_id_business"),
+        UniqueConstraint("supersedes_cash_count_id", name="uq_cash_counts_supersedes"),
+        UniqueConstraint("superseded_by_id", name="uq_cash_counts_superseded_by"),
+        Index("ix_cash_counts_business_id", "business_id"),
+        Index("ix_cash_counts_operational_day_id", "operational_day_id"),
+        Index(
+            "uq_cash_counts_current",
+            "operational_day_id",
+            unique=True,
+            postgresql_where=text("superseded_by_id IS NULL"),
+        ),
+        CheckConstraint("amount >= 0", name="ck_cash_counts_amount_non_negative"),
+        CheckConstraint("source IN ('manual_capture')", name="ck_cash_counts_source"),
+        CheckConstraint(
+            "supersedes_cash_count_id IS DISTINCT FROM id",
+            name="ck_cash_counts_supersedes_not_self",
+        ),
+        CheckConstraint(
+            "superseded_by_id IS DISTINCT FROM id",
+            name="ck_cash_counts_superseded_by_not_self",
+        ),
+        ForeignKeyConstraint(
+            ["operational_day_id", "business_id"],
+            ["operations.operational_days.id", "operations.operational_days.business_id"],
+            name="fk_cash_counts_operational_day",
+        ),
+        ForeignKeyConstraint(
+            ["supersedes_cash_count_id", "business_id"],
+            ["operations.cash_counts.id", "operations.cash_counts.business_id"],
+            name="fk_cash_counts_supersedes",
+        ),
+        ForeignKeyConstraint(
+            ["superseded_by_id", "business_id"],
+            ["operations.cash_counts.id", "operations.cash_counts.business_id"],
+            name="fk_cash_counts_superseded_by",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    operational_day_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="manual_capture")
+    counted_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    supersedes_cash_count_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    superseded_by_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
 
 
 class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):

@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.persistence.models import (
     AuditEventRow,
+    CashCountRow,
     IdempotencyRecordRow,
     OperationalDayRow,
     OutboxEventRow,
@@ -28,6 +29,7 @@ SALE_AUDIT_ACTIONS = (
     "sale.totalize@1",
     "sale.commit@1",
     "operational_day.opened",
+    "closing.submit_cash_count@1",
 )
 SALE_OUTBOX_EVENTS = (
     "sale.item.added",
@@ -35,11 +37,13 @@ SALE_OUTBOX_EVENTS = (
     "sale.confirmed",
     "payment.recorded",
     "operational_day.opened",
+    "cash_count.recorded",
 )
 SALE_MESSAGE_OPERATIONS = (
     "lumo.message.add_sale_item",
     "lumo.message.totalize_sale",
     "lumo.message.commit_sale",
+    "lumo.message.record_cash_count",
 )
 SALE_OUTBOX_EVENT = "sale.item.added"
 SALE_MESSAGE_OPERATION = "lumo.message.add_sale_item"
@@ -50,6 +54,7 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(PaymentRow.__table__.delete().where(PaymentRow.business_id == business_id))
     session.execute(SaleItemRow.__table__.delete().where(SaleItemRow.business_id == business_id))
     session.execute(SaleSessionRow.__table__.delete().where(SaleSessionRow.business_id == business_id))
+    session.execute(CashCountRow.__table__.delete().where(CashCountRow.business_id == business_id))
     session.execute(OperationalDayRow.__table__.delete().where(OperationalDayRow.business_id == business_id))
     session.execute(
         OutboxEventRow.__table__.delete().where(
@@ -89,7 +94,29 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
         str(row.id)
         for row in session.scalars(select(OperationalDayRow).where(OperationalDayRow.business_id == business_id)).all()
     }
+    cash_counts = session.scalars(
+        select(CashCountRow).where(CashCountRow.business_id == business_id)
+    ).all()
+    cash_count_ids = {str(row.id) for row in cash_counts}
     orphans: list[str] = []
+    current_per_day: dict[str, int] = {}
+    for count in cash_counts:
+        if str(count.operational_day_id) not in day_ids:
+            orphans.append(f"cash_count:{count.id}:missing_day={count.operational_day_id}")
+        # Under this tenant's RLS a link into another business is indistinguishable from a link
+        # into nothing: either way the (id, business_id) pair is invisible here, and both are wrong.
+        for column, value in (
+            ("supersedes", count.supersedes_cash_count_id),
+            ("superseded_by", count.superseded_by_id),
+        ):
+            if value is not None and str(value) not in cash_count_ids:
+                orphans.append(f"cash_count:{count.id}:{column}_broken_or_cross_tenant={value}")
+        if count.superseded_by_id is None:
+            key = str(count.operational_day_id)
+            current_per_day[key] = current_per_day.get(key, 0) + 1
+    for day_id, current in current_per_day.items():
+        if current > 1:
+            orphans.append(f"cash_count:day={day_id}:current_rows={current}")
     for sale in session.scalars(select(SaleSessionRow).where(SaleSessionRow.business_id == business_id)).all():
         if sale.operational_day_id is not None and str(sale.operational_day_id) not in day_ids:
             orphans.append(f"session:{sale.id}:missing_day={sale.operational_day_id}")
@@ -118,6 +145,9 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
             orphans.append(f"outbox:{event.id}:missing_payment={pid}")
         if did and did not in day_ids:
             orphans.append(f"outbox:{event.id}:missing_day={did}")
+        ccid = payload.get("cash_count_id")
+        if ccid and ccid not in cash_count_ids:
+            orphans.append(f"outbox:{event.id}:missing_cash_count={ccid}")
     for event in session.scalars(
         select(AuditEventRow).where(
             AuditEventRow.business_id == business_id,
@@ -137,4 +167,7 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
             orphans.append(f"audit:{event.id}:missing_payment={pid}")
         if did and did not in day_ids:
             orphans.append(f"audit:{event.id}:missing_day={did}")
+        ccid = payload.get("cash_count_id")
+        if ccid and ccid not in cash_count_ids:
+            orphans.append(f"audit:{event.id}:missing_cash_count={ccid}")
     return orphans

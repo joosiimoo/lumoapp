@@ -129,6 +129,35 @@ Map<String, dynamic> _summaryContract({
   };
 }
 
+Map<String, dynamic> _preparationContract({
+  String expected = '22.50',
+  String counted = '20.00',
+  String difference = '-2.50',
+  String status = 'short',
+  String word = 'Faltante',
+}) {
+  return {
+    'component': 'daily_close_preparation',
+    'version': 1,
+    'data': {
+      'operational_day_id': '01900000-0000-7000-8000-000000000099',
+      'business_date': '2026-09-21',
+      'day_status': 'open',
+      'currency': 'MXN',
+      'sale_count': 3,
+      'expected_cash': {'amount': expected, 'currency': 'MXN'},
+      'counted_cash': {'amount': counted, 'currency': 'MXN'},
+      'cash_difference': {'amount': difference, 'currency': 'MXN'},
+      'cash_status': status,
+      'counted_at': '2026-09-21T23:10:00+00:00',
+      'cash_count_id': '01900000-0000-7000-8000-0000000000aa',
+    },
+    'actions': [],
+    'fallback_text':
+        'Cierre 2026-09-21 · Efectivo esperado \$$expected · Contado \$$counted · Diferencia $difference · $word',
+  };
+}
+
 http.Response _json(Map<String, dynamic> body) {
   return http.Response(jsonEncode(body), 200, headers: {'content-type': 'application/json'});
 }
@@ -615,5 +644,129 @@ void main() {
     expect(conversationIds.first, isNotEmpty);
     expect(find.text('2026-09-21'), findsWidgets);
     expect(find.text('Cerrar'), findsNothing);
+  });
+
+  test('cash status labels map canonical values without deriving them', () {
+    expect(DailyClosePreparationView.statusLabel('not_counted'), 'Sin contar');
+    expect(DailyClosePreparationView.statusLabel('balanced'), 'Caja cuadrada');
+    expect(DailyClosePreparationView.statusLabel('over'), 'Sobrante');
+    expect(DailyClosePreparationView.statusLabel('short'), 'Faltante');
+  });
+
+  testWidgets('daily close preparation renders server amounts without subtracting', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson(_preparationContract());
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('Cierre 2026-09-21'), findsOneWidget);
+    expect(find.text('EFECTIVO ESPERADO'), findsOneWidget);
+    expect(find.text('CONTADO'), findsOneWidget);
+    expect(find.text('DIFERENCIA'), findsOneWidget);
+    expect(find.text('\$22.50'), findsOneWidget);
+    expect(find.text('\$20.00'), findsOneWidget);
+    expect(find.text('-\$2.50'), findsOneWidget);
+    expect(find.text('Faltante'), findsOneWidget);
+    expect(find.text('Falta contar efectivo'), findsNothing);
+    expect(find.text('Cerrar el día'), findsNothing);
+    expect(find.text('Confirmar cierre'), findsNothing);
+    expect(find.text('Reabrir'), findsNothing);
+    expect(find.byType(LumoCard), findsOneWidget);
+    expect(find.byType(LumoStatusChip), findsOneWidget);
+  });
+
+  testWidgets('daily close preparation shows a server overage as given', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson(
+      _preparationContract(counted: '25.00', difference: '2.50', status: 'over', word: 'Sobrante'),
+    );
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('\$2.50'), findsOneWidget);
+    expect(find.text('-\$2.50'), findsNothing);
+    expect(find.text('Sobrante'), findsOneWidget);
+  });
+
+  testWidgets('not counted state shows no counted amount and no difference', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      'component': 'daily_close_preparation',
+      'version': 1,
+      'fallback_text': 'Cierre 2026-09-21 · Efectivo esperado \$22.50 · Falta contar efectivo',
+      'actions': [],
+      'data': {
+        'operational_day_id': '01900000-0000-7000-8000-000000000099',
+        'business_date': '2026-09-21',
+        'day_status': 'open',
+        'currency': 'MXN',
+        'sale_count': 1,
+        'expected_cash': {'amount': '22.50', 'currency': 'MXN'},
+        'counted_cash': null,
+        'cash_difference': null,
+        'cash_status': 'not_counted',
+        'counted_at': null,
+        'cash_count_id': null,
+      },
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('Sin contar'), findsOneWidget);
+    expect(find.text('Falta contar efectivo'), findsOneWidget);
+    expect(find.text('\$22.50'), findsOneWidget);
+    expect(find.text('CONTADO'), findsNothing);
+    expect(find.text('DIFERENCIA'), findsNothing);
+    expect(find.text('\$0.00'), findsNothing);
+  });
+
+  test('unknown version of daily_close_preparation falls back', () {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._preparationContract(),
+      'version': 2,
+      'fallback_text': 'Cierre no disponible',
+    });
+    expect(renderer.render(contract).handled, isFalse);
+    expect(renderer.canRunActions(contract), isFalse);
+    expect(renderer.render(contract).text, 'Cierre no disponible');
+  });
+
+  testWidgets('cash count and preparation reuse the Inicio conversation_id', (tester) async {
+    final conversationIds = <String>[];
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET') {
+        return _sessionOk();
+      }
+      conversationIds.add(jsonDecode(request.body)['conversation_id'] as String);
+      final message = jsonDecode(request.body)['message'] as String;
+      if (message == 'tengo 20 en caja') {
+        return _json({
+          'message_id': 'm-count',
+          'status': 'completed',
+          'text': _preparationContract()['fallback_text'],
+          'ui': [_preparationContract()],
+          'correlation_id': 'c-count',
+        });
+      }
+      return _json({
+        'message_id': 'm-prep',
+        'status': 'completed',
+        'text': _preparationContract()['fallback_text'],
+        'ui': [_preparationContract()],
+        'correlation_id': 'c-prep',
+      });
+    });
+    await tester.pumpWidget(LumoApp(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      apiClient: _client(httpClient),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'tengo 20 en caja');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'preparar el cierre');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    expect(conversationIds, hasLength(2));
+    expect(conversationIds[1], conversationIds[0]);
+    expect(conversationIds.first, isNotEmpty);
+    expect(find.text('tengo 20 en caja'), findsOneWidget);
+    expect(find.text('EFECTIVO ESPERADO'), findsWidgets);
+    expect(find.text('Confirmar cierre'), findsNothing);
   });
 }

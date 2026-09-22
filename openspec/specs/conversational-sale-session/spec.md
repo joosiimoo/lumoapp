@@ -86,7 +86,11 @@ An explicit payment intent against a `ready_to_charge` session MUST lock that se
 - card: `tarjeta`, `pagar con tarjeta`, `con tarjeta`
 - transfer: `transferencia`, `pagar por transferencia`, `pagar con transferencia`, `por transferencia`
 
-`pagar`, `cobrar`, mixed-method phrases, and item+payment utterances MUST NOT commit. Commit MUST NOT create an `OperationalDay`, CashCount, WorkItem, or invoice.
+`pagar`, `cobrar`, mixed-method phrases, and item+payment utterances MUST NOT commit.
+
+Commit MUST ensure and attach the `OperationalDay` for the confirmation's business date exactly as `operational-day-foundation` requires: the same transaction MUST resolve or lazily create the one open day for that date and MUST set the confirmed session's `operational_day_id`. This supersedes the earlier statement that commit MUST NOT create an `OperationalDay`, which contradicted the implemented baseline.
+
+Commit MUST NOT create a `CashCount`, a `WorkItem`, or an invoice, MUST NOT perform a final Daily Close, MUST NOT change `OperationalDay.status`, and MUST NOT compute or persist expected cash, counted cash, or a cash difference. Cash counting is owned by `cash-count-foundation` and requires a separate explicit write.
 
 #### Scenario: Cash completion
 - **WHEN** a conversation has added Zanahoria `22.50`, Tomate `10.00`, and Galleta A `24.00`, posted `totalizar`, then posted `efectivo`
@@ -99,6 +103,14 @@ An explicit payment intent against a `ready_to_charge` session MUST lock that se
 #### Scenario: Transfer completion
 - **WHEN** a `ready_to_charge` session exists and the actor posts `transferencia`
 - **THEN** the session MUST be `confirmed` and the `Payment.method` MUST be `transfer`
+
+#### Scenario: Commit attaches the operational day
+- **WHEN** the first sale of the business date is confirmed
+- **THEN** exactly one open `operations.operational_days` row MUST exist for that business and date and the confirmed session's `operational_day_id` MUST reference it
+
+#### Scenario: Commit does not count cash or close
+- **WHEN** a sale is confirmed with `efectivo`
+- **THEN** `operations.cash_counts` MUST NOT gain a row, no `WorkItem` or invoice MUST be created, no Daily Close MUST be performed, and the day's `status` MUST remain `open`
 
 ### Requirement: Repeat commit on confirmed is a stable read-back
 When the latest session for the interaction context is `confirmed` and no newer active session exists, another semantic payment intent MUST return the current `sale_confirmed@1` and MUST NOT create a second `Payment`, MUST NOT emit another `sale.confirmed` or `payment.recorded` outbox event, and MUST NOT create another transition audit. Replaying the original `Idempotency-Key` and payload hash MUST return the original persisted response. A different `Idempotency-Key` MUST be treated as a non-mutating read-back and MUST NOT insert a new `lumo.message.commit_sale` idempotency record.
