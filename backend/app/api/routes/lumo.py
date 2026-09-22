@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Header, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -8,6 +10,7 @@ from app.agent.orchestrator import FoundationOrchestrator
 from app.api.dependencies import get_correlation_id, get_db, get_tenant
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
 from app.application.workflows.commit_sale_session import CommitSaleSession
+from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
 from app.domain.shared.errors import ForbiddenError, ValidationAppError
 from app.domain.shared.ids import new_uuid7
@@ -15,6 +18,7 @@ from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.audit import SqlAlchemyAuditService
 from app.infrastructure.persistence.catalog_sales import CatalogRepository, SalesRepository
 from app.infrastructure.persistence.idempotency import SqlAlchemyIdempotencyService
+from app.infrastructure.persistence.operations import OperationsRepository
 from app.infrastructure.persistence.outbox import SqlAlchemyOutbox
 from app.infrastructure.persistence.repositories import IdentityRepository
 
@@ -53,6 +57,7 @@ def post_lumo_message(
     catalog = CatalogRepository(session)
     sales = SalesRepository(session)
     identities = IdentityRepository(session)
+    operations = OperationsRepository(session)
     audit = SqlAlchemyAuditService(session)
     idempotency = SqlAlchemyIdempotencyService(session)
     outbox = SqlAlchemyOutbox(session)
@@ -72,10 +77,13 @@ def post_lumo_message(
     )
     commit = CommitSaleSession(
         sales=sales,
+        identities=identities,
+        operations=operations,
         audit=audit,
         idempotency=idempotency,
         outbox=outbox,
     )
+    day_summary = GetOperationalDaySummary(identities=identities, operations=operations)
     orchestrator = FoundationOrchestrator(
         provider=request.app.state.llm_provider,
         tools=request.app.state.tool_registry,
@@ -83,6 +91,7 @@ def post_lumo_message(
         workflow=workflow,
         totalize=totalize,
         commit=commit,
+        day_summary=day_summary,
         ui_composer=request.app.state.generative_ui_composer,
         pending=getattr(request.app.state, "pending_clarifications", None),
     )
@@ -99,6 +108,7 @@ def post_lumo_message(
             "idempotency_key": idempotency_key,
             "correlation_id": correlation_id,
             "fail_after_write": fail_after_write,
+            "now": _debug_now(request),
             "client_context": payload.client_context or {},
         },
     )
@@ -109,6 +119,17 @@ def post_lumo_message(
         "ui": response.ui,
         "correlation_id": correlation_id,
     }
+
+
+def _debug_now(request: Request) -> datetime | None:
+    raw = request.headers.get("x-debug-now")
+    settings = request.app.state.settings
+    if not raw or not settings.allows_debug_fail_after_write:
+        return None
+    parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValidationAppError("debug clock must be timezone-aware UTC")
+    return parsed.astimezone(UTC)
 
 
 @router.get("/api/v1/dev/carrota-token")

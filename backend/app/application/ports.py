@@ -77,6 +77,15 @@ class SalesPort(Protocol):
         status: Any,
     ) -> Any: ...
 
+    def confirm_session(
+        self,
+        *,
+        tenant: TenantContext,
+        sale_session_id: UUID,
+        operational_day_id: UUID,
+        confirmed_at: Any,
+    ) -> Any: ...
+
     def add_session(self, *, tenant: TenantContext, session: Any) -> Any: ...
 
     def add_item(self, *, tenant: TenantContext, item: Any) -> Any: ...

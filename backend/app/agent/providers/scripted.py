@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any
 
@@ -46,6 +47,19 @@ _PAYMENT_PHRASES = {
 }
 _PAYMENT_METHOD_CLARIFY = {"pagar", "cheque"}
 _PAYMENT_CLARIFICATION = "¿Cómo pagó? Puedo registrar *efectivo*, *tarjeta* o *transferencia*."
+_DAY_SUMMARY_PHRASES = {"como vamos hoy", "ventas de hoy", "cuanto vendimos hoy"}
+
+
+def normalize_closed_phrase(message: str) -> str:
+    folded = unicodedata.normalize("NFKD", message)
+    folded = "".join(character for character in folded if not unicodedata.combining(character))
+    folded = folded.lower()
+    folded = re.sub(r"\s+", " ", folded).strip()
+    if folded[:1] in "¿¡":
+        folded = folded[1:].lstrip()
+    if folded[-1:] in "?!":
+        folded = folded[:-1].rstrip()
+    return folded
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +107,7 @@ class ScriptedLLMProvider:
         allowed_tools: list[str],
     ) -> AgentDecision:
         _ = (context, allowed_tools)
-        normalized = message.strip().lower()
+        normalized = normalize_closed_phrase(message)
         payment_method = _PAYMENT_PHRASES.get(normalized)
         if payment_method is not None:
             return AgentDecision(
@@ -110,6 +124,11 @@ class ScriptedLLMProvider:
             return AgentDecision(
                 intent="totalize_sale",
                 candidate_tool="sale.totalize@1",
+            )
+        if normalized in _DAY_SUMMARY_PHRASES:
+            return AgentDecision(
+                intent="day_summary",
+                candidate_tool="operational_day.summary@1",
             )
         parsed = parse_sale_utterance(message)
         if parsed is None:

@@ -1,41 +1,4 @@
-## Purpose
-
-PostgreSQL is the system of record. Persistence uses SQLAlchemy 2, Alembic, UUIDv7, `timestamptz`, Decimal money, foundation schemas `identity`, `audit`, and `platform`, and product schemas `catalog` and `sales` (`sale_sessions`, `sale_items`, `payments`). Schemas `operations`, `workflow`, and `memory` remain absent.
-
-## Requirements
-
-### Requirement: PostgreSQL is the system of record
-Confirmed application state MUST persist only in PostgreSQL. The backend MUST use SQLAlchemy 2 in the infrastructure layer and Alembic for schema migrations. Domain entities MUST NOT be SQLAlchemy models.
-
-#### Scenario: Migration applies
-- **WHEN** Alembic upgrade runs against an empty database
-- **THEN** the platform tables required by this change MUST exist
-
-#### Scenario: ORM isolation
-- **WHEN** domain modules are imported
-- **THEN** they MUST NOT load SQLAlchemy mapped classes
-
-### Requirement: Identity, money, and time conventions
-New persisted identifiers MUST be UUIDv7. Timestamps MUST be stored as `timestamptz` in UTC. Monetary amounts MUST use exact decimal types (`numeric` in PostgreSQL, `Decimal` in Python) and MUST NEVER use binary floating point. JSON money representations MUST be decimal strings plus an ISO 4217 currency code.
-
-#### Scenario: Money type rejection
-- **WHEN** code attempts to persist or calculate money with a `float`
-- **THEN** the typed money helper or schema MUST reject the value
-
-#### Scenario: Timestamp storage
-- **WHEN** a platform row is inserted
-- **THEN** its `created_at` MUST be a UTC `timestamptz`
-
-### Requirement: Transaction boundaries
-A use case that mutates state MUST run inside a single database transaction. A failure before commit MUST roll back all writes from that operation, including audit and idempotency updates that belong to the same operation. Success responses MUST be produced only after commit.
-
-#### Scenario: Rollback leaves no partial writes
-- **WHEN** a mutating use case raises after writing a domain row and an audit row in the same transaction
-- **THEN** neither row MUST remain after the request completes
-
-#### Scenario: No success before commit
-- **WHEN** a transaction rolls back
-- **THEN** the API MUST NOT return a success payload for that operation
+## MODIFIED Requirements
 
 ### Requirement: Platform schemas
 Persistence MUST create PostgreSQL schemas `identity`, `audit`, and `platform` for foundation tables, and MUST create product schemas `catalog` and `sales` for `products`, optional `product_aliases`, `sale_sessions`, `sale_items`, and `payments`. This change MUST create product schema `operations` for `operational_days` only. Product schemas `workflow` and `memory` MUST NOT exist. Tables for cash counts and export jobs MUST NOT exist.
@@ -51,13 +14,6 @@ Persistence MUST create PostgreSQL schemas `identity`, `audit`, and `platform` f
 #### Scenario: Operations schema is only the day table
 - **WHEN** Alembic `0005` completes
 - **THEN** PostgreSQL schema `operations` MUST exist with `operational_days`, and schemas `workflow` and `memory` MUST NOT exist
-
-### Requirement: Local PostgreSQL host port
-Local Compose MUST publish the Postgres container, which already listens on `5432` internally, to the host as `5432:5432`. README, pytest defaults, and local scripts MUST use `localhost:5432`. They MUST NOT assume host port `5433`.
-
-#### Scenario: Host mapping
-- **WHEN** a developer runs `docker compose up` locally
-- **THEN** PostgreSQL MUST be reachable on `localhost:5432`
 
 ### Requirement: Sale integrity rows match live mutations
 Committed conversational sale mutations MUST keep `sales.sale_sessions`, `sales.sale_items`, `sales.payments`, `operations.operational_days` referenced by those sessions, related `audit.audit_events`, `platform.outbox_events`, and `platform.idempotency_records` transactionally consistent. Test/reset helpers that remove those mutations MUST delete the related integrity rows in the same transaction, including `sale.totalize@1` / `sale.commit@1` / `operational_day.opened` audit, `sale.ready_to_charge` / `sale.confirmed` / `payment.recorded` / `operational_day.opened` outbox, and `lumo.message.totalize_sale` / `lumo.message.commit_sale` idempotency. Helpers MUST delete sessions before the operational days they reference.
@@ -86,15 +42,10 @@ Migration revision `0005_operational_day` MUST add nullable `operational_day_id`
 - **THEN** the session MUST remain `open`, and no `sale.ready_to_charge` outbox or successful totalize audit/idempotency completion MUST remain
 
 #### Scenario: Commit rollback is consistent
-- **WHEN** commit writes `confirmed`, a `Payment`, audit, outbox, and idempotency row and the transaction fails before commit
+- **WHEN** commit writes `confirmed`, a `Payment`, an OperationalDay, audit, outbox, and idempotency row and the transaction fails before commit
 - **THEN** the session MUST remain `ready_to_charge`, no `Payment` MUST remain, no OperationalDay inserted by that transaction MUST remain, and no `sale.confirmed` / `payment.recorded` / `operational_day.opened` outbox or successful commit idempotency completion MUST remain
 
-### Requirement: Payments table persistence
-Alembic `0004_sale_session_confirmed_payment` MUST create `sales.payments` with `id`, `business_id`, `sale_session_id` (FK to `sales.sale_sessions.id` only, matching `sale_items`), `actor_id`, `method` CHECK (`cash`, `card`, `transfer`), `amount numeric(12,2)`, `currency`, `status` CHECK (`recorded`), `source` CHECK (`manual_capture`), and timestamps. It MUST add UNIQUE (`sale_session_id`), ENABLE and FORCE ROW LEVEL SECURITY, and create policy `tenant_isolation` using `business_id::text = current_setting('app.current_business_id', true)`. Grants MUST match other `sales` tables for `lumo_app`. It MUST NOT add a composite foreign key on `(business_id, sale_session_id)`. Application `add_payment` remains the tenant-match invariant (see `sale-payment`).
-
-#### Scenario: Payments table exists
-- **WHEN** Alembic `0004` completes
-- **THEN** `sales.payments` MUST exist with FORCE RLS enabled and uniqueness on `sale_session_id`
+## ADDED Requirements
 
 ### Requirement: Operational days table persistence
 Alembic revision id MUST be `0005_operational_day` and `down_revision` MUST be `0004_confirmed_payment`. It MUST create `operations.operational_days` with `id`, `business_id`, `business_date` `DATE`, `status` CHECK (`open`), `timezone` `VARCHAR(64)`, and timestamps. It MUST add `UNIQUE (business_id, business_date)`, `UNIQUE (id, business_id)`, ENABLE and FORCE ROW LEVEL SECURITY, policy `tenant_isolation` using `business_id::text = current_setting('app.current_business_id', true)`, and the same `lumo_app` DML grants as `sales.payments`. It MUST add nullable `sales.sale_sessions.operational_day_id` and `confirmed_at`, backfill existing `confirmed` sessions, verify none remain unattached, and only then add the membership CHECK, the composite foreign key `(operational_day_id, business_id)` to `operational_days (id, business_id)`, and an index on `operational_day_id`. Upgrade order MUST be: create schema `operations`; create `operational_days` with RLS and constraints; add nullable `operational_day_id`; add nullable `confirmed_at`; backfill; verify; add the membership CHECK; add the composite FK and index. Downgrade MUST drop the CHECK, the foreign key, and the new index, then the two columns, then the table and `operations` schema, without deleting payments or sale items and without rewriting session status. It MUST NOT create `cash_counts`, `workflow`, or `memory`. A successful upgrade MUST leave FORCE RLS enabled.

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
 
-from app.application.ports import AuditService, IdempotencyService, Outbox, SalesPort
+from app.application.ports import AuditService, IdempotencyService, IdentityPort, Outbox, SalesPort
+from app.domain.operations import InvalidBusinessTimezone, business_date_for
+from app.infrastructure.persistence.base import utcnow
+from app.infrastructure.persistence.operations import OperationsRepository
 from app.application.workflows.totalize_sale_session import _item_payloads
 from app.domain.sales import (
     PAYMENT_METHOD_LABELS,
@@ -19,6 +23,7 @@ from app.domain.sales import (
     classify_commit,
     sum_session_total,
 )
+from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
 from app.policies import PolicyDecision, PolicyRequest
@@ -62,11 +67,15 @@ class CommitSaleSession:
         self,
         *,
         sales: SalesPort,
+        identities: IdentityPort,
+        operations: OperationsRepository,
         audit: AuditService,
         idempotency: IdempotencyService,
         outbox: Outbox,
     ) -> None:
         self._sales = sales
+        self._identities = identities
+        self._operations = operations
         self._audit = audit
         self._idempotency = idempotency
         self._outbox = outbox
@@ -83,6 +92,7 @@ class CommitSaleSession:
         policy: PolicyDecision | None = None,
         fail_after_write: bool = False,
         raw_message: str = "",
+        confirmed_at: datetime | None = None,
     ) -> CommitWorkflowResult:
         request_hash = sha256(
             f"{raw_message}|{conversation_id or ''}|commit|{payment_method or ''}".encode()
@@ -172,8 +182,23 @@ class CommitSaleSession:
             return CommitWorkflowResult(kind="replay", text=body.get("text", "Listo."), payload=body)
 
         assert session is not None
+        business = self._identities.get_business(tenant)
+        instant = _utc_instant(confirmed_at)
+        try:
+            business_date = business_date_for(instant, business.timezone)
+        except InvalidBusinessTimezone as exc:
+            raise ValidationAppError("invalid business timezone") from exc
+        day, created = self._operations.ensure_open_day(
+            tenant=tenant,
+            business_date=business_date,
+            timezone_name=business.timezone,
+            day_id=new_uuid7(),
+            opened_at=instant,
+        )
         items = self._sales.list_items(tenant=tenant, sale_session_id=session.id)
         total = sum_session_total(items, currency=session.currency)
+        if session.currency != business.currency:
+            raise ValidationAppError("sale currency does not match the business")
         method = PaymentMethod(payment_method)
         payment = self._sales.add_payment(
             tenant=tenant,
@@ -188,10 +213,11 @@ class CommitSaleSession:
                 source=PaymentSource.MANUAL_CAPTURE,
             ),
         )
-        updated = self._sales.update_session_status(
+        updated = self._sales.confirm_session(
             tenant=tenant,
             sale_session_id=session.id,
-            status=SaleSessionStatus.CONFIRMED,
+            operational_day_id=day.id,
+            confirmed_at=instant,
         )
         payload = build_sale_confirmed(updated, items, payment)
         policy_payload = policy.model_dump() if policy is not None else None
@@ -210,12 +236,41 @@ class CommitSaleSession:
                 "item_count": payload["item_count"],
                 "total": payload["total"],
                 "method": payment.method.value,
+                "operational_day_id": str(day.id),
+                "business_date": business_date.isoformat(),
+                "confirmed_at": instant.isoformat(),
             },
         )
+        if created:
+            opened = {
+                "operational_day_id": str(day.id),
+                "business_date": business_date.isoformat(),
+                "timezone": day.timezone,
+                "status": day.status.value,
+            }
+            self._audit.record(
+                tenant=tenant,
+                action="operational_day.opened",
+                route_or_tool="sale.commit@1",
+                result="opened",
+                correlation_id=correlation_id,
+                idempotency_key=idempotency_key,
+                policy_decision=policy_payload,
+                after_payload=opened,
+            )
+            self._outbox.enqueue(
+                tenant=tenant,
+                event_type="operational_day.opened",
+                payload=opened,
+            )
         self._outbox.enqueue(
             tenant=tenant,
             event_type="sale.confirmed",
-            payload={"sale_session_id": str(updated.id), "payment_id": str(payment.id)},
+            payload={
+                "sale_session_id": str(updated.id),
+                "payment_id": str(payment.id),
+                "operational_day_id": str(day.id),
+            },
         )
         self._outbox.enqueue(
             tenant=tenant,
@@ -232,3 +287,10 @@ class CommitSaleSession:
             body=payload,
         )
         return CommitWorkflowResult(kind="committed", text=payload["text"], payload=payload)
+
+
+def _utc_instant(value: datetime | None) -> datetime:
+    instant = value if value is not None else utcnow()
+    if instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValidationAppError("confirmed_at must be timezone-aware UTC")
+    return instant.astimezone(UTC)

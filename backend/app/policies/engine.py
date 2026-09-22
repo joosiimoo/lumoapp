@@ -18,6 +18,7 @@ SALE_002 = "SALE-002"
 SALE_003 = "SALE-003"
 SALE_004 = "SALE-004"
 PAY_001 = "PAY-001"
+DAY_001 = "DAY-001"
 
 REGISTERED_SLICE_TOOLS = {
     "catalog.resolve_product@1",
@@ -25,6 +26,7 @@ REGISTERED_SLICE_TOOLS = {
     "sale.add_item@1",
     "sale.totalize@1",
     "sale.commit@1",
+    "operational_day.summary@1",
 }
 
 
@@ -41,6 +43,12 @@ class FoundationPolicyEngine:
                 decision=PolicyDecisionName.DENY,
                 rule_ids=[SEC_002],
                 reason_code="unregistered_tool",
+            )
+        if request.tool_id == "operational_day.summary@1":
+            return PolicyDecision(
+                decision=PolicyDecisionName.ALLOW,
+                rule_ids=[DAY_001, SEC_003, INT_001, INT_003, INTP_001],
+                reason_code="operational_day_summary_read",
             )
         arguments = request.arguments or {}
         if arguments.get("missing_essentials"):

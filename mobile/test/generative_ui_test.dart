@@ -527,4 +527,93 @@ void main() {
     await tester.pumpAndSettle();
     expect(posts, 0);
   });
+
+  test('business date is the payload calendar day', () {
+    expect(OperationalDaySummaryView.displayBusinessDate('2026-09-22'), '2026-09-22');
+    expect(OperationalDaySummaryView.displayBusinessDate('2026-09-21'), '2026-09-21');
+  });
+
+  testWidgets('operational day summary renders backend values without summing', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      'component': 'operational_day_summary',
+      'version': 1,
+      'fallback_text': 'Hoy 2026-09-21 · 2 ventas · \$80.00 · Efectivo \$56.50 · Tarjeta \$23.50 · Transferencia \$0.00',
+      'actions': [],
+      'data': {
+        'operational_day_id': '01900000-0000-7000-8000-000000000099',
+        'business_date': '2026-09-21',
+        'status': 'open',
+        'currency': 'MXN',
+        'sale_count': 2,
+        'gross_sales_total': '80.00',
+        'cash_total': '56.50',
+        'card_total': '23.50',
+        'transfer_total': '0.00',
+      },
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('2026-09-21'), findsOneWidget);
+    expect(find.textContaining('2 ventas'), findsWidgets);
+    expect(find.textContaining('\$80.00'), findsWidgets);
+    expect(find.textContaining('Efectivo \$56.50'), findsWidgets);
+    expect(find.textContaining('Tarjeta \$23.50'), findsWidgets);
+    expect(find.textContaining('Transferencia \$0.00'), findsWidgets);
+    expect(find.textContaining('\$80.00'), findsWidgets);
+    expect(find.text('Cerrar'), findsNothing);
+    expect(find.textContaining('diferencia'), findsNothing);
+    expect(find.textContaining('esperado'), findsNothing);
+    expect(find.byType(LumoCard), findsOneWidget);
+  });
+
+  testWidgets('como vamos hoy reuses the same conversation_id', (tester) async {
+    final conversationIds = <String>[];
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET') {
+        return _sessionOk();
+      }
+      conversationIds.add(jsonDecode(request.body)['conversation_id'] as String);
+      return _json({
+        'message_id': 'm-day',
+        'status': 'completed',
+        'text': 'Hoy 2026-09-21 · 0 ventas · \$0.00 · Efectivo \$0.00 · Tarjeta \$0.00 · Transferencia \$0.00',
+        'ui': [
+          {
+            'component': 'operational_day_summary',
+            'version': 1,
+            'fallback_text': 'Hoy 2026-09-21 · 0 ventas · \$0.00 · Efectivo \$0.00 · Tarjeta \$0.00 · Transferencia \$0.00',
+            'actions': [],
+            'data': {
+              'operational_day_id': null,
+              'business_date': '2026-09-21',
+              'status': null,
+              'currency': 'MXN',
+              'sale_count': 0,
+              'gross_sales_total': '0.00',
+              'cash_total': '0.00',
+              'card_total': '0.00',
+              'transfer_total': '0.00',
+            },
+          },
+        ],
+        'correlation_id': 'c-day',
+      });
+    });
+    await tester.pumpWidget(LumoApp(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      apiClient: _client(httpClient),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'como vamos hoy');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'ventas de hoy');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    expect(conversationIds, hasLength(2));
+    expect(conversationIds[1], conversationIds[0]);
+    expect(conversationIds.first, isNotEmpty);
+    expect(find.text('2026-09-21'), findsWidgets);
+    expect(find.text('Cerrar'), findsNothing);
+  });
 }

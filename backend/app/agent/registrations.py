@@ -122,6 +122,28 @@ COMMIT_SALE = ToolRegistration(
     side_effect="write",
 )
 
+OPERATIONAL_DAY_SUMMARY = ToolRegistration(
+    tool_id="operational_day.summary",
+    version=1,
+    input_schema={"type": "object", "properties": {}},
+    output_schema={
+        "type": "object",
+        "required": [
+            "business_date",
+            "currency",
+            "sale_count",
+            "gross_sales_total",
+            "cash_total",
+            "card_total",
+            "transfer_total",
+        ],
+    },
+    permission="sale.create",
+    policy_id="DAY-001",
+    requires_idempotency=False,
+    side_effect="read",
+)
+
 SALE_SUMMARY = GenerativeUIRegistration(
     component="sale_summary",
     version=1,
@@ -155,9 +177,26 @@ SALE_CONFIRMED = GenerativeUIRegistration(
     },
 )
 
+OPERATIONAL_DAY_SUMMARY_UI = GenerativeUIRegistration(
+    component="operational_day_summary",
+    version=1,
+    data_schema={
+        "type": "object",
+        "required": [
+            "business_date",
+            "currency",
+            "sale_count",
+            "gross_sales_total",
+            "cash_total",
+            "card_total",
+            "transfer_total",
+        ],
+    },
+)
+
 
 def register_conversational_sale_tools(registry: ToolRegistry) -> None:
-    for item in (RESOLVE_PRODUCT, START_SALE, ADD_ITEM, TOTALIZE_SALE, COMMIT_SALE):
+    for item in (RESOLVE_PRODUCT, START_SALE, ADD_ITEM, TOTALIZE_SALE, COMMIT_SALE, OPERATIONAL_DAY_SUMMARY):
         registry.register(item)
 
 
@@ -171,3 +210,7 @@ def register_sale_summary_ui(registry: GenerativeUIRegistry) -> None:
 
 def register_sale_confirmed_ui(registry: GenerativeUIRegistry) -> None:
     registry.register(SALE_CONFIRMED)
+
+
+def register_operational_day_summary_ui(registry: GenerativeUIRegistry) -> None:
+    registry.register(OPERATIONAL_DAY_SUMMARY_UI)

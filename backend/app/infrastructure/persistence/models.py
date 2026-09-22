@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -164,11 +167,38 @@ class ProductAliasRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     normalized_alias: Mapped[str] = mapped_column(String(200), nullable=False)
 
 
+class OperationalDayRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "operational_days"
+    __table_args__ = (
+        UniqueConstraint("business_id", "business_date", name="uq_operational_days_business_date"),
+        UniqueConstraint("id", "business_id", name="uq_operational_days_id_business"),
+        Index("ix_operational_days_business_id", "business_id"),
+        CheckConstraint("status IN ('open')", name="ck_operational_days_status"),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    business_date: Mapped[date] = mapped_column(Date, nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
 class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "sale_sessions"
     __table_args__ = (
         Index("ix_sale_sessions_business_id", "business_id"),
+        Index("ix_sale_sessions_operational_day_id", "operational_day_id"),
         CheckConstraint("status IN ('open', 'ready_to_charge', 'confirmed')", name="ck_sale_sessions_status"),
+        CheckConstraint(
+            "(status = 'confirmed' AND operational_day_id IS NOT NULL AND confirmed_at IS NOT NULL) "
+            "OR (status IN ('open', 'ready_to_charge') AND operational_day_id IS NULL AND confirmed_at IS NULL)",
+            name="ck_sale_sessions_day_membership",
+        ),
+        ForeignKeyConstraint(
+            ["operational_day_id", "business_id"],
+            ["operations.operational_days.id", "operations.operational_days.business_id"],
+            name="fk_sale_sessions_operational_day",
+        ),
         {"schema": "sales"},
     )
 
@@ -177,6 +207,8 @@ class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     conversation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    operational_day_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):

@@ -8,7 +8,8 @@ RUN apk add --no-cache \
     musl-dev \
     libpq \
     postgresql-dev \
-    linux-headers
+    linux-headers \
+    tzdata
 
 WORKDIR /app
 

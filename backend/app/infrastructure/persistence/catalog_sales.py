@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -158,6 +159,25 @@ class SalesRepository:
         self._session.flush()
         return _to_session(row)
 
+    def confirm_session(
+        self,
+        *,
+        tenant: TenantContext,
+        sale_session_id: UUID,
+        operational_day_id: UUID,
+        confirmed_at: datetime,
+    ) -> SaleSession:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.get(SaleSessionRow, sale_session_id)
+        if row is None or row.business_id != tenant.business_id:
+            raise ValidationAppError("sale session not found")
+        row.status = SaleSessionStatus.CONFIRMED.value
+        row.operational_day_id = operational_day_id
+        row.confirmed_at = confirmed_at
+        self._session.flush()
+        return _to_session(row)
+
     def add_session(self, *, tenant: TenantContext, session: SaleSession) -> SaleSession:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)
@@ -286,6 +306,8 @@ def _to_session(row: SaleSessionRow) -> SaleSession:
         currency=row.currency,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        operational_day_id=row.operational_day_id,
+        confirmed_at=row.confirmed_at,
     )
 
 

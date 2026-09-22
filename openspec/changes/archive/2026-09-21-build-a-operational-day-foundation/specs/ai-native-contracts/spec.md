@@ -1,37 +1,4 @@
-## Purpose
-
-AI-native ports for Build A: LLM provider, orchestrator, tool registry, policy engine, outcome engine, and split generative UI (backend compose, Flutter render). Registered product tools are `catalog.resolve_product@1`, `sale.start@1`, `sale.add_item@1`, `sale.totalize@1`, and `sale.commit@1`. Registered UI contracts are `sale_item_added@1`, `sale_summary@1`, and `sale_confirmed@1`. Closing, export, and payment-resolve tools remain unregistered.
-
-## Requirements
-
-### Requirement: LLMProvider port
-The system MUST define an `LLMProvider` port with `interpret(message, context, allowed_tools) -> AgentDecision`, `compose(result, ui_contracts) -> AgentResponse`, and `health() -> ProviderStatus`. The port MUST NOT expose database sessions, repositories, or credentials. A fake or null adapter MUST exist for tests and local boot without a vendor SDK.
-
-#### Scenario: Port has no persistence access
-- **WHEN** the `LLMProvider` interface is inspected
-- **THEN** it MUST NOT accept a database session, repository, or connection string
-
-#### Scenario: Fake provider boots
-- **WHEN** the API starts with LLM disabled or unset
-- **THEN** `health()` MUST report a non-ready or fake status and the process MUST still serve health and structured APIs
-
-### Requirement: LLM cannot mutate domain state
-No `LLMProvider` implementation MUST write to PostgreSQL, invoke repositories, or call unregistered tools. Interpretation output MUST be schema-validated before any other component consumes it. Invalid model output MUST NOT reach domain services.
-
-#### Scenario: Invalid decision discarded
-- **WHEN** the provider returns a payload that fails the `AgentDecision` schema
-- **THEN** the orchestrator MUST NOT invoke a tool and MUST NOT persist domain state
-
-### Requirement: Single LumoOrchestrator
-Build A MUST expose exactly one `LumoOrchestrator` port. The orchestrator MAY load context, request interpretation, select a registered tool, request a policy decision, invoke an application use case, and compose a response. It MUST NOT open business transactions, access the ORM, or bypass `ToolRegistry` and `PolicyEngine`.
-
-#### Scenario: Unregistered tool blocked
-- **WHEN** an `AgentDecision` names a tool that is not in `ToolRegistry`
-- **THEN** the orchestrator MUST NOT execute it and MUST return a non-mutating clarification or denial
-
-#### Scenario: No second agent runtime
-- **WHEN** the source tree is inspected
-- **THEN** it MUST contain a single orchestrator composition root and MUST NOT define independent agent runtimes
+## MODIFIED Requirements
 
 ### Requirement: ToolRegistry contract
 `ToolRegistry` MUST be a closed catalog of versioned tools. Each registration MUST declare id, version, input schema, output schema, required permission, policy id, idempotency needs, and side-effect class. The registry MUST include the product tools `catalog.resolve_product@1`, `sale.start@1`, `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`, and `operational_day.summary@1`. `operational_day.summary@1` MUST be `side_effect=read`, `requires_idempotency=false`, and permission `sale.create`. Closing, export, payment-resolve, and `operational_day.get` tools MUST remain unregistered.
@@ -83,17 +50,6 @@ Build A MUST expose exactly one `LumoOrchestrator` port. The orchestrator MAY lo
 - **WHEN** policy evaluates `operational_day.summary@1` and the model arguments include a sale count or a total
 - **THEN** the decision MUST NOT persist those arguments and the summary MUST still be computed from confirmed rows under `DAY-001`
 
-### Requirement: OutcomeEngine contract
-`OutcomeEngine` MUST accept versioned outcome definitions and evaluate gates deterministically from confirmed state. The LLM MUST NOT overwrite a gate result. This change MUST provide the engine port and an empty definition registry.
-
-#### Scenario: Unknown outcome fails closed
-- **WHEN** a caller evaluates `daily_close_ready@1` before it is registered
-- **THEN** the engine MUST NOT mark the outcome ready
-
-#### Scenario: Model text cannot complete a gate
-- **WHEN** a model response claims an outcome is complete
-- **THEN** the engine MUST ignore that claim and use only registered gate functions
-
 ### Requirement: Backend generative UI contracts
 The backend MUST expose `GenerativeUIRegistry` and `GenerativeUIComposer` ports. The shared versioned contract is `component`, `version`, `data`, `actions`, and `fallback_text`. Actions MUST carry opaque `action_id`, optional `option_id`, `context_token`, and an idempotency key. `GenerativeUIRegistry` MUST include `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`, and `operational_day_summary@1` and MUST NOT include closing cards, `daily_summary_card`, `sale_confirmed_card`, or `sale_completed`. `GenerativeUIComposer` MUST validate against the registry and emit only registered versioned contracts. The backend MUST NOT render widgets.
 
@@ -120,10 +76,3 @@ The backend MUST expose `GenerativeUIRegistry` and `GenerativeUIComposer` ports.
 #### Scenario: operational_day_summary registered
 - **WHEN** the registry is queried for component `operational_day_summary` version `1`
 - **THEN** it MUST be present
-
-### Requirement: Flutter GenerativeUIRenderer
-Flutter MUST own `GenerativeUIRenderer`. It is solely responsible for rendering backend-emitted contracts. The renderer MUST reject unknown component names, versions, fields, or actions and show `fallback_text`. It MUST NOT execute actions from an unknown payload.
-
-#### Scenario: Unknown component rejected
-- **WHEN** a payload names a component that is not registered in the Flutter renderer
-- **THEN** Flutter MUST render `fallback_text` and MUST NOT execute any action from that payload

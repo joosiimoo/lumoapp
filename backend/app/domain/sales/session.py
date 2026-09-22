@@ -61,6 +61,8 @@ class SaleSession:
     currency: str
     created_at: datetime | None = None
     updated_at: datetime | None = None
+    operational_day_id: UUID | None = None
+    confirmed_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)

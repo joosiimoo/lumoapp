@@ -73,6 +73,7 @@ class GenerativeUIRenderer {
     'sale_item_added': 1,
     'sale_summary': 1,
     'sale_confirmed': 1,
+    'operational_day_summary': 1,
   };
 
   GenerativeUiRenderResult render(GenerativeUiContract contract) {
@@ -97,6 +98,9 @@ class GenerativeUIRenderer {
     }
     if (contract.component == 'sale_confirmed') {
       return SaleConfirmedView(contract: contract);
+    }
+    if (contract.component == 'operational_day_summary') {
+      return OperationalDaySummaryView(contract: contract);
     }
     return SaleItemAddedView(contract: contract);
   }
@@ -384,5 +388,85 @@ class SaleConfirmedView extends StatelessWidget {
       default:
         return method;
     }
+  }
+}
+
+class OperationalDaySummaryView extends StatelessWidget {
+  const OperationalDaySummaryView({super.key, required this.contract});
+
+  final GenerativeUiContract contract;
+
+  @override
+  Widget build(BuildContext context) {
+    final data = contract.data;
+    final businessDate = displayBusinessDate('${data['business_date'] ?? ''}');
+    final count = '${data['sale_count'] ?? '0'}';
+    final currency = '${data['currency'] ?? 'MXN'}';
+    final gross = formatDecimal(data['gross_sales_total'], currency);
+    final cash = formatDecimal(data['cash_total'], currency);
+    final card = formatDecimal(data['card_total'], currency);
+    final transfer = formatDecimal(data['transfer_total'], currency);
+    final noun = count == '1' ? 'venta' : 'ventas';
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 4),
+          child: LumoMark(),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: LumoSizes.contentMaxWidth),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(contract.fallbackText, style: LumoTypography.body),
+                const SizedBox(height: 8),
+                LumoCard(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: LumoStatusChip(label: businessDate),
+                      ),
+                      const SizedBox(height: 10),
+                      Text('$count $noun · $gross', style: LumoTypography.metricSm),
+                      const SizedBox(height: 8),
+                      Text('Efectivo $cash', style: LumoTypography.caption),
+                      Text('Tarjeta $card', style: LumoTypography.caption),
+                      Text('Transferencia $transfer', style: LumoTypography.caption),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static String displayBusinessDate(String value) {
+    final parts = value.split('-');
+    if (parts.length != 3) {
+      return value;
+    }
+    final year = parts[0];
+    final month = parts[1];
+    final day = parts[2];
+    if (year.length != 4 || month.length != 2 || day.length != 2) {
+      return value;
+    }
+    return '$year-$month-$day';
+  }
+
+  static String formatDecimal(Object? value, String currency) {
+    if (value is! String || value.isEmpty) {
+      return '';
+    }
+    return MoneyDisplay.format(amount: value, currency: currency);
   }
 }

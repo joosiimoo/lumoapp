@@ -188,14 +188,15 @@ def test_catalog_and_sales_schemas_are_present(db_session) -> None:
     names = db_session.scalars(text("SELECT nspname FROM pg_namespace")).all()
     assert "catalog" in names
     assert "sales" in names
-    for schema in ("operations", "workflow", "memory"):
+    assert "operations" in names
+    for schema in ("workflow", "memory"):
         assert schema not in names
     tables = db_session.scalars(
         text(
             """
             SELECT table_schema || '.' || table_name
             FROM information_schema.tables
-            WHERE table_schema IN ('catalog', 'sales')
+            WHERE table_schema IN ('catalog', 'sales', 'operations')
             """
         )
     ).all()
@@ -205,6 +206,7 @@ def test_catalog_and_sales_schemas_are_present(db_session) -> None:
         "sales.sale_sessions",
         "sales.sale_items",
         "sales.payments",
+        "operations.operational_days",
     }
     assert expected.issubset(set(tables))
     assert "sales.sales" not in tables

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.persistence.models import (
     AuditEventRow,
     IdempotencyRecordRow,
+    OperationalDayRow,
     OutboxEventRow,
     PaymentRow,
     SaleItemRow,
@@ -21,12 +22,19 @@ from app.infrastructure.persistence.models import (
 )
 from app.infrastructure.persistence.rls import set_current_business_id
 
-SALE_AUDIT_ACTIONS = ("sale.start@1", "sale.add_item@1", "sale.totalize@1", "sale.commit@1")
+SALE_AUDIT_ACTIONS = (
+    "sale.start@1",
+    "sale.add_item@1",
+    "sale.totalize@1",
+    "sale.commit@1",
+    "operational_day.opened",
+)
 SALE_OUTBOX_EVENTS = (
     "sale.item.added",
     "sale.ready_to_charge",
     "sale.confirmed",
     "payment.recorded",
+    "operational_day.opened",
 )
 SALE_MESSAGE_OPERATIONS = (
     "lumo.message.add_sale_item",
@@ -42,6 +50,7 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(PaymentRow.__table__.delete().where(PaymentRow.business_id == business_id))
     session.execute(SaleItemRow.__table__.delete().where(SaleItemRow.business_id == business_id))
     session.execute(SaleSessionRow.__table__.delete().where(SaleSessionRow.business_id == business_id))
+    session.execute(OperationalDayRow.__table__.delete().where(OperationalDayRow.business_id == business_id))
     session.execute(
         OutboxEventRow.__table__.delete().where(
             OutboxEventRow.business_id == business_id,
@@ -76,7 +85,20 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
     payment_ids = {
         str(row.id) for row in session.scalars(select(PaymentRow).where(PaymentRow.business_id == business_id)).all()
     }
+    day_ids = {
+        str(row.id)
+        for row in session.scalars(select(OperationalDayRow).where(OperationalDayRow.business_id == business_id)).all()
+    }
     orphans: list[str] = []
+    for sale in session.scalars(select(SaleSessionRow).where(SaleSessionRow.business_id == business_id)).all():
+        if sale.operational_day_id is not None and str(sale.operational_day_id) not in day_ids:
+            orphans.append(f"session:{sale.id}:missing_day={sale.operational_day_id}")
+        if sale.status == "confirmed" and (sale.operational_day_id is None or sale.confirmed_at is None):
+            orphans.append(f"session:{sale.id}:confirmed_without_membership")
+        if sale.status in {"open", "ready_to_charge"} and (
+            sale.operational_day_id is not None or sale.confirmed_at is not None
+        ):
+            orphans.append(f"session:{sale.id}:active_with_membership")
     for event in session.scalars(
         select(OutboxEventRow).where(
             OutboxEventRow.business_id == business_id,
@@ -87,12 +109,15 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
         sid = payload.get("sale_session_id")
         iid = payload.get("sale_item_id")
         pid = payload.get("payment_id")
+        did = payload.get("operational_day_id")
         if sid and sid not in session_ids:
             orphans.append(f"outbox:{event.id}:session={sid}:item={iid}:payment={pid}")
         if iid and iid not in item_ids:
             orphans.append(f"outbox:{event.id}:session={sid}:item={iid}:payment={pid}")
         if pid and pid not in payment_ids:
             orphans.append(f"outbox:{event.id}:missing_payment={pid}")
+        if did and did not in day_ids:
+            orphans.append(f"outbox:{event.id}:missing_day={did}")
     for event in session.scalars(
         select(AuditEventRow).where(
             AuditEventRow.business_id == business_id,
@@ -103,10 +128,13 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
         sid = payload.get("sale_session_id")
         iid = payload.get("sale_item_id")
         pid = payload.get("payment_id")
+        did = payload.get("operational_day_id")
         if sid and sid not in session_ids:
             orphans.append(f"audit:{event.id}:missing_session={sid}")
         if iid and iid not in item_ids:
             orphans.append(f"audit:{event.id}:missing_item={iid}")
         if pid and pid not in payment_ids:
             orphans.append(f"audit:{event.id}:missing_payment={pid}")
+        if did and did not in day_ids:
+            orphans.append(f"audit:{event.id}:missing_day={did}")
     return orphans
