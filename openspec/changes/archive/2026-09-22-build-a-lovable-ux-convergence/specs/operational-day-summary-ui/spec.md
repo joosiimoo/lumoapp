@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Versioned `operational_day_summary@1` for today's confirmed-sales summary. The backend composes it from the read-tool payload. Flutter renders those fields and does not calculate them.
-## Requirements
 ### Requirement: Register operational_day_summary@1
 `GenerativeUIRegistry` MUST register component `operational_day_summary` version `1`. `GenerativeUIComposer` MUST emit this contract for a completed `operational_day.summary@1` read, including the zero-sales summary and a closed day. It MUST refuse unknown components. The backend MUST NOT render Flutter widgets or HTML. `actions` MUST be empty. Money MUST be decimal strings plus the business currency. `text` MUST equal `fallback_text`. The payload MUST NOT include expected cash, counted cash, a difference, a close action, a snapshot id, exceptions, product rows, or a chart. Totals MUST remain the live confirmed-sales aggregation and MUST NOT be replaced by `ClosingSnapshot` values. The version MUST remain `1`.
 
@@ -44,4 +42,3 @@ The summary MUST appear in the existing Inicio conversation stream as an assista
 #### Scenario: Ventas de hoy on Inicio
 - **WHEN** the signed-in Carrota user submits `ventas de hoy`
 - **THEN** the stream MUST show the user bubble and a Lumo-mark `operational_day_summary@1` card whose count and totals match the server payload, and the Hoy tab MUST NOT become a daily-close screen
-

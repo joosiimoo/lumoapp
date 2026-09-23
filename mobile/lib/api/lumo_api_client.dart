@@ -33,8 +33,9 @@ class LumoApiClient {
     String path, {
     Map<String, dynamic>? body,
     required String operation,
+    String? idempotencyKey,
   }) {
-    return _send('POST', path, body: body, operation: operation);
+    return _send('POST', path, body: body, operation: operation, idempotencyKey: idempotencyKey);
   }
 
   Future<Map<String, dynamic>> _send(
@@ -42,6 +43,7 @@ class LumoApiClient {
     String path, {
     Map<String, dynamic>? body,
     String? operation,
+    String? idempotencyKey,
   }) async {
     final headers = <String, String>{
       'Accept': 'application/json',
@@ -54,7 +56,7 @@ class LumoApiClient {
     }
     if (method != 'GET') {
       final op = operation ?? path;
-      headers['Idempotency-Key'] = idempotency.keyFor(op);
+      headers['Idempotency-Key'] = idempotencyKey ?? idempotency.keyFor(op);
     }
     final uri = _uri(path);
     late http.Response response;
@@ -95,6 +97,28 @@ class LumoApiClient {
       '/api/v1/lumo/messages',
       body: body,
       operation: operation,
+    );
+    return LumoMessageResponse.fromJson(decoded);
+  }
+
+  Future<LumoMessageResponse> postAction({
+    required String actionId,
+    String? optionId,
+    required String contextToken,
+    required String conversationId,
+    required String idempotencyKey,
+  }) async {
+    final decoded = await post(
+      '/api/v1/lumo/actions',
+      operation: 'lumo.action.$idempotencyKey',
+      idempotencyKey: idempotencyKey,
+      body: {
+        'action_id': actionId,
+        'option_id': optionId,
+        'context_token': contextToken,
+        'conversation_id': conversationId,
+        'idempotency_key': idempotencyKey,
+      },
     );
     return LumoMessageResponse.fromJson(decoded);
   }

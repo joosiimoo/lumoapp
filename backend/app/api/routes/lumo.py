@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, Request
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.orm import Session
 
 from app.agent.orchestrator import FoundationOrchestrator
@@ -36,6 +36,31 @@ class LumoMessageRequest(BaseModel):
     client_context: dict | None = None
 
 
+class LumoActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    action_id: str = Field(min_length=1)
+    option_id: str | None = None
+    context_token: str = Field(min_length=1)
+    conversation_id: str = Field(min_length=1, max_length=128)
+    idempotency_key: str = Field(min_length=1)
+    payload: dict | None = None
+
+    @field_validator("option_id")
+    @classmethod
+    def option_id_must_be_null(cls, value: str | None) -> str | None:
+        if value is not None:
+            raise ValueError("option_id must be null")
+        return None
+
+    @field_validator("payload")
+    @classmethod
+    def payload_must_be_empty(cls, value: dict | None) -> dict | None:
+        if value not in (None, {}):
+            raise ValueError("payload must be empty")
+        return value
+
+
 class LumoMessageResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -57,6 +82,72 @@ def post_lumo_message(
 ) -> dict:
     if not idempotency_key:
         raise ValidationAppError("Idempotency-Key is required")
+    orchestrator = _orchestrator(request, session)
+    settings = request.app.state.settings
+    fail_after_write = (
+        request.headers.get("x-debug-fail-after-write") == "1" and settings.allows_debug_fail_after_write
+    )
+    conversation_id = (payload.conversation_id or "").strip() or None
+    response = orchestrator.handle(
+        payload.message,
+        {
+            "tenant": tenant,
+            "conversation_id": conversation_id,
+            "idempotency_key": idempotency_key,
+            "correlation_id": correlation_id,
+            "fail_after_write": fail_after_write,
+            "now": _debug_now(request),
+            "client_context": payload.client_context or {},
+        },
+    )
+    return {
+        "message_id": str(new_uuid7()),
+        "status": "completed",
+        "text": response.text,
+        "ui": response.ui,
+        "correlation_id": correlation_id,
+    }
+
+
+@router.post("/api/v1/lumo/actions", response_model=LumoMessageResponse)
+def post_lumo_action(
+    payload: LumoActionRequest,
+    request: Request,
+    tenant: TenantContext = Depends(get_tenant),
+    session: Session = Depends(get_db),
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
+    correlation_id: str = Depends(get_correlation_id),
+) -> dict:
+    if not idempotency_key:
+        raise ValidationAppError("Idempotency-Key is required")
+    if idempotency_key != payload.idempotency_key:
+        raise ValidationAppError("Idempotency-Key must match idempotency_key")
+    orchestrator = _orchestrator(request, session)
+    settings = request.app.state.settings
+    fail_after_write = (
+        request.headers.get("x-debug-fail-after-write") == "1" and settings.allows_debug_fail_after_write
+    )
+    response = orchestrator.handle_ui_action(
+        payload.model_dump(),
+        {
+            "tenant": tenant,
+            "conversation_id": payload.conversation_id,
+            "idempotency_key": payload.idempotency_key,
+            "correlation_id": correlation_id,
+            "fail_after_write": fail_after_write,
+            "now": _debug_now(request),
+        },
+    )
+    return {
+        "message_id": str(new_uuid7()),
+        "status": "completed",
+        "text": response.text,
+        "ui": response.ui,
+        "correlation_id": correlation_id,
+    }
+
+
+def _orchestrator(request: Request, session: Session) -> FoundationOrchestrator:
     catalog = CatalogRepository(session)
     sales = SalesRepository(session)
     identities = IdentityRepository(session)
@@ -118,30 +209,7 @@ def post_lumo_message(
         ui_composer=request.app.state.generative_ui_composer,
         pending=getattr(request.app.state, "pending_clarifications", None),
     )
-    settings = request.app.state.settings
-    fail_after_write = (
-        request.headers.get("x-debug-fail-after-write") == "1" and settings.allows_debug_fail_after_write
-    )
-    conversation_id = (payload.conversation_id or "").strip() or None
-    response = orchestrator.handle(
-        payload.message,
-        {
-            "tenant": tenant,
-            "conversation_id": conversation_id,
-            "idempotency_key": idempotency_key,
-            "correlation_id": correlation_id,
-            "fail_after_write": fail_after_write,
-            "now": _debug_now(request),
-            "client_context": payload.client_context or {},
-        },
-    )
-    return {
-        "message_id": str(new_uuid7()),
-        "status": "completed",
-        "text": response.text,
-        "ui": response.ui,
-        "correlation_id": correlation_id,
-    }
+    return orchestrator
 
 
 def _debug_now(request: Request) -> datetime | None:

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
+from uuid import UUID
 
 from app.application.ports import AuditService, IdempotencyService, IdentityPort, Outbox, SalesPort
 from app.domain.operations import InvalidBusinessTimezone, business_date_for
@@ -60,6 +61,9 @@ def build_sale_confirmed(session: SaleSession, items: list[SaleItem], payment: P
     }
 
 
+UI_ACTION_STALE_TEXT = "Esta acción ya no aplica a la venta en curso."
+
+
 class CommitSaleSession:
     operation_type = "lumo.message.commit_sale"
 
@@ -93,10 +97,17 @@ class CommitSaleSession:
         fail_after_write: bool = False,
         raw_message: str = "",
         confirmed_at: datetime | None = None,
+        ui_action_id: str | None = None,
+        bound_sale_session_id: UUID | None = None,
     ) -> CommitWorkflowResult:
-        request_hash = sha256(
-            f"{raw_message}|{conversation_id or ''}|commit|{payment_method or ''}".encode()
-        ).hexdigest()
+        if ui_action_id is not None:
+            request_hash = sha256(
+                f"{ui_action_id}|{conversation_id or ''}|commit|{payment_method or ''}|{bound_sale_session_id}".encode()
+            ).hexdigest()
+        else:
+            request_hash = sha256(
+                f"{raw_message}|{conversation_id or ''}|commit|{payment_method or ''}".encode()
+            ).hexdigest()
         replay = self._idempotency.peek(
             tenant=tenant,
             operation_type=self.operation_type,
@@ -106,6 +117,21 @@ class CommitSaleSession:
         if replay is not None:
             body = replay["body"]
             return CommitWorkflowResult(kind="replay", text=body.get("text", "Listo."), payload=body)
+
+        if ui_action_id is not None:
+            return self._execute_bound_action(
+                tenant=tenant,
+                conversation_id=conversation_id,
+                payment_method=payment_method,
+                idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+                policy=policy,
+                fail_after_write=fail_after_write,
+                confirmed_at=confirmed_at,
+                ui_action_id=ui_action_id,
+                bound_sale_session_id=bound_sale_session_id,
+                request_hash=request_hash,
+            )
 
         session = self._sales.get_active_session(
             tenant=tenant,
@@ -172,6 +198,95 @@ class CommitSaleSession:
             return CommitWorkflowResult(kind="read_back", text=payload["text"], payload=payload)
 
         assert session is not None
+        return self._commit_ready(
+            tenant=tenant,
+            session=session,
+            payment_method=payment_method or "",
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+            policy=policy,
+            fail_after_write=fail_after_write,
+            confirmed_at=confirmed_at,
+            request_hash=request_hash,
+            ui_action_id=None,
+        )
+
+    def _execute_bound_action(
+        self,
+        *,
+        tenant: TenantContext,
+        conversation_id: str | None,
+        payment_method: str | None,
+        idempotency_key: str,
+        correlation_id: str,
+        policy: PolicyDecision | None,
+        fail_after_write: bool,
+        confirmed_at: datetime | None,
+        ui_action_id: str,
+        bound_sale_session_id: UUID | None,
+        request_hash: str,
+    ) -> CommitWorkflowResult:
+        if bound_sale_session_id is None or payment_method not in {"cash", "card", "transfer"}:
+            return _stale_action()
+        bound = self._sales.get_session_by_id(
+            tenant=tenant,
+            sale_session_id=bound_sale_session_id,
+            for_update=True,
+        )
+        if bound is None or (bound.conversation_id or "") != (conversation_id or ""):
+            return _stale_action()
+        newer = self._sales.has_newer_active_session(
+            tenant=tenant,
+            conversation_id=conversation_id,
+            created_at=bound.created_at,
+            session_id=bound.id,
+        )
+        active = self._sales.get_active_session(
+            tenant=tenant,
+            conversation_id=conversation_id,
+            for_update=False,
+        )
+        if (
+            bound.status is SaleSessionStatus.READY_TO_CHARGE
+            and active is not None
+            and active.id == bound.id
+            and not newer
+        ):
+            return self._commit_ready(
+                tenant=tenant,
+                session=bound,
+                payment_method=payment_method,
+                idempotency_key=idempotency_key,
+                correlation_id=correlation_id,
+                policy=policy,
+                fail_after_write=fail_after_write,
+                confirmed_at=confirmed_at,
+                request_hash=request_hash,
+                ui_action_id=ui_action_id,
+            )
+        if bound.status is SaleSessionStatus.CONFIRMED and not newer:
+            items = self._sales.list_items(tenant=tenant, sale_session_id=bound.id)
+            payment = self._sales.get_payment_for_session(tenant=tenant, sale_session_id=bound.id)
+            if payment is None:
+                return _stale_action()
+            payload = build_sale_confirmed(bound, items, payment)
+            return CommitWorkflowResult(kind="read_back", text=payload["text"], payload=payload)
+        return _stale_action()
+
+    def _commit_ready(
+        self,
+        *,
+        tenant: TenantContext,
+        session: SaleSession,
+        payment_method: str,
+        idempotency_key: str,
+        correlation_id: str,
+        policy: PolicyDecision | None,
+        fail_after_write: bool,
+        confirmed_at: datetime | None,
+        request_hash: str,
+        ui_action_id: str | None,
+    ) -> CommitWorkflowResult:
         business = self._identities.get_business(tenant)
         instant = _utc_instant(confirmed_at)
         try:
@@ -244,6 +359,7 @@ class CommitSaleSession:
                 "item_count": payload["item_count"],
                 "total": payload["total"],
                 "method": payment.method.value,
+                **({"ui_action_id": ui_action_id} if ui_action_id else {}),
                 "operational_day_id": str(day.id),
                 "business_date": business_date.isoformat(),
                 "confirmed_at": instant.isoformat(),
@@ -295,6 +411,14 @@ class CommitSaleSession:
             body=payload,
         )
         return CommitWorkflowResult(kind="committed", text=payload["text"], payload=payload)
+
+
+def _stale_action() -> CommitWorkflowResult:
+    return CommitWorkflowResult(
+        kind="stale",
+        text=UI_ACTION_STALE_TEXT,
+        payload={"code": "UI_ACTION_STALE", "reason": "ui_action_stale"},
+    )
 
 
 def _utc_instant(value: datetime | None) -> datetime:

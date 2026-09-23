@@ -90,7 +90,19 @@ def _card(response) -> dict:
     card = body["ui"][0]
     assert card["component"] == "daily_close_preparation"
     assert card["version"] == 1
-    assert card["actions"] == []
+    data = card["data"]
+    if (
+        data["cash_status"] == "not_counted"
+        or data["operational_day_id"] is None
+        or data["cash_count_id"] is None
+        or data["day_status"] == "closed"
+    ):
+        assert card["actions"] == []
+    elif data["confirmation_token"]:
+        assert [action["action_id"] for action in card["actions"]] == ["closing.confirm@1"]
+        assert card["actions"][0]["context_token"] == data["confirmation_token"]
+    else:
+        assert [action["action_id"] for action in card["actions"]] == ["closing.request@1"]
     assert card["fallback_text"] == body["text"]
     return card["data"]
 

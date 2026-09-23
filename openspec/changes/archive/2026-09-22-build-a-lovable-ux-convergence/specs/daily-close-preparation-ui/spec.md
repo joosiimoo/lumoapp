@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Versioned `daily_close_preparation@1` for close preparation. The backend composes it from the write and read tools. Flutter renders those fields on Inicio and does not calculate them. Hoy stays a placeholder.
-## Requirements
 ### Requirement: Register daily_close_preparation@1
 `GenerativeUIRegistry` MUST register component `daily_close_preparation` version `1`. `GenerativeUIComposer` MUST emit this contract for a completed `closing.prepare@1` read of an open or not-started day, for a completed `closing.submit_cash_count@1` write, and for a `request_close` turn that has not closed the day, including the not-started and not-counted states. It MUST NOT emit this contract for a closed day. Money MUST be decimal strings plus the business currency. The data fields MUST stay the current set and MUST NOT add `gross_sales_total`. `data.confirmation_token` MUST be null except on a confirmable `request_close` response, where it MUST equal the `closing.confirm@1` action `context_token`. Counted open preparation with `cash_status` `balanced`, `short`, or `over` and a null token MUST emit exactly `closing.request@1`. A confirmable `request_close` response MUST emit exactly `closing.confirm@1` and MUST NOT also emit `closing.request@1`. `not_counted`, a missing day, and a missing current count MUST emit `actions: []`. `fallback_text` MUST NOT include the confirmation token. PRD §10.5 names `closing_ready_card` and `cash_difference_card` MUST remain unregistered. The version MUST remain `1`.
 
@@ -60,4 +58,3 @@ The capture turn and the preparation card MUST appear in the existing Inicio con
 #### Scenario: Closing screen is not introduced
 - **WHEN** the Flutter feature tree is inspected after this change
 - **THEN** there MUST NOT be a closing-flow screen, a wired "Preparar el cierre del día" action card, or a Hoy chart
-

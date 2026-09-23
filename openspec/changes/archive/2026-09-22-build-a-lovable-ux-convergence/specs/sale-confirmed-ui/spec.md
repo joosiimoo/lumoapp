@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Versioned `sale_confirmed@1` contract for an operationally completed sale. The backend composes it after a committed `sale.commit@1`; Flutter renders server-provided confirmation values without calculating them.
-## Requirements
 ### Requirement: Register sale_confirmed@1
 `GenerativeUIRegistry` MUST register component `sale_confirmed` version `1`. `GenerativeUIComposer` MUST emit this contract after a committed `sale.commit@1` **transition**, and MAY emit the same contract as a current-state read-back when the session is already `confirmed` and no newer `open` or `ready_to_charge` session exists for the interaction context. A current-state read-back MUST NOT be composed when a newer active session exists. An exact completed idempotency replay MAY still return a previously stored body that contains `sale_confirmed@1`; that replay is not a fresh current-state read-back. A fresh payment action bound to an already confirmed session MUST NOT compose that historical `sale_confirmed@1` when a newer active session exists; it returns `ui_action_stale` with empty `ui`. It MUST refuse unknown components. The backend MUST NOT render Flutter widgets or HTML. `actions` MUST be empty, including after a payment tap. Money MUST be decimal strings plus `MXN`. `fallback_text` MUST be server-provided and MUST contain the item count, total, and payment method display label (`Efectivo` | `Tarjeta` | `Transferencia`). The contract version MUST remain `1`. `data.items` MUST include every persisted line.
 
@@ -78,4 +76,3 @@ The confirmation MUST appear in the existing Inicio conversation stream as an as
 #### Scenario: Efectivo on Inicio
 - **WHEN** the signed-in Carrota user submits `efectivo` after a totalized sale
 - **THEN** the stream MUST show the user bubble for that text and a Lumo-mark `sale_confirmed@1` card whose visible lines, total, and method match the server payload
-

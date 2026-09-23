@@ -7,10 +7,18 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from app.agent.contracts import AgentDecision, AgentResponse, LLMProvider
-from app.agent.generative_ui import GenerativeUIComposer, GenerativeUIContract
+from app.agent.generative_ui import GenerativeUIAction, GenerativeUIComposer, GenerativeUIContract
 from app.agent.tools import ToolRegistry
+from app.agent.ui_actions import (
+    CONFIRM_CLOSE_ACTION_ID,
+    REQUEST_CLOSE_ACTION_ID,
+    UiActionRegistry,
+)
 from app.application.pending import InMemoryPendingClarificationStore
 from app.application.closing_confirmation_token import issue_closing_confirmation_token
+from app.application.ui_action_token import issue_ui_action_token, verify_ui_action_token
+from app.domain.shared.errors import ValidationAppError
+from app.domain.shared.ids import new_uuid7
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
 from app.application.workflows.commit_sale_session import CommitSaleSession
 from app.application.workflows.confirm_daily_close import ConfirmDailyClose
@@ -220,7 +228,13 @@ class FoundationOrchestrator:
                     "total": result.payload["total"],
                     "items": result.payload["items"],
                 },
-                actions=[],
+                actions=self._payment_actions(
+                    tenant=tenant,
+                    conversation_id=conversation_id,
+                    sale_session_id=result.payload["sale_session_id"],
+                    issued_at=context.get("now") or utcnow(),
+                    status=result.payload["status"],
+                ),
                 fallback_text=result.text,
             )
             ui = [self.ui_composer.compose(contract)]
@@ -268,7 +282,10 @@ class FoundationOrchestrator:
             raw_message=message,
             confirmed_at=context.get("now"),
         )
-        if result.kind in {"clarify", "deny"}:
+        return self._sale_confirmed_response(result)
+
+    def _sale_confirmed_response(self, result: Any) -> AgentResponse:
+        if result.kind in {"clarify", "deny", "stale"}:
             return AgentResponse(text=result.text, ui=[])
         ui: list[dict[str, Any]] = []
         if self.ui_composer is not None:
@@ -375,7 +392,10 @@ class FoundationOrchestrator:
         )
         if result.kind in {"clarify", "deny"}:
             return AgentResponse(text=result.text, ui=[])
-        return AgentResponse(text=result.text, ui=self._preparation_ui(result.payload))
+        return AgentResponse(
+            text=result.text,
+            ui=self._preparation_ui(result.payload, tenant, conversation_id, context),
+        )
 
     def _handle_close_preparation(
         self,
@@ -403,7 +423,10 @@ class FoundationOrchestrator:
         payload = self.close_preparation.execute(tenant=tenant, now=context.get("now"))
         if payload.get("day_status") == "closed":
             return AgentResponse(text=payload["text"], ui=self._confirmed_ui(payload))
-        return AgentResponse(text=payload["text"], ui=self._preparation_ui(payload))
+        return AgentResponse(
+            text=payload["text"],
+            ui=self._preparation_ui(payload, tenant, context.get("conversation_id"), context),
+        )
 
     def _handle_request_close(
         self,
@@ -432,9 +455,15 @@ class FoundationOrchestrator:
         if payload.get("day_status") == "closed":
             return AgentResponse(text=payload["text"], ui=self._confirmed_ui(payload))
         if payload.get("operational_day_id") is None:
-            return AgentResponse(text=NO_OPEN_DAY_TEXT, ui=self._preparation_ui(payload))
+            return AgentResponse(
+                text=NO_OPEN_DAY_TEXT,
+                ui=self._preparation_ui(payload, tenant, context.get("conversation_id"), context),
+            )
         if payload.get("cash_count_id") is None or payload.get("cash_status") == "not_counted":
-            return AgentResponse(text=CASH_COUNT_REQUIRED_TEXT, ui=self._preparation_ui(payload))
+            return AgentResponse(
+                text=CASH_COUNT_REQUIRED_TEXT,
+                ui=self._preparation_ui(payload, tenant, context.get("conversation_id"), context),
+            )
         issued_at = context.get("now") or utcnow()
         fingerprint = fingerprint_for_preparation(payload, business_id=tenant.business_id)
         payload = dict(payload)
@@ -449,7 +478,10 @@ class FoundationOrchestrator:
         )
         text = request_close_text(payload)
         payload["text"] = text
-        return AgentResponse(text=text, ui=self._preparation_ui(payload))
+        return AgentResponse(
+            text=text,
+            ui=self._preparation_ui(payload, tenant, context.get("conversation_id"), context),
+        )
 
     def _handle_confirm_close(
         self,
@@ -490,21 +522,34 @@ class FoundationOrchestrator:
             fail_after_write=bool(context.get("fail_after_write")),
             raw_message=message,
             now=context.get("now"),
+            hash_material=context.get("hash_material"),
+            ui_action_id=context.get("ui_action_id"),
         )
         if result.kind == "stale":
-            return AgentResponse(text=result.text, ui=self._preparation_ui(result.payload))
+            return AgentResponse(
+                text=result.text,
+                ui=self._preparation_ui(result.payload, tenant, conversation_id, context),
+            )
         if result.kind in {"committed", "read_back", "replay"} and result.payload.get("day_status") == "closed":
             return AgentResponse(text=result.text, ui=self._confirmed_ui(result.payload))
         return AgentResponse(text=result.text, ui=[])
 
-    def _preparation_ui(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+    def _preparation_ui(
+        self,
+        payload: dict[str, Any],
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+        context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         if self.ui_composer is None:
             return []
+        data = preparation_ui_data(payload)
+        actions = self._close_actions(data, tenant, conversation_id, context.get("now") or utcnow())
         contract = GenerativeUIContract(
             component="daily_close_preparation",
             version=1,
-            data=preparation_ui_data(payload),
-            actions=[],
+            data=data,
+            actions=actions,
             fallback_text=payload["text"],
         )
         return [self.ui_composer.compose(contract)]
@@ -520,6 +565,161 @@ class FoundationOrchestrator:
             fallback_text=payload["text"],
         )
         return [self.ui_composer.compose(contract)]
+
+    def handle_ui_action(self, action: dict[str, Any], context: dict[str, Any]) -> AgentResponse:
+        registry = UiActionRegistry()
+        action_id = str(action.get("action_id") or "")
+        if not registry.is_registered(action_id):
+            return AgentResponse(text="Esa acción no está disponible.", ui=[])
+        tenant: TenantContext | None = context.get("tenant")
+        conversation_id = context.get("conversation_id")
+        if tenant is None or not isinstance(conversation_id, str) or not conversation_id:
+            return AgentResponse(text="Esa acción no está disponible.", ui=[])
+        now = context.get("now") or utcnow()
+        token = action.get("context_token")
+        token_text = token if isinstance(token, str) else None
+        if registry.is_payment(action_id):
+            verified = verify_ui_action_token(
+                secret=self.token_secret,
+                token=token_text,
+                action_id=action_id,
+                business_id=tenant.business_id,
+                actor_id=tenant.actor_id,
+                conversation_id=conversation_id,
+                now=now,
+                require_sale_session_id=True,
+            )
+            if verified is None or verified.sale_session_id is None or self.commit is None:
+                return AgentResponse(text="No pude verificar esa acción.", ui=[])
+            method = registry.payment_method(action_id)
+            registered = self.tools.is_registered("sale.commit@1")
+            policy = self.policies.evaluate(
+                PolicyRequest(
+                    action="execute_tool",
+                    tool_id="sale.commit@1",
+                    tool_registered=registered,
+                    from_llm=True,
+                    arguments={"payment_method": method},
+                )
+            )
+            if not registered or policy.decision.value != "allow":
+                return AgentResponse(text="That action is not available.", ui=[])
+            result = self.commit.execute(
+                tenant=tenant,
+                conversation_id=conversation_id,
+                payment_method=method,
+                idempotency_key=context["idempotency_key"],
+                correlation_id=context.get("correlation_id", "unknown"),
+                policy=policy,
+                fail_after_write=bool(context.get("fail_after_write")),
+                confirmed_at=now,
+                ui_action_id=action_id,
+                bound_sale_session_id=verified.sale_session_id,
+            )
+            return self._sale_confirmed_response(result)
+        if action_id == REQUEST_CLOSE_ACTION_ID:
+            verified = verify_ui_action_token(
+                secret=self.token_secret,
+                token=token_text,
+                action_id=action_id,
+                business_id=tenant.business_id,
+                actor_id=tenant.actor_id,
+                conversation_id=conversation_id,
+                now=now,
+                require_sale_session_id=False,
+            )
+            if verified is None:
+                return AgentResponse(text="No pude verificar esa acción.", ui=[])
+            return self._handle_request_close(AgentDecision(intent="request_close"), context, tenant)
+        updated = {
+            **context,
+            "client_context": {"confirmation_token": token_text},
+            "hash_material": f"{action_id}|{conversation_id}|{token_text or ''}",
+            "ui_action_id": action_id,
+        }
+        return self._handle_confirm_close(
+            AgentDecision(intent="confirm_close", candidate_tool="closing.confirm@1"),
+            "",
+            updated,
+            tenant,
+            conversation_id,
+        )
+
+    def _payment_actions(
+        self,
+        *,
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+        sale_session_id: str,
+        issued_at: Any,
+        status: str,
+    ) -> list[GenerativeUIAction]:
+        if tenant is None or status != "ready_to_charge" or not conversation_id:
+            return []
+        actions: list[GenerativeUIAction] = []
+        for action_id in UiActionRegistry().ids():
+            if not UiActionRegistry().is_payment(action_id):
+                continue
+            actions.append(
+                GenerativeUIAction(
+                    action_id=action_id,
+                    option_id=None,
+                    context_token=issue_ui_action_token(
+                        secret=self.token_secret,
+                        action_id=action_id,
+                        business_id=tenant.business_id,
+                        actor_id=tenant.actor_id,
+                        conversation_id=conversation_id,
+                        issued_at=issued_at,
+                        sale_session_id=UUID(str(sale_session_id)),
+                    ),
+                    idempotency_key=str(new_uuid7()),
+                )
+            )
+        return actions
+
+    def _close_actions(
+        self,
+        data: dict[str, Any],
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+        issued_at: Any,
+    ) -> list[GenerativeUIAction]:
+        if tenant is None or not conversation_id:
+            return []
+        if data.get("day_status") != "open":
+            return []
+        if data.get("operational_day_id") is None or data.get("cash_count_id") is None:
+            return []
+        if data.get("cash_status") not in {"balanced", "short", "over"}:
+            return []
+        token = data.get("confirmation_token")
+        if isinstance(token, str) and token:
+            if token != data.get("confirmation_token"):
+                raise ValidationAppError("confirmation token mismatch")
+            return [
+                GenerativeUIAction(
+                    action_id=CONFIRM_CLOSE_ACTION_ID,
+                    option_id=None,
+                    context_token=token,
+                    idempotency_key=str(new_uuid7()),
+                )
+            ]
+        return [
+            GenerativeUIAction(
+                action_id=REQUEST_CLOSE_ACTION_ID,
+                option_id=None,
+                context_token=issue_ui_action_token(
+                    secret=self.token_secret,
+                    action_id=REQUEST_CLOSE_ACTION_ID,
+                    business_id=tenant.business_id,
+                    actor_id=tenant.actor_id,
+                    conversation_id=conversation_id,
+                    issued_at=issued_at,
+                ),
+                idempotency_key=str(new_uuid7()),
+            )
+        ]
 
     def _merge_pending(
         self,

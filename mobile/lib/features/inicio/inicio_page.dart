@@ -24,10 +24,22 @@ class InicioTurn {
 }
 
 class InicioPage extends StatelessWidget {
-  const InicioPage({super.key, this.messages = const [], this.businessName});
+  const InicioPage({
+    super.key,
+    this.messages = const [],
+    this.businessName,
+    this.onAction,
+    this.disabledCardKeys = const {},
+    this.busyCardKey,
+    this.busyActionKey,
+  });
 
   final List<InicioTurn> messages;
   final String? businessName;
+  final void Function(GenerativeUiContract contract, GenerativeUiAction action)? onAction;
+  final Set<String> disabledCardKeys;
+  final String? busyCardKey;
+  final String? busyActionKey;
 
   @override
   Widget build(BuildContext context) {
@@ -63,10 +75,43 @@ class InicioPage extends StatelessWidget {
           else if (turn.ui.isEmpty)
             LumoMessage(text: turn.text)
           else
-            renderer.build(turn.ui.first),
+            _assistantCard(renderer, turn),
           const SizedBox(height: LumoSpacing.streamGap),
         ],
       ],
     );
   }
+
+  Widget _assistantCard(GenerativeUIRenderer renderer, InicioTurn turn) {
+    final contract = turn.ui.first;
+    if (!renderer.render(contract).handled) {
+      return LumoMessage(text: contract.fallbackText);
+    }
+    final hide = hideAssistantProse(turn.text, contract);
+    final cardKey = uiCardKey(contract);
+    final chrome = UiActionChrome(
+      hideFallback: true,
+      disabled: disabledCardKeys.contains(cardKey) || busyCardKey == cardKey,
+      loadingKey: busyCardKey == cardKey ? busyActionKey : null,
+      onAction: onAction == null ? null : (action) => onAction!(contract, action),
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!hide) ...[
+          Text(turn.text, style: LumoTypography.body),
+          const SizedBox(height: 8),
+        ],
+        renderer.build(contract, chrome: chrome),
+      ],
+    );
+  }
+}
+
+String uiCardKey(GenerativeUiContract contract) {
+  final actionKeys = contract.actions.map((action) => action.idempotencyKey).join(',');
+  final session = '${contract.data['sale_session_id'] ?? ''}';
+  final day = '${contract.data['operational_day_id'] ?? ''}';
+  final token = '${contract.data['confirmation_token'] ?? ''}';
+  return '${contract.component}|$session|$day|$token|$actionKeys';
 }

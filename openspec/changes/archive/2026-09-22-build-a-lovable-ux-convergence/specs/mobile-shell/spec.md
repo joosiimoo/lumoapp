@@ -1,46 +1,4 @@
-## Purpose
-
-Flutter application shell: environments, typed API client, four-tab navigation, GenerativeUIRenderer (`sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`, `operational_day_summary@1`, `daily_close_preparation@1`, `daily_close_confirmed@1`), and a live Inicio conversation stream with a stable `conversation_id`. Hoy, Memoria, and Negocio MAY remain placeholders.
-## Requirements
-### Requirement: Flutter application shell
-The mobile client MUST be a Flutter application with an app bootstrap, environment configuration, and a visual shell that uses a centered content column of max-width 420px on the design-system canvas color. Inicio is the live conversation stream. Hoy, Memoria, and Negocio MAY remain placeholders. The shell MUST exist and MUST NOT introduce a desktop layout or a dark theme.
-
-#### Scenario: App boots against local API
-- **WHEN** the app starts with a local environment file
-- **THEN** it MUST load the configured API base URL without requiring a rebuild of secret values into source
-
-#### Scenario: Content width
-- **WHEN** the app is shown on a viewport wider than 420px
-- **THEN** the primary content column MUST remain 420px wide on the warm canvas background
-
-### Requirement: Environment configuration
-The app MUST support distinct environments (`local`, `staging`, `production`) for API base URL and non-secret flags. Secrets MUST NOT be committed. The selected environment MUST be readable by the API client at runtime.
-
-#### Scenario: Local environment
-- **WHEN** the local flavor is selected
-- **THEN** the API client MUST target the local Compose API origin
-
-### Requirement: Typed API client foundation
-Views MUST NOT construct URLs, parse raw HTTP, or compute domain totals. A single typed client MUST send JSON `snake_case`, attach `Authorization`, `Idempotency-Key` on mutations, and `X-Correlation-ID`, and decode the public error envelope.
-
-#### Scenario: Mutation headers
-- **WHEN** the client sends a mutating request
-- **THEN** the request MUST include `Idempotency-Key` and a correlation id
-
-#### Scenario: Error envelope decoded
-- **WHEN** the server returns the standard error envelope
-- **THEN** the client MUST expose `code`, `message`, `retryable`, and `correlation_id` to callers
-
-### Requirement: Navigation foundation
-The app MUST provide bottom navigation matching the design-system tab bar: Inicio, Hoy, Memoria, and Negocio. Catalog and settings MUST be reachable later from Negocio; they MUST NOT replace the four-tab identity in this change. Onboarding MAY hide the tab bar.
-
-#### Scenario: Four tabs present
-- **WHEN** a signed-in placeholder home is shown
-- **THEN** the bottom navigation MUST contain Inicio, Hoy, Memoria, and Negocio in that order
-
-#### Scenario: Tab selection styling
-- **WHEN** a tab is selected
-- **THEN** it MUST use the accent pill and foreground styling from the design system, and unselected tabs MUST use muted styling
+## MODIFIED Requirements
 
 ### Requirement: No domain calculations on the client
 Flutter MUST NOT calculate monetary totals, daily sales totals, payment-method splits, conversions, expected cash, counted cash, cash differences, cash status, averages, or outcome gates. Display formatting of server-provided amounts and dates in the business locale is allowed. Formatting an ISO `business_date` MUST NOT change the calendar day and MUST NOT use the device timezone to choose the day. Formatting an ISO `counted_at` for display is allowed and MUST NOT change the stored instant. A `+` prefix on a positive overage amount is display-only and MUST NOT be treated as a computed difference. Flutter MUST NOT choose a payment method, a close request, or a close confirmation except by submitting an action the server emitted.
@@ -167,18 +125,3 @@ Enter and the send button MUST invoke the same submit handler. Empty or whitespa
 #### Scenario: Whitespace does not send
 - **WHEN** the composer text is empty or only whitespace and the user presses Enter or taps send
 - **THEN** the client MUST NOT POST a message
-
-### Requirement: Inicio header shows the active business
-The Inicio eyebrow MUST be `LUMO · {business name}` in uppercase, where `{business name}` is the authenticated session business (Carrota for the local seed). It MUST NOT hardcode `NEGOCIO` or use the current navigation tab as the second label.
-
-#### Scenario: Seeded Carrota header
-- **WHEN** the signed-in local Carrota session is shown on Inicio
-- **THEN** the eyebrow MUST display `LUMO · CARROTA`
-
-### Requirement: Inicio greeting uses the design-system accent
-The Inicio greeting copy MUST be `Buenos días` (including the acute accent). It MUST use the Design System display greeting (Instrument Serif italic) with the Lumo text gradient. The screen MUST NOT be redesigned.
-
-#### Scenario: Greeting treatment
-- **WHEN** Inicio renders
-- **THEN** `Buenos días` MUST be visible with the display-greeting style and Lumo gradient
-

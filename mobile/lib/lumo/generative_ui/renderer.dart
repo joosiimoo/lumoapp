@@ -66,6 +66,45 @@ class GenerativeUiRenderResult {
   final bool handled;
 }
 
+const uiActionLabels = <String, String>{
+  'sale.pay.cash@1': 'Efectivo',
+  'sale.pay.card@1': 'Tarjeta',
+  'sale.pay.transfer@1': 'Transferencia',
+  'closing.request@1': 'Cerrar el día',
+  'closing.confirm@1': 'Confirmar cierre',
+};
+
+bool hideAssistantProse(String text, GenerativeUiContract contract) {
+  if (text.trim() != contract.fallbackText.trim()) {
+    return false;
+  }
+  const listed = {
+    'sale_item_added',
+    'sale_summary',
+    'sale_confirmed',
+    'operational_day_summary',
+    'daily_close_confirmed',
+  };
+  if (listed.contains(contract.component)) {
+    return true;
+  }
+  return contract.component == 'daily_close_preparation' && contract.fallbackText.startsWith('Cierre ');
+}
+
+class UiActionChrome {
+  const UiActionChrome({
+    this.onAction,
+    this.disabled = false,
+    this.loadingKey,
+    this.hideFallback = false,
+  });
+
+  final void Function(GenerativeUiAction action)? onAction;
+  final bool disabled;
+  final String? loadingKey;
+  final bool hideFallback;
+}
+
 class GenerativeUIRenderer {
   const GenerativeUIRenderer();
 
@@ -90,34 +129,117 @@ class GenerativeUIRenderer {
     return render(contract).handled;
   }
 
-  Widget build(GenerativeUiContract contract) {
+  Widget build(GenerativeUiContract contract, {UiActionChrome chrome = const UiActionChrome()}) {
     final result = render(contract);
     if (!result.handled) {
       return LumoMessage(text: contract.fallbackText);
     }
     if (contract.component == 'sale_summary') {
-      return SaleSummaryView(contract: contract);
+      return SaleSummaryView(contract: contract, chrome: chrome);
     }
     if (contract.component == 'sale_confirmed') {
-      return SaleConfirmedView(contract: contract);
+      return SaleConfirmedView(contract: contract, chrome: chrome);
     }
     if (contract.component == 'operational_day_summary') {
-      return OperationalDaySummaryView(contract: contract);
+      return OperationalDaySummaryView(contract: contract, chrome: chrome);
     }
     if (contract.component == 'daily_close_preparation') {
-      return DailyClosePreparationView(contract: contract);
+      return DailyClosePreparationView(contract: contract, chrome: chrome);
     }
     if (contract.component == 'daily_close_confirmed') {
-      return DailyCloseConfirmedView(contract: contract);
+      return DailyCloseConfirmedView(contract: contract, chrome: chrome);
     }
-    return SaleItemAddedView(contract: contract);
+    return SaleItemAddedView(contract: contract, chrome: chrome);
+  }
+}
+
+class UiActionBar extends StatelessWidget {
+  const UiActionBar({super.key, required this.actions, required this.chrome});
+
+  final List<GenerativeUiAction> actions;
+  final UiActionChrome chrome;
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = [
+      for (final action in actions)
+        if (uiActionLabels.containsKey(action.actionId)) action,
+    ];
+    if (visible.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (final action in visible)
+            _ActionPill(
+              label: uiActionLabels[action.actionId]!,
+              loading: chrome.loadingKey == action.idempotencyKey,
+              enabled: !chrome.disabled && chrome.onAction != null && chrome.loadingKey == null,
+              onPressed: () => chrome.onAction?.call(action),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ActionPill extends StatelessWidget {
+  const _ActionPill({
+    required this.label,
+    required this.loading,
+    required this.enabled,
+    required this.onPressed,
+  });
+
+  final String label;
+  final bool loading;
+  final bool enabled;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: enabled ? LumoColors.primary : LumoColors.muted,
+      borderRadius: BorderRadius.circular(LumoRadius.pill),
+      child: InkWell(
+        onTap: enabled ? onPressed : null,
+        borderRadius: BorderRadius.circular(LumoRadius.pill),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (loading) ...[
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+              ],
+              Text(
+                label,
+                style: LumoTypography.buttonSecondary.copyWith(
+                  color: enabled ? LumoColors.primaryForeground : LumoColors.mutedForeground,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 
 class SaleItemAddedView extends StatelessWidget {
-  const SaleItemAddedView({super.key, required this.contract});
+  const SaleItemAddedView({super.key, required this.contract, this.chrome = const UiActionChrome()});
 
   final GenerativeUiContract contract;
+  final UiActionChrome chrome;
 
   @override
   Widget build(BuildContext context) {
@@ -141,9 +263,13 @@ class SaleItemAddedView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(contract.fallbackText, style: LumoTypography.body),
-              const SizedBox(height: 8),
-              LumoCard(
+              if (!chrome.hideFallback) ...[
+                Text(contract.fallbackText, style: LumoTypography.body),
+                const SizedBox(height: 8),
+              ],
+              Semantics(
+                label: chrome.hideFallback ? contract.fallbackText : null,
+                child: LumoCard(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -199,6 +325,7 @@ class SaleItemAddedView extends StatelessWidget {
                   ],
                 ),
               ),
+              ),
             ],
           ),
         ),
@@ -233,9 +360,10 @@ class SaleItemAddedView extends StatelessWidget {
 }
 
 class SaleSummaryView extends StatelessWidget {
-  const SaleSummaryView({super.key, required this.contract});
+  const SaleSummaryView({super.key, required this.contract, this.chrome = const UiActionChrome()});
 
   final GenerativeUiContract contract;
+  final UiActionChrome chrome;
 
   @override
   Widget build(BuildContext context) {
@@ -255,9 +383,13 @@ class SaleSummaryView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(contract.fallbackText, style: LumoTypography.body),
-              const SizedBox(height: 8),
-              LumoCard(
+              if (!chrome.hideFallback) ...[
+                Text(contract.fallbackText, style: LumoTypography.body),
+                const SizedBox(height: 8),
+              ],
+              Semantics(
+                label: chrome.hideFallback ? contract.fallbackText : null,
+                child: LumoCard(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -280,8 +412,14 @@ class SaleSummaryView extends StatelessWidget {
                         Text(total, style: LumoTypography.metricSm),
                       ],
                     ),
+                    if (contract.actions.any((action) => uiActionLabels.containsKey(action.actionId))) ...[
+                      const SizedBox(height: 12),
+                      Text('¿Cómo pagó?', style: LumoTypography.cardTitle),
+                      UiActionBar(actions: contract.actions, chrome: chrome),
+                    ],
                   ],
                 ),
+              ),
               ),
             ],
           ),
@@ -326,9 +464,10 @@ class SaleSummaryView extends StatelessWidget {
 }
 
 class SaleConfirmedView extends StatelessWidget {
-  const SaleConfirmedView({super.key, required this.contract});
+  const SaleConfirmedView({super.key, required this.contract, this.chrome = const UiActionChrome()});
 
   final GenerativeUiContract contract;
+  final UiActionChrome chrome;
 
   @override
   Widget build(BuildContext context) {
@@ -337,7 +476,7 @@ class SaleConfirmedView extends StatelessWidget {
     final total = SaleItemAddedView.formatAmount(data['total']);
     final payment = Map<String, dynamic>.from(data['payment'] as Map? ?? const {});
     final methodLabel = SaleConfirmedView.displayMethod('${payment['method'] ?? ''}');
-    final paymentAmount = SaleItemAddedView.formatAmount(payment['amount']);
+    final items = List<dynamic>.from(data['items'] as List? ?? const []);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -350,9 +489,13 @@ class SaleConfirmedView extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(contract.fallbackText, style: LumoTypography.body),
-              const SizedBox(height: 8),
-              LumoCard(
+              if (!chrome.hideFallback) ...[
+                Text(contract.fallbackText, style: LumoTypography.body),
+                const SizedBox(height: 8),
+              ],
+              Semantics(
+                label: chrome.hideFallback ? contract.fallbackText : null,
+                child: LumoCard(
                 padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -362,21 +505,24 @@ class SaleConfirmedView extends StatelessWidget {
                       child: LumoStatusChip(label: 'Venta registrada'),
                     ),
                     const SizedBox(height: 10),
-                    Text(
-                      '$total · $methodLabel',
-                      style: LumoTypography.metricSm,
+                    for (final raw in items) SaleSummaryView._itemRow(Map<String, dynamic>.from(raw as Map)),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '$count ${count == '1' ? 'artículo' : 'artículos'}',
+                            style: LumoTypography.caption,
+                          ),
+                        ),
+                        Text(total, style: LumoTypography.metricSm),
+                      ],
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      '$count ${count == '1' ? 'artículo' : 'artículos'}',
-                      style: LumoTypography.caption,
-                    ),
-                    if (paymentAmount.isNotEmpty) ...[
-                      const SizedBox(height: 4),
-                      Text(paymentAmount, style: LumoTypography.caption),
-                    ],
+                    Text('Pago $methodLabel', style: LumoTypography.cardTitle),
                   ],
                 ),
+              ),
               ),
             ],
           ),
@@ -400,9 +546,10 @@ class SaleConfirmedView extends StatelessWidget {
 }
 
 class OperationalDaySummaryView extends StatelessWidget {
-  const OperationalDaySummaryView({super.key, required this.contract});
+  const OperationalDaySummaryView({super.key, required this.contract, this.chrome = const UiActionChrome()});
 
   final GenerativeUiContract contract;
+  final UiActionChrome chrome;
 
   @override
   Widget build(BuildContext context) {
@@ -429,9 +576,13 @@ class OperationalDaySummaryView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(contract.fallbackText, style: LumoTypography.body),
-                const SizedBox(height: 8),
-                LumoCard(
+                if (!chrome.hideFallback) ...[
+                  Text(contract.fallbackText, style: LumoTypography.body),
+                  const SizedBox(height: 8),
+                ],
+                Semantics(
+                  label: chrome.hideFallback ? contract.fallbackText : null,
+                  child: LumoCard(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -455,6 +606,7 @@ class OperationalDaySummaryView extends StatelessWidget {
                       Text('Transferencia $transfer', style: LumoTypography.caption),
                     ],
                   ),
+                ),
                 ),
               ],
             ),
@@ -487,9 +639,10 @@ class OperationalDaySummaryView extends StatelessWidget {
 }
 
 class DailyClosePreparationView extends StatelessWidget {
-  const DailyClosePreparationView({super.key, required this.contract});
+  const DailyClosePreparationView({super.key, required this.contract, this.chrome = const UiActionChrome()});
 
   final GenerativeUiContract contract;
+  final UiActionChrome chrome;
 
   @override
   Widget build(BuildContext context) {
@@ -498,8 +651,9 @@ class DailyClosePreparationView extends StatelessWidget {
     final businessDate = OperationalDaySummaryView.displayBusinessDate('${data['business_date'] ?? ''}');
     final expected = formatMoney(data['expected_cash']);
     final counted = formatMoney(data['counted_cash']);
-    final difference = formatMoney(data['cash_difference']);
     final notCounted = status == 'not_counted';
+    final saleCount = '${data['sale_count'] ?? ''}';
+    final saleLabel = saleCount == '1' ? '1 venta' : '$saleCount ventas';
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -514,9 +668,13 @@ class DailyClosePreparationView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(contract.fallbackText, style: LumoTypography.body),
-                const SizedBox(height: 8),
-                LumoCard(
+                if (!chrome.hideFallback) ...[
+                  Text(contract.fallbackText, style: LumoTypography.body),
+                  const SizedBox(height: 8),
+                ],
+                Semantics(
+                  label: chrome.hideFallback ? contract.fallbackText : null,
+                  child: LumoCard(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -527,6 +685,7 @@ class DailyClosePreparationView extends StatelessWidget {
                       ),
                       const SizedBox(height: 10),
                       Text('Cierre $businessDate', style: LumoTypography.caption),
+                      if (saleCount.isNotEmpty) Text(saleLabel, style: LumoTypography.caption),
                       const SizedBox(height: 8),
                       _metricRow('EFECTIVO ESPERADO', expected),
                       if (notCounted)
@@ -536,10 +695,12 @@ class DailyClosePreparationView extends StatelessWidget {
                         )
                       else ...[
                         _metricRow('CONTADO', counted),
-                        _metricRow('DIFERENCIA', difference),
+                        _metricRow('DIFERENCIA', displayDifference(status, data['cash_difference'])),
                       ],
+                      UiActionBar(actions: contract.actions, chrome: chrome),
                     ],
                   ),
+                ),
                 ),
               ],
             ),
@@ -592,12 +753,21 @@ class DailyClosePreparationView extends StatelessWidget {
     }
     return MoneyDisplay.format(amount: amount, currency: currency);
   }
+
+  static String displayDifference(String status, Object? value) {
+    final formatted = formatMoney(value);
+    if (status == 'over' && formatted.isNotEmpty && !formatted.startsWith('+') && !formatted.startsWith('-')) {
+      return '+$formatted';
+    }
+    return formatted;
+  }
 }
 
 class DailyCloseConfirmedView extends StatelessWidget {
-  const DailyCloseConfirmedView({super.key, required this.contract});
+  const DailyCloseConfirmedView({super.key, required this.contract, this.chrome = const UiActionChrome()});
 
   final GenerativeUiContract contract;
+  final UiActionChrome chrome;
 
   @override
   Widget build(BuildContext context) {
@@ -609,6 +779,8 @@ class DailyCloseConfirmedView extends StatelessWidget {
     final counted = DailyClosePreparationView.formatMoney(data['counted_cash']);
     final difference = DailyClosePreparationView.formatMoney(data['cash_difference']);
     final status = DailyClosePreparationView.statusLabel('${data['cash_status'] ?? ''}');
+    final saleCount = '${data['sale_count'] ?? ''}';
+    final saleLabel = saleCount == '1' ? '1 venta' : '$saleCount ventas';
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -623,9 +795,13 @@ class DailyCloseConfirmedView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(contract.fallbackText, style: LumoTypography.body),
-                const SizedBox(height: 8),
-                LumoCard(
+                if (!chrome.hideFallback) ...[
+                  Text(contract.fallbackText, style: LumoTypography.body),
+                  const SizedBox(height: 8),
+                ],
+                Semantics(
+                  label: chrome.hideFallback ? contract.fallbackText : null,
+                  child: LumoCard(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -636,6 +812,7 @@ class DailyCloseConfirmedView extends StatelessWidget {
                       ),
                       const SizedBox(height: 10),
                       Text('Cierre $businessDate', style: LumoTypography.caption),
+                      if (saleCount.isNotEmpty) Text(saleLabel, style: LumoTypography.caption),
                       Text(closedAt, style: LumoTypography.caption),
                       DailyClosePreparationView._metricRow('VENTAS', gross),
                       DailyClosePreparationView._metricRow('EFECTIVO ESPERADO', expected),
@@ -645,6 +822,7 @@ class DailyCloseConfirmedView extends StatelessWidget {
                       Text(status, style: LumoTypography.cardTitle),
                     ],
                   ),
+                ),
                 ),
               ],
             ),

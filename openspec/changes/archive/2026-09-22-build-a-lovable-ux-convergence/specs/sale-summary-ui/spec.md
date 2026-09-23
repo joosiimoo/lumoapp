@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Versioned `sale_summary@1` contract for a totalized sale. The backend composes it after a committed `sale.totalize@1` (or as a `ready_to_charge` read-back) and MUST NOT emit it after `sale.commit@1`. Flutter renders server-provided lines and totals without calculating them.
-## Requirements
 ### Requirement: Register sale_summary@1
 `GenerativeUIRegistry` MUST register component `sale_summary` version `1`. `GenerativeUIComposer` MUST emit this contract after a committed `sale.totalize@1` **transition**, and MAY emit the same contract as a current-state read-back when the session is already `ready_to_charge`. It MUST NOT emit `sale_summary@1` after `sale.commit@1` or for a `confirmed` session. It MUST refuse unknown components. The backend MUST NOT render Flutter widgets or HTML. Money MUST be decimal strings plus `MXN`. `fallback_text` MUST be server-provided and MUST contain the item count and total. For `ready_to_charge`, `actions` MUST be exactly `sale.pay.cash@1`, `sale.pay.card@1`, and `sale.pay.transfer@1`, in that order. Each action MUST have `option_id` null, a `typ=ui_action` `context_token` whose `sale_session_id` equals `data.sale_session_id`, and a server-issued `idempotency_key`. The contract version MUST remain `1`. Data fields MUST NOT add a payment amount or an authorization code.
 
@@ -88,4 +86,3 @@ The summary MUST appear in the existing Inicio conversation stream as an assista
 #### Scenario: Typed payment still works
 - **WHEN** the user types `efectivo` instead of tapping Efectivo
 - **THEN** the client MUST send that phrase to `POST /api/v1/lumo/messages`
-

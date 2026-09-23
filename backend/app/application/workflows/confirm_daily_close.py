@@ -72,11 +72,16 @@ class ConfirmDailyClose:
         fail_after_write: bool = False,
         raw_message: str = "",
         now: datetime | None = None,
+        hash_material: str | None = None,
+        ui_action_id: str | None = None,
     ) -> ConfirmDailyCloseResult:
         token = confirmation_token or ""
-        request_hash = sha256(
-            f"{raw_message}|{conversation_id or ''}|{token}".encode()
-        ).hexdigest()
+        if hash_material is not None:
+            request_hash = sha256(hash_material.encode()).hexdigest()
+        else:
+            request_hash = sha256(
+                f"{raw_message}|{conversation_id or ''}|{token}".encode()
+            ).hexdigest()
 
         replay = self._peek(tenant, idempotency_key, request_hash)
         if replay is not None:
@@ -244,6 +249,7 @@ class ConfirmDailyClose:
                 "closed_at": payload["closed_at"],
                 "previous_status": "open",
                 "new_status": "closed",
+                **({"ui_action_id": ui_action_id} if ui_action_id else {}),
             },
         )
         self._outbox.enqueue(

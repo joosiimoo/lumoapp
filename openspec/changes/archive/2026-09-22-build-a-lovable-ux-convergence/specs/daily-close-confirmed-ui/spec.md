@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Versioned `daily_close_confirmed@1` for a committed close. The backend composes it from the snapshot. Flutter renders those fields on Inicio and does not calculate them.
-## Requirements
 ### Requirement: Register daily_close_confirmed@1
 `GenerativeUIRegistry` MUST register component `daily_close_confirmed` version `1`. `GenerativeUIComposer` MUST emit this contract after a committed `closing.confirm@1`, after an already-closed read-back, and when `closing.prepare@1` or `request_close` reads a closed day. `actions` MUST be empty. Money MUST be decimal strings plus the business currency. `text` MUST equal `fallback_text`. The payload MUST NOT include a reopen action, an approval, an exception list, a product breakdown, a chart series, history, or accounting fields. PRD §10.5 names `closing_ready_card` and `cash_difference_card` MUST remain unregistered. The version MUST remain `1`.
 
@@ -40,4 +38,3 @@ The confirmed card MUST appear in the existing Inicio conversation stream as an 
 #### Scenario: Closing screen is not introduced
 - **WHEN** the Flutter feature tree is inspected after this change
 - **THEN** there MUST NOT be a closing-flow screen, a wired "Preparar el cierre del día" action card, or a Hoy chart
-

@@ -287,6 +287,54 @@ class SalesRepository:
         row = self._session.scalar(stmt)
         return _to_session(row) if row is not None else None
 
+    def get_session_by_id(
+        self,
+        *,
+        tenant: TenantContext,
+        sale_session_id: UUID,
+        for_update: bool = False,
+    ) -> SaleSession | None:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        stmt = select(SaleSessionRow).where(
+            SaleSessionRow.id == sale_session_id,
+            SaleSessionRow.business_id == tenant.business_id,
+            SaleSessionRow.actor_id == tenant.actor_id,
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        row = self._session.scalar(stmt)
+        return _to_session(row) if row is not None else None
+
+    def has_newer_active_session(
+        self,
+        *,
+        tenant: TenantContext,
+        conversation_id: str | None,
+        created_at: datetime | None,
+        session_id: UUID,
+    ) -> bool:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        stmt = select(SaleSessionRow.id).where(
+            SaleSessionRow.business_id == tenant.business_id,
+            SaleSessionRow.actor_id == tenant.actor_id,
+            SaleSessionRow.status.in_(
+                (SaleSessionStatus.OPEN.value, SaleSessionStatus.READY_TO_CHARGE.value)
+            ),
+            SaleSessionRow.id != session_id,
+        )
+        if conversation_id:
+            stmt = stmt.where(SaleSessionRow.conversation_id == conversation_id)
+        else:
+            stmt = stmt.where(SaleSessionRow.conversation_id.is_(None))
+        if created_at is not None:
+            stmt = stmt.where(
+                (SaleSessionRow.created_at > created_at)
+                | ((SaleSessionRow.created_at == created_at) & (SaleSessionRow.id > session_id))
+            )
+        return self._session.scalar(stmt) is not None
+
     def count_sessions(self, *, tenant: TenantContext) -> int:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)

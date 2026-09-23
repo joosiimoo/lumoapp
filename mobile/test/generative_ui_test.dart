@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:lumo/api/lumo_api_client.dart';
 import 'package:lumo/app/lumo_app.dart';
 import 'package:lumo/core/env/app_config.dart';
 import 'package:lumo/core/session/session_store.dart';
+import 'package:lumo/features/inicio/inicio_page.dart';
 import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/widgets/lumo_card.dart';
 import 'package:lumo/lumo/widgets/lumo_chips.dart';
@@ -679,7 +681,7 @@ void main() {
       _preparationContract(counted: '25.00', difference: '2.50', status: 'over', word: 'Sobrante'),
     );
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
-    expect(find.text('\$2.50'), findsOneWidget);
+    expect(find.text('+\$2.50'), findsOneWidget);
     expect(find.text('-\$2.50'), findsNothing);
     expect(find.text('Sobrante'), findsOneWidget);
   });
@@ -849,4 +851,324 @@ void main() {
     ], token);
     expect(clearedByClose, isNull);
   });
+
+  test('mismatched confirm token is not echoed', () {
+    final contract = GenerativeUiContract.fromJson({
+      'component': 'daily_close_preparation',
+      'version': 1,
+      'fallback_text': 'El cierre está preparado',
+      'actions': [
+        {
+          'action_id': 'closing.confirm@1',
+          'option_id': null,
+          'context_token': 'button-token',
+          'idempotency_key': 'k-confirm',
+        },
+      ],
+      'data': {'confirmation_token': 'other-token'},
+    });
+    expect(nextConfirmationToken([contract], 'previous'), isNull);
+  });
+
+  test('duplicate prose is hidden only for the approved cards', () {
+    final summary = GenerativeUiContract.fromJson(_summaryContract());
+    expect(hideAssistantProse(summary.fallbackText, summary), isTrue);
+    final prepared = GenerativeUiContract.fromJson({
+      ..._preparationContract(),
+      'fallback_text': 'El cierre está preparado: 1 venta · \$22.50.',
+    });
+    expect(hideAssistantProse(prepared.fallbackText, prepared), isFalse);
+    final standard = GenerativeUiContract.fromJson(_preparationContract());
+    expect(hideAssistantProse(standard.fallbackText, standard), isTrue);
+  });
+
+  testWidgets('payment buttons come only from known server actions', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._summaryContract(),
+      'actions': [
+        {
+          'action_id': 'sale.pay.cash@1',
+          'option_id': null,
+          'context_token': 'cash-token',
+          'idempotency_key': 'cash-key',
+        },
+        {
+          'action_id': 'sale.pay.crypto@1',
+          'option_id': null,
+          'context_token': 'crypto-token',
+          'idempotency_key': 'crypto-key',
+        },
+      ],
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract, chrome: const UiActionChrome(onAction: _ignoreAction)))));
+    expect(find.text('¿Cómo pagó?'), findsOneWidget);
+    expect(find.text('Efectivo'), findsOneWidget);
+    expect(find.text('Tarjeta'), findsNothing);
+    expect(find.text('Transferencia'), findsNothing);
+    expect(find.text('sale.pay.crypto@1'), findsNothing);
+  });
+
+  testWidgets('sale confirmed renders every server line and one payment label', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(GenerativeUiContract.fromJson(_confirmedContract())))));
+    expect(find.text('Zanahoria'), findsOneWidget);
+    expect(find.text('Tomate'), findsOneWidget);
+    expect(find.text('Galleta A'), findsOneWidget);
+    expect(find.text('Pago Tarjeta'), findsOneWidget);
+    expect(find.text('Deshacer'), findsNothing);
+  });
+
+  test('over difference adds a display prefix and short keeps the server sign', () {
+    expect(
+      DailyClosePreparationView.displayDifference('over', {'amount': '2.50', 'currency': 'MXN'}),
+      '+\$2.50',
+    );
+    expect(
+      DailyClosePreparationView.displayDifference('short', {'amount': '-2.50', 'currency': 'MXN'}),
+      '-\$2.50',
+    );
+  });
+
+  testWidgets('a tap posts the server action without a user bubble or sale id', (tester) async {
+    final bodies = <Map<String, dynamic>>[];
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET') {
+        return _sessionOk();
+      }
+      final body = jsonDecode(request.body) as Map<String, dynamic>;
+      bodies.add(body);
+      if (request.url.path.endsWith('/actions')) {
+        return _json({
+          'message_id': 'm-paid',
+          'status': 'completed',
+          'text': 'Venta registrada · 2 artículos · \$32.50 · Efectivo',
+          'ui': [_confirmedContract(total: '32.50', method: 'cash', itemCount: 2)],
+          'correlation_id': 'c-paid',
+        });
+      }
+      return _json({
+        'message_id': 'm-ready',
+        'status': 'completed',
+        'text': _summaryContract()['fallback_text'],
+        'ui': [
+          {
+            ..._summaryContract(),
+            'actions': [
+              {
+                'action_id': 'sale.pay.cash@1',
+                'option_id': null,
+                'context_token': 'cash-token',
+                'idempotency_key': 'server-key',
+              },
+            ],
+          },
+        ],
+        'correlation_id': 'c-ready',
+      });
+    });
+    await tester.pumpWidget(LumoApp(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      apiClient: _client(httpClient),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'totalizar');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    expect(find.text('totalizar'), findsOneWidget);
+    await tester.ensureVisible(find.text('Efectivo'));
+    await tester.tap(find.text('Efectivo'));
+    await tester.pumpAndSettle();
+    expect(find.text('totalizar'), findsOneWidget);
+    expect(find.text('Efectivo'), findsOneWidget);
+    expect(find.text('Venta registrada'), findsOneWidget);
+    final action = bodies.last;
+    expect(action.containsKey('sale_session_id'), isFalse);
+    expect(action['idempotency_key'], 'server-key');
+    expect(action['option_id'], isNull);
+    expect(bodies.where((body) => body['message'] == 'Efectivo'), isEmpty);
+  });
+
+  testWidgets('failure keeps the card and retries the same server key', (tester) async {
+    var attempts = 0;
+    final keys = <String>[];
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET') {
+        return _sessionOk();
+      }
+      if (request.url.path.endsWith('/actions')) {
+        attempts += 1;
+        keys.add(jsonDecode(request.body)['idempotency_key'] as String);
+        return http.Response('{"error":{"code":"INTERNAL_ERROR","message":"no"}}', 500);
+      }
+      return _json({
+        'message_id': 'm-ready',
+        'status': 'completed',
+        'text': _summaryContract()['fallback_text'],
+        'ui': [
+          {
+            ..._summaryContract(),
+            'actions': [
+              {
+                'action_id': 'sale.pay.cash@1',
+                'option_id': null,
+                'context_token': 'cash-token',
+                'idempotency_key': 'server-key',
+              },
+            ],
+          },
+        ],
+        'correlation_id': 'c-ready',
+      });
+    });
+    await tester.pumpWidget(LumoApp(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      apiClient: _client(httpClient),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'totalizar');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Efectivo'));
+    await tester.tap(find.text('Efectivo'));
+    await tester.pump();
+    expect(find.text('No pude registrar eso. Intenta de nuevo.'), findsOneWidget);
+    expect(find.text('Efectivo'), findsOneWidget);
+    await tester.ensureVisible(find.text('Efectivo'));
+    await tester.tap(find.text('Efectivo'));
+    await tester.pump();
+    expect(attempts, 2);
+    expect(keys, ['server-key', 'server-key']);
+    await tester.pump(const Duration(seconds: 3));
+  });
+
+  testWidgets('stale action shows clarification and no confirmed card', (tester) async {
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET') {
+        return _sessionOk();
+      }
+      if (request.url.path.endsWith('/actions')) {
+        return _json({
+          'message_id': 'm-stale',
+          'status': 'completed',
+          'text': 'Esta acción ya no aplica a la venta en curso.',
+          'ui': [],
+          'correlation_id': 'c-stale',
+        });
+      }
+      return _json({
+        'message_id': 'm-ready',
+        'status': 'completed',
+        'text': _summaryContract()['fallback_text'],
+        'ui': [
+          {
+            ..._summaryContract(),
+            'actions': [
+              {
+                'action_id': 'sale.pay.cash@1',
+                'option_id': null,
+                'context_token': 'cash-token',
+                'idempotency_key': 'server-key',
+              },
+            ],
+          },
+        ],
+        'correlation_id': 'c-ready',
+      });
+    });
+    await tester.pumpWidget(LumoApp(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      apiClient: _client(httpClient),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'totalizar');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Efectivo'));
+    await tester.tap(find.text('Efectivo'));
+    await tester.pumpAndSettle();
+    expect(find.text('Esta acción ya no aplica a la venta en curso.'), findsOneWidget);
+    expect(find.text('Venta registrada'), findsNothing);
+    expect(find.text('Lista para cobrar'), findsOneWidget);
+    expect(find.text('totalizar'), findsOneWidget);
+  });
+
+  testWidgets('request-close prose stays visible beside the card', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: InicioPage(
+          messages: [
+            InicioTurn.assistant(
+              'El cierre está preparado: 1 venta · \$22.50.',
+              [
+                GenerativeUiContract.fromJson({
+                  ..._preparationContract(),
+                  'fallback_text': 'Cierre 2026-09-21 · Efectivo esperado \$22.50',
+                }),
+              ],
+            ),
+          ],
+        ),
+      ),
+    ));
+    expect(find.text('El cierre está preparado: 1 venta · \$22.50.'), findsOneWidget);
+    expect(find.text('Cierre 2026-09-21'), findsOneWidget);
+  });
+
+  testWidgets('a second tap while the action is in flight sends nothing', (tester) async {
+    var posts = 0;
+    final release = Completer<http.Response>();
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET') {
+        return _sessionOk();
+      }
+      if (request.url.path.endsWith('/actions')) {
+        posts += 1;
+        return release.future;
+      }
+      return _json({
+        'message_id': 'm-ready',
+        'status': 'completed',
+        'text': _summaryContract()['fallback_text'],
+        'ui': [
+          {
+            ..._summaryContract(),
+            'actions': [
+              {
+                'action_id': 'sale.pay.cash@1',
+                'option_id': null,
+                'context_token': 'cash-token',
+                'idempotency_key': 'server-key',
+              },
+            ],
+          },
+        ],
+        'correlation_id': 'c-ready',
+      });
+    });
+    await tester.pumpWidget(LumoApp(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      apiClient: _client(httpClient),
+    ));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'totalizar');
+    await tester.testTextInput.receiveAction(TextInputAction.send);
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Efectivo'));
+    await tester.tap(find.text('Efectivo'));
+    await tester.pump();
+    await tester.tap(find.text('Efectivo'));
+    await tester.pump();
+    expect(posts, 1);
+    release.complete(_json({
+      'message_id': 'm-paid',
+      'status': 'completed',
+      'text': 'Venta registrada',
+      'ui': [],
+      'correlation_id': 'c-paid',
+    }));
+    await tester.pumpAndSettle();
+  });
 }
+
+void _ignoreAction(GenerativeUiAction action) {}

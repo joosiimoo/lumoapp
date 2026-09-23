@@ -98,6 +98,23 @@ class SalesPort(Protocol):
 
     def get_latest_confirmed_session(self, *, tenant: TenantContext, conversation_id: str | None) -> Any: ...
 
+    def get_session_by_id(
+        self,
+        *,
+        tenant: TenantContext,
+        sale_session_id: UUID,
+        for_update: bool = False,
+    ) -> Any: ...
+
+    def has_newer_active_session(
+        self,
+        *,
+        tenant: TenantContext,
+        conversation_id: str | None,
+        created_at: Any,
+        session_id: UUID,
+    ) -> bool: ...
+
 
 class IdentityPort(Protocol):
     def get_business(self, tenant: TenantContext) -> Any: ...

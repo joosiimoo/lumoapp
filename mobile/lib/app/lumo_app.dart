@@ -16,6 +16,7 @@ import 'package:lumo/lumo/widgets/lumo_bottom_navigation.dart';
 import 'package:uuid/uuid.dart';
 
 /// Keeps the latest non-null preparation token. A null token or a confirmed card clears it.
+/// A confirm action token is sent only when it matches `data.confirmation_token`.
 String? nextConfirmationToken(List<GenerativeUiContract> ui, String? current) {
   var token = current;
   for (final contract in ui) {
@@ -23,7 +24,20 @@ String? nextConfirmationToken(List<GenerativeUiContract> ui, String? current) {
       token = null;
     } else if (contract.component == 'daily_close_preparation') {
       final value = contract.data['confirmation_token'];
-      token = value is String && value.isNotEmpty ? value : null;
+      final dataToken = value is String && value.isNotEmpty ? value : null;
+      GenerativeUiAction? confirm;
+      for (final action in contract.actions) {
+        if (action.actionId == 'closing.confirm@1') {
+          confirm = action;
+        }
+      }
+      if (confirm == null) {
+        token = dataToken;
+      } else if (dataToken != confirm.contextToken) {
+        token = null;
+      } else {
+        token = confirm.contextToken;
+      }
     }
   }
   return token;
@@ -77,6 +91,9 @@ class _LumoHomeState extends State<LumoHome> {
   String? _businessName;
   String? _confirmationToken;
   late final String _conversationId;
+  final Set<String> _settledCards = {};
+  String? _busyCardKey;
+  String? _busyActionKey;
 
   @override
   void initState() {
@@ -103,6 +120,45 @@ class _LumoHomeState extends State<LumoHome> {
   void dispose() {
     _composer.dispose();
     super.dispose();
+  }
+
+  Future<void> _onAction(GenerativeUiContract contract, GenerativeUiAction action) async {
+    final cardKey = uiCardKey(contract);
+    if (_busyCardKey != null || _settledCards.contains(cardKey) || _tab != LumoTab.inicio) {
+      return;
+    }
+    setState(() {
+      _busyCardKey = cardKey;
+      _busyActionKey = action.idempotencyKey;
+    });
+    try {
+      final response = await widget.apiClient.postAction(
+        actionId: action.actionId,
+        optionId: action.optionId,
+        contextToken: action.contextToken,
+        conversationId: _conversationId,
+        idempotencyKey: action.idempotencyKey,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _inicio.add(InicioTurn.assistant(response.text, response.ui));
+        _confirmationToken = nextConfirmationToken(response.ui, _confirmationToken);
+        _settledCards.add(cardKey);
+        _busyCardKey = null;
+        _busyActionKey = null;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _busyCardKey = null;
+        _busyActionKey = null;
+      });
+      LumoToast.show(context, 'No pude registrar eso. Intenta de nuevo.');
+    }
   }
 
   Future<void> _onSend() async {
@@ -165,7 +221,14 @@ class _LumoHomeState extends State<LumoHome> {
             )
           : null,
       body: switch (_tab) {
-        LumoTab.inicio => InicioPage(messages: _inicio, businessName: _businessName),
+        LumoTab.inicio => InicioPage(
+            messages: _inicio,
+            businessName: _businessName,
+            onAction: _onAction,
+            disabledCardKeys: _settledCards,
+            busyCardKey: _busyCardKey,
+            busyActionKey: _busyActionKey,
+          ),
         LumoTab.hoy => const HoyPage(),
         LumoTab.memoria => const MemoriaPage(),
         LumoTab.negocio => const NegocioPage(),

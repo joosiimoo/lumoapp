@@ -21,7 +21,12 @@ context: |
   - Change `build-a-operational-day-foundation` is archived and complete.
   - Change `build-a-daily-close-foundation` is archived and complete.
   - Change `build-a-daily-close-confirmation` is archived and complete.
-  - There is no active OpenSpec change.
+  - Change `build-a-lovable-ux-convergence` is archived and complete.
+    No active OpenSpec change remains.
+    Closed UI actions are baseline: `sale.pay.cash@1`, `sale.pay.card@1`,
+    `sale.pay.transfer@1`, `closing.request@1`, `closing.confirm@1`.
+    Transport is `POST /api/v1/lumo/actions`. It does not add a tool, table,
+    or domain state. `closing.confirm@1` remains the existing tool.
   - Baseline OpenSpec specs under openspec/specs/ include foundation capabilities
     (backend-platform, persistence, tenant-isolation, integrity-foundation,
     ai-native-contracts, mobile-shell, lumo-design-system) plus catalog-foundation,
@@ -29,8 +34,8 @@ context: |
     conversational-sale-session, sale-summary-ui, sale-payment,
     sale-confirmed-ui, operational-day-foundation, operational-day-summary-ui,
     cash-count-foundation, daily-close-preparation, daily-close-preparation-ui,
-    closing-snapshot-foundation, daily-close-confirmation, and
-    daily-close-confirmed-ui.
+    closing-snapshot-foundation, daily-close-confirmation,
+    daily-close-confirmed-ui, and generative-ui-actions.
   - Registered tools: `catalog.resolve_product@1`, `sale.start@1`,
     `sale.add_item@1`, `sale.totalize@1`, `sale.commit@1`,
     `operational_day.summary@1`, `closing.submit_cash_count@1`,
