@@ -79,12 +79,17 @@ class Payment:
     updated_at: datetime | None = None
 
 
+class SaleItemSource(StrEnum):
+    CATALOG = "catalog"
+    FREE_CONCEPT = "free_concept"
+
+
 @dataclass(frozen=True, slots=True)
 class SaleItem:
     id: UUID
     business_id: UUID
     sale_session_id: UUID
-    product_id: UUID
+    product_id: UUID | None
     product_name_snapshot: str
     quantity_input: Decimal
     unit_input: InputUnit
@@ -92,6 +97,21 @@ class SaleItem:
     unit_normalized: SaleUnit
     unit_price: Money
     line_total: Money
+    source_type: SaleItemSource = SaleItemSource.CATALOG
+
+    def __post_init__(self) -> None:
+        from app.domain.shared.errors import ValidationAppError
+
+        if self.source_type is SaleItemSource.CATALOG:
+            if self.product_id is None:
+                raise ValidationAppError("a catalog sale item requires a product")
+            return
+        if self.product_id is not None:
+            raise ValidationAppError("a free concept cannot reference a product")
+        if not self.product_name_snapshot.strip():
+            raise ValidationAppError("a free concept requires a name")
+        if self.line_total.amount <= 0 or self.unit_price.amount <= 0:
+            raise ValidationAppError("price must be greater than zero")
 
 
 def can_add_item(status: SaleSessionStatus) -> bool:

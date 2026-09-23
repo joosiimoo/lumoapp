@@ -44,6 +44,16 @@ def normalize_quantity(quantity: Decimal, unit: InputUnit, sale_unit: SaleUnit) 
     )
 
 
+def normalize_free_concept_quantity(quantity: Decimal, unit: InputUnit) -> tuple[Decimal, SaleUnit]:
+    if unit in {InputUnit.GRAM, InputUnit.KILOGRAM}:
+        return normalize_quantity(quantity, unit, SaleUnit.KILOGRAM)
+    if unit is InputUnit.UNIT:
+        return normalize_quantity(quantity, unit, SaleUnit.UNIT)
+    if unit is InputUnit.PACKAGE:
+        return normalize_quantity(quantity, unit, SaleUnit.PACKAGE)
+    raise UnitNotSupportedError("unit is not supported")
+
+
 def format_normalized_quantity(quantity: Decimal, unit: SaleUnit) -> str:
     if unit is SaleUnit.KILOGRAM:
         quantized = quantity.quantize(Decimal("0.001"))

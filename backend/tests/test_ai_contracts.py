@@ -224,4 +224,4 @@ def test_scripted_interpreter_totalize_synonyms_and_missing_unit() -> None:
     assert missing.intent == "add_sale_item"
     assert missing.unit is None
     assert "unit" in missing.missing_fields
-    assert missing.product_query == "galletas a"
+    assert missing.product_query == "galletas A"

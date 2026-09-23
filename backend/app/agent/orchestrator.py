@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -14,6 +15,7 @@ from app.agent.ui_actions import (
     REQUEST_CLOSE_ACTION_ID,
     UiActionRegistry,
 )
+from app.agent.providers.scripted import normalize_closed_phrase
 from app.application.pending import InMemoryPendingClarificationStore
 from app.application.closing_confirmation_token import issue_closing_confirmation_token
 from app.application.ui_action_token import issue_ui_action_token, verify_ui_action_token
@@ -34,6 +36,7 @@ from app.application.workflows.get_daily_close_preparation import (
 from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
 from app.application.workflows.record_cash_count import RecordCashCount
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
+from app.domain.sales.concept import basis_question, ground_user_price
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.base import utcnow
 from app.policies import PolicyEngine, PolicyRequest
@@ -70,7 +73,29 @@ class FoundationOrchestrator:
 
         tenant: TenantContext | None = context.get("tenant")
         conversation_id = context.get("conversation_id")
+        stored = (
+            self.pending.get(tenant=tenant, conversation_id=conversation_id)
+            if self.pending is not None and tenant is not None
+            else None
+        )
+        if self.pending is not None and tenant is not None:
+            repeated = self._mass_basis_yes_no(message, tenant, conversation_id)
+            if repeated is not None:
+                return AgentResponse(text=repeated, ui=[])
+        if (
+            stored is not None
+            and decision.product_query
+            and decision.product_query != stored.product_query
+            and self.pending is not None
+            and tenant is not None
+        ):
+            self.pending.clear(tenant=tenant, conversation_id=conversation_id)
+            stored = None
         decision = self._merge_pending(decision, tenant, conversation_id)
+        grounded_now = ground_user_price(message)
+        pending_price = None
+        if stored is not None and stored.unit_price and grounded_now.amount is None and grounded_now.problem is None:
+            pending_price = stored.unit_price
 
         if decision.intent == "day_summary" or decision.candidate_tool == "operational_day.summary@1":
             return self._handle_day_summary(decision, context, tenant)
@@ -93,21 +118,10 @@ class FoundationOrchestrator:
         if decision.intent == "totalize_sale" or decision.candidate_tool == "sale.totalize@1":
             return self._handle_totalize(decision, message, context, tenant, conversation_id)
 
-        resolve_first = (
-            decision.intent == "add_sale_item"
-            and bool(decision.product_query)
-            and bool(decision.quantity)
-            and (decision.unit is None or "unit" in decision.missing_fields)
-        )
-        if decision.missing_fields and not resolve_first:
-            self._remember_missing_unit(decision, tenant, conversation_id)
-            return AgentResponse(
-                text=decision.clarification_question or "Necesito un dato más para continuar.",
-                ui=[],
-            )
-
-        if decision.candidate_tool or resolve_first:
-            tool_id = decision.candidate_tool or "sale.add_item@1"
+        if decision.intent == "add_sale_item" and decision.product_query:
+            if self.workflow is None or tenant is None:
+                return AgentResponse(text="That action is not available.", ui=[])
+            tool_id = "sale.add_item@1"
             registered = self.tools.is_registered(tool_id)
             policy = self.policies.evaluate(
                 PolicyRequest(
@@ -115,62 +129,37 @@ class FoundationOrchestrator:
                     tool_id=tool_id,
                     tool_registered=registered,
                     from_llm=True,
-                    arguments={
-                        "quantity": decision.quantity,
-                        "unit": decision.unit,
-                        "missing_essentials": bool(decision.missing_fields) and not resolve_first,
-                    },
+                    arguments={"quantity": decision.quantity, "unit": decision.unit},
                 )
             )
             if not registered or policy.decision.value == "deny":
-                return AgentResponse(
-                    text=decision.clarification_question or "That action is not available.",
-                    ui=[],
-                )
-            if self.workflow is not None and decision.intent == "add_sale_item":
-                if tenant is None:
-                    return AgentResponse(text="That action is not available.", ui=[])
-                result = self.workflow.execute(
-                    tenant=tenant,
-                    decision=decision,
-                    conversation_id=conversation_id,
-                    idempotency_key=context["idempotency_key"],
-                    correlation_id=context.get("correlation_id", "unknown"),
-                    policy=policy,
-                    fail_after_write=bool(context.get("fail_after_write")),
-                    raw_message=message,
-                )
-                if result.kind == "clarify_unit":
-                    self._remember_missing_unit(decision, tenant, conversation_id)
-                    return AgentResponse(text=result.text, ui=[])
-                if result.kind in {"clarify", "deny"}:
-                    return AgentResponse(text=result.text, ui=[])
-                if self.pending is not None:
-                    self.pending.clear(tenant=tenant, conversation_id=conversation_id)
-                ui: list[dict[str, Any]] = []
-                if self.ui_composer is not None:
-                    fallback = result.text
-                    contract = GenerativeUIContract(
-                        component="sale_item_added",
-                        version=1,
-                        data={
-                            "sale_session_id": result.payload["sale_session_id"],
-                            "sale_item_id": result.payload["sale_item_id"],
-                            "product_name": result.payload["product_name"],
-                            "quantity_input": result.payload["quantity_input"],
-                            "unit_input": result.payload["unit_input"],
-                            "quantity_normalized": result.payload["quantity_normalized"],
-                            "unit_normalized": result.payload["unit_normalized"],
-                            "unit_price": result.payload["unit_price"],
-                            "line_total": result.payload["line_total"],
-                            "session_item_count": result.payload["session_item_count"],
-                            "session_total": result.payload["session_total"],
-                        },
-                        actions=[],
-                        fallback_text=fallback,
-                    )
-                    ui = [self.ui_composer.compose(contract)]
-                return AgentResponse(text=result.text, ui=ui)
+                return AgentResponse(text=decision.clarification_question or "That action is not available.", ui=[])
+            result = self.workflow.execute(
+                tenant=tenant,
+                decision=decision,
+                conversation_id=conversation_id,
+                idempotency_key=context["idempotency_key"],
+                correlation_id=context.get("correlation_id", "unknown"),
+                policy=policy,
+                fail_after_write=bool(context.get("fail_after_write")),
+                raw_message=message,
+                pending_unit_price=pending_price,
+            )
+            return self._finish_add_item(result, tenant, conversation_id)
+
+        if decision.intent == "add_sale_item" or decision.missing_fields:
+            if (
+                stored is not None
+                and stored.kind == "free_concept"
+                and stored.unit in {"gram", "kilogram"}
+                and stored.unit_price
+                and not stored.price_basis
+            ):
+                return AgentResponse(text=basis_question(Decimal(stored.unit_price)), ui=[])
+            return AgentResponse(
+                text=decision.clarification_question or "¿Qué vendiste?",
+                ui=[],
+            )
 
         result = {
             "text": decision.clarification_question or "Lumo foundation received the message.",
@@ -721,6 +710,73 @@ class FoundationOrchestrator:
             )
         ]
 
+    def _finish_add_item(
+        self,
+        result: Any,
+        tenant: TenantContext,
+        conversation_id: str | None,
+    ) -> AgentResponse:
+        pending_payload = result.payload.get("pending") if isinstance(result.payload, dict) else None
+        if pending_payload and self.pending is not None:
+            self.pending.put(
+                tenant=tenant,
+                conversation_id=conversation_id,
+                product_query=pending_payload["product_query"],
+                quantity=pending_payload.get("quantity"),
+                kind=pending_payload.get("kind", "free_concept"),
+                unit=pending_payload.get("unit"),
+                unit_price=pending_payload.get("unit_price"),
+                price_basis=pending_payload.get("price_basis"),
+                package_word=pending_payload.get("package_word"),
+            )
+            return AgentResponse(text=result.text, ui=[])
+        if result.kind in {"clarify", "clarify_unit", "deny"}:
+            if result.payload.get("clear_pending") and self.pending is not None:
+                self.pending.clear(tenant=tenant, conversation_id=conversation_id)
+            return AgentResponse(text=result.text, ui=[])
+        if self.pending is not None:
+            self.pending.clear(tenant=tenant, conversation_id=conversation_id)
+        ui: list[dict[str, Any]] = []
+        if self.ui_composer is not None and result.payload.get("sale_item_id"):
+            contract = GenerativeUIContract(
+                component="sale_item_added",
+                version=1,
+                data={
+                    "sale_session_id": result.payload["sale_session_id"],
+                    "sale_item_id": result.payload["sale_item_id"],
+                    "product_name": result.payload["product_name"],
+                    "quantity_input": result.payload["quantity_input"],
+                    "unit_input": result.payload["unit_input"],
+                    "quantity_normalized": result.payload["quantity_normalized"],
+                    "unit_normalized": result.payload["unit_normalized"],
+                    "unit_price": result.payload["unit_price"],
+                    "line_total": result.payload["line_total"],
+                    "session_item_count": result.payload["session_item_count"],
+                    "session_total": result.payload["session_total"],
+                },
+                actions=[],
+                fallback_text=result.text,
+            )
+            ui = [self.ui_composer.compose(contract)]
+        return AgentResponse(text=result.text, ui=ui)
+
+    def _mass_basis_yes_no(
+        self,
+        message: str,
+        tenant: TenantContext,
+        conversation_id: str | None,
+    ) -> str | None:
+        if self.pending is None:
+            return None
+        stored = self.pending.get(tenant=tenant, conversation_id=conversation_id)
+        if stored is None or stored.kind != "free_concept" or stored.unit not in {"gram", "kilogram"}:
+            return None
+        if not stored.unit_price or stored.price_basis:
+            return None
+        if normalize_closed_phrase(message) not in {"si", "no"}:
+            return None
+        return basis_question(Decimal(stored.unit_price))
+
     def _merge_pending(
         self,
         decision: AgentDecision,
@@ -729,10 +785,55 @@ class FoundationOrchestrator:
     ) -> AgentDecision:
         if self.pending is None or tenant is None:
             return decision
-        if decision.unit and (not decision.product_query or not decision.quantity):
-            stored = self.pending.get(tenant=tenant, conversation_id=conversation_id)
-            if stored is None:
-                return decision
+        stored = self.pending.get(tenant=tenant, conversation_id=conversation_id)
+        if stored is None or decision.product_query:
+            return decision
+        if decision.price_basis == "per_kilogram" and stored.kind == "free_concept":
+            return decision.model_copy(
+                update={
+                    "intent": "add_sale_item",
+                    "product_query": stored.product_query,
+                    "quantity": stored.quantity,
+                    "unit": stored.unit,
+                    "unit_price": stored.unit_price,
+                    "price_basis": "per_kilogram",
+                    "package_word": stored.package_word,
+                    "missing_fields": [],
+                    "candidate_tool": "sale.add_item@1",
+                    "clarification_question": None,
+                }
+            )
+        bare = decision.quantity and decision.unit_price and decision.quantity == decision.unit_price
+        if bare and stored.kind == "free_concept" and not stored.quantity:
+            return decision.model_copy(
+                update={
+                    "intent": "add_sale_item",
+                    "product_query": stored.product_query,
+                    "quantity": decision.quantity,
+                    "unit": stored.unit,
+                    "unit_price": None,
+                    "package_word": stored.package_word,
+                    "missing_fields": [],
+                    "candidate_tool": "sale.add_item@1",
+                    "clarification_question": None,
+                }
+            )
+        if (decision.unit_price or bare) and stored.kind == "free_concept" and stored.unit in {"unit", "package"}:
+            return decision.model_copy(
+                update={
+                    "intent": "add_sale_item",
+                    "product_query": stored.product_query,
+                    "quantity": stored.quantity,
+                    "unit": stored.unit,
+                    "unit_price": decision.unit_price,
+                    "price_basis": "per_each",
+                    "package_word": stored.package_word,
+                    "missing_fields": [],
+                    "candidate_tool": "sale.add_item@1",
+                    "clarification_question": None,
+                }
+            )
+        if decision.unit and not decision.product_query and stored.kind == "catalog_unit":
             return decision.model_copy(
                 update={
                     "intent": "add_sale_item",

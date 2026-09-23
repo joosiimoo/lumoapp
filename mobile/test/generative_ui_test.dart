@@ -238,6 +238,28 @@ void main() {
     expect(find.byType(LumoCard), findsOneWidget);
   });
 
+  testWidgets('free concept cards keep the server snapshot', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    for (final name in ['bolsas de hielo', 'Café Orgánico', 'Café Molido']) {
+      final contract = GenerativeUiContract.fromJson({
+        ..._goldenContract(),
+        'data': {
+          ..._goldenContract()['data'] as Map<String, dynamic>,
+          'product_name': name,
+          'unit_normalized': name == 'Café Molido' ? 'kilogram' : 'package',
+          'line_total': {'amount': '36.00', 'currency': 'MXN'},
+        },
+        'fallback_text': 'Agregué $name',
+      });
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+      expect(find.text(name), findsOneWidget);
+      expect(find.text('cafe organico'), findsNothing);
+      expect(find.text('cafe molido'), findsNothing);
+      expect(find.textContaining('Concepto libre'), findsNothing);
+      expect(find.textContaining('Guardar'), findsNothing);
+    }
+  });
+
   testWidgets('add-item card shows server session totals without summing lines', (tester) async {
     const renderer = GenerativeUIRenderer();
     final contract = GenerativeUiContract.fromJson(

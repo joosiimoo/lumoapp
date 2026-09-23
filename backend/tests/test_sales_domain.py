@@ -110,3 +110,58 @@ def test_session_total_is_derived_sum() -> None:
     assert three.to_json() == {"amount": "56.50", "currency": "MXN"}
     assert payment_amount_matches_total(three, [_item("22.50"), _item("10.00"), _item("24.00")]) is True
     assert payment_amount_matches_total(Money(Decimal("10.00"), "MXN"), [_item("22.50")]) is False
+
+
+def test_free_concept_source_is_exclusive() -> None:
+    from app.domain.sales import SaleItemSource
+
+    with pytest.raises(ValidationAppError):
+        SaleItem(
+            id=uuid4(),
+            business_id=uuid4(),
+            sale_session_id=uuid4(),
+            product_id=None,
+            source_type=SaleItemSource.CATALOG,
+            product_name_snapshot="Zanahoria",
+            quantity_input=Decimal("1"),
+            unit_input=InputUnit.UNIT,
+            quantity_normalized=Decimal("1"),
+            unit_normalized=SaleUnit.UNIT,
+            unit_price=Money(Decimal("1.00"), "MXN"),
+            line_total=Money(Decimal("1.00"), "MXN"),
+        )
+    with pytest.raises(ValidationAppError):
+        SaleItem(
+            id=uuid4(),
+            business_id=uuid4(),
+            sale_session_id=uuid4(),
+            product_id=uuid4(),
+            source_type=SaleItemSource.FREE_CONCEPT,
+            product_name_snapshot="hielo",
+            quantity_input=Decimal("1"),
+            unit_input=InputUnit.UNIT,
+            quantity_normalized=Decimal("1"),
+            unit_normalized=SaleUnit.UNIT,
+            unit_price=Money(Decimal("1.00"), "MXN"),
+            line_total=Money(Decimal("1.00"), "MXN"),
+        )
+
+
+def test_free_concept_line_total_and_rejected_prices() -> None:
+    from app.domain.sales import normalize_free_concept_quantity
+    from app.domain.sales.concept import ground_user_price
+
+    normalized, unit = normalize_free_concept_quantity(Decimal("2"), InputUnit.PACKAGE)
+    total = calculate_line_total(normalized, Money(Decimal("18.00"), "MXN"))
+    assert total.to_json()["amount"] == "36.00"
+    assert unit is SaleUnit.PACKAGE
+    carrot, carrot_unit = normalize_free_concept_quantity(Decimal("900"), InputUnit.GRAM)
+    carrot_total = calculate_line_total(carrot, Money(Decimal("25.00"), "MXN"))
+    assert format_normalized_quantity(carrot, carrot_unit) == "0.900"
+    assert carrot_total.to_json()["amount"] == "22.50"
+    assert ground_user_price("2 bolsas de hielo").amount is None
+    assert ground_user_price("a 0").problem == "non_positive"
+    assert ground_user_price("a -1").problem == "non_positive"
+    assert ground_user_price("a 1.005").problem == "scale"
+    assert ground_user_price("a 20").amount == Decimal("20")
+    assert ground_user_price("a 20.00").amount == Decimal("20.00")

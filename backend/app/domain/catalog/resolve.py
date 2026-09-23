@@ -18,6 +18,7 @@ class ResolveResult:
     match: ProductMatch
     product: Product | None
     candidates: tuple[Product, ...]
+    inactive_collision: bool = False
 
 
 def resolve_products(
@@ -41,4 +42,14 @@ def resolve_products(
         return ResolveResult(match=ProductMatch.UNIQUE, product=matches[0], candidates=())
     if len(matches) > 1:
         return ResolveResult(match=ProductMatch.AMBIGUOUS, product=None, candidates=tuple(matches))
-    return ResolveResult(match=ProductMatch.NONE, product=None, candidates=())
+    inactive = _inactive_collision(normalized, products, alias_product_ids)
+    return ResolveResult(match=ProductMatch.NONE, product=None, candidates=(), inactive_collision=inactive)
+
+
+def _inactive_collision(normalized: str, products: list[Product], alias_product_ids: set) -> bool:
+    for product in products:
+        if product.status is ProductStatus.ACTIVE:
+            continue
+        if product.normalized_name == normalized or product.id in alias_product_ids:
+            return True
+    return False

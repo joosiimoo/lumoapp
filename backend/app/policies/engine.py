@@ -17,6 +17,7 @@ SALE_001 = "SALE-001"
 SALE_002 = "SALE-002"
 SALE_003 = "SALE-003"
 SALE_004 = "SALE-004"
+SALE_005 = "SALE-005"
 PAY_001 = "PAY-001"
 DAY_001 = "DAY-001"
 CLOSE_001 = "CLOSE-001"
@@ -108,12 +109,14 @@ class FoundationPolicyEngine:
                 rule_ids=[CAT_001],
                 reason_code="ambiguous_product",
             )
-        if match == "none":
+        if match == "catalog_price_mismatch":
             return PolicyDecision(
                 decision=PolicyDecisionName.CLARIFY,
                 rule_ids=[CAT_001],
-                reason_code="product_not_found",
+                reason_code="catalog_price_mismatch",
             )
+        if match == "none":
+            return self._evaluate_free_concept(arguments)
         if arguments.get("product_status") == "inactive":
             return PolicyDecision(
                 decision=PolicyDecisionName.DENY,
@@ -215,6 +218,43 @@ class FoundationPolicyEngine:
             decision=PolicyDecisionName.ALLOW,
             rule_ids=[SEC_003, INT_001, INT_003, INTP_001],
             reason_code="arguments_must_be_revalidated",
+        )
+
+    def _evaluate_free_concept(self, arguments: dict[str, object]) -> PolicyDecision:
+        if arguments.get("price_not_positive"):
+            return PolicyDecision(
+                decision=PolicyDecisionName.DENY,
+                rule_ids=[SALE_005],
+                reason_code="price_not_positive",
+            )
+        if arguments.get("price_basis_missing"):
+            return PolicyDecision(
+                decision=PolicyDecisionName.CLARIFY,
+                rule_ids=[SALE_005],
+                reason_code="price_basis_required",
+            )
+        if arguments.get("price_missing"):
+            return PolicyDecision(
+                decision=PolicyDecisionName.CLARIFY,
+                rule_ids=[SALE_005],
+                reason_code="price_required",
+            )
+        if arguments.get("quantity_missing"):
+            return PolicyDecision(
+                decision=PolicyDecisionName.CLARIFY,
+                rule_ids=[SALE_005],
+                reason_code="quantity_required",
+            )
+        if arguments.get("free_concept_complete"):
+            return PolicyDecision(
+                decision=PolicyDecisionName.ALLOW,
+                rule_ids=[SALE_005, SEC_003, INT_001, INT_003, INTP_001],
+                reason_code="free_concept_complete",
+            )
+        return PolicyDecision(
+            decision=PolicyDecisionName.CLARIFY,
+            rule_ids=[CAT_001],
+            reason_code="product_not_found",
         )
 
     def _evaluate_closing(self, tool_id: str, arguments: dict[str, object]) -> PolicyDecision:

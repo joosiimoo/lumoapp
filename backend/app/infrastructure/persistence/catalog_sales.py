@@ -22,6 +22,7 @@ from app.domain.sales import (
     PaymentSource,
     PaymentStatus,
     SaleItem,
+    SaleItemSource,
     SaleSession,
     SaleSessionStatus,
 )
@@ -206,6 +207,7 @@ class SalesRepository:
             business_id=tenant.business_id,
             sale_session_id=item.sale_session_id,
             product_id=item.product_id,
+            source_type=item.source_type.value,
             product_name_snapshot=item.product_name_snapshot,
             quantity_input=item.quantity_input,
             unit_input=item.unit_input.value,
@@ -365,6 +367,7 @@ def _to_item(row: SaleItemRow) -> SaleItem:
         business_id=row.business_id,
         sale_session_id=row.sale_session_id,
         product_id=row.product_id,
+        source_type=SaleItemSource(row.source_type),
         product_name_snapshot=row.product_name_snapshot,
         quantity_input=Decimal(row.quantity_input),
         unit_input=InputUnit(row.unit_input),

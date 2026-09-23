@@ -2,35 +2,13 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
 from typing import Any
 
 from app.agent.contracts import AgentDecision, AgentEntity, AgentResponse, LLMProvider, ProviderStatus
-from app.domain.catalog import normalize_product_name
-
-_UNIT_ALIASES = {
-    "g": "gram",
-    "gr": "gram",
-    "gramo": "gram",
-    "gramos": "gram",
-    "kg": "kilogram",
-    "kilo": "kilogram",
-    "kilos": "kilogram",
-    "kilogramo": "kilogram",
-    "kilogramos": "kilogram",
-}
-
-_WITH_UNIT = re.compile(
-    r"^\s*(?P<qty>\d+(?:[.,]\d+)?)\s*(?P<unit>gramos?|gr|g|kilogramos?|kilogramo|kilos?|kg)\s+(?:de\s+)?(?P<product>.+?)\s*$",
-    re.IGNORECASE,
-)
-_WITHOUT_UNIT = re.compile(
-    r"^\s*(?P<qty>\d+(?:[.,]\d+)?)\s+(?:de\s+)?(?P<product>[^\d].+?)\s*$",
-    re.IGNORECASE,
-)
-_UNIT_ONLY = re.compile(
-    r"^\s*(?P<unit>gramos?|gr|g|kilogramos?|kilogramo|kilos?|kg)\s*$",
-    re.IGNORECASE,
+from app.domain.sales.concept import (
+    UNSUPPORTED_UNIT_TEXT,
+    parse_sale_utterance,
+    price_problem_text,
 )
 _TOTALIZE_SYNONYMS = {"totalizar", "total", "el total"}
 _PAYMENT_PHRASES = {
@@ -86,47 +64,26 @@ def normalize_closed_phrase(message: str) -> str:
     return folded
 
 
+def _claims_sale(parsed) -> bool:
+    """Sale grammar only. Other closed-domain misses stay unsupported."""
+    if parsed.kind in {"basis", "unit_only", "bare_number", "price", "unsupported"}:
+        return True
+    if parsed.kind != "utterance":
+        return False
+    if parsed.quantity:
+        return True
+    span = (parsed.display_span or "").strip()
+    if not span or " " in span:
+        return False
+    return re.fullmatch(r"(?:cajas?|litros?|ml|manojos?|docenas?)", span, re.IGNORECASE) is None
+
+
 def parse_counted_phrase(normalized: str) -> str | None:
     """Closed cash-count grammar. One numeric slot, no thousands separators, no bare amount."""
     for pattern in _CASH_COUNT_PATTERNS:
         matched = pattern.match(normalized)
         if matched is not None:
             return matched.group("amount").lstrip("$").replace(",", ".")
-    return None
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedSaleUtterance:
-    quantity: str | None
-    unit: str | None
-    product_query: str | None
-
-
-def parse_sale_utterance(message: str) -> ParsedSaleUtterance | None:
-    text = message.strip()
-    matched = _WITH_UNIT.match(text)
-    if matched:
-        unit_raw = matched.group("unit").lower()
-        return ParsedSaleUtterance(
-            quantity=matched.group("qty").replace(",", "."),
-            unit=_UNIT_ALIASES.get(unit_raw),
-            product_query=normalize_product_name(matched.group("product")),
-        )
-    matched = _WITHOUT_UNIT.match(text)
-    if matched:
-        return ParsedSaleUtterance(
-            quantity=matched.group("qty").replace(",", "."),
-            unit=None,
-            product_query=normalize_product_name(matched.group("product")),
-        )
-    matched = _UNIT_ONLY.match(text)
-    if matched:
-        unit_raw = matched.group("unit").lower()
-        return ParsedSaleUtterance(
-            quantity=None,
-            unit=_UNIT_ALIASES.get(unit_raw),
-            product_query=None,
-        )
     return None
 
 
@@ -187,12 +144,24 @@ class ScriptedLLMProvider:
                 candidate_tool="closing.confirm@1",
             )
         parsed = parse_sale_utterance(message)
-        if parsed is None:
+        if parsed is None or not _claims_sale(parsed):
             return AgentDecision(
                 intent="unsupported",
                 clarification_question="Puedo registrar un producto del catálogo con cantidad y unidad. Prueba con *900gr zanahoria*.",
             )
-        if parsed.unit and not parsed.product_query and not parsed.quantity:
+        if parsed.kind == "unsupported":
+            return AgentDecision(
+                intent="add_sale_item",
+                missing_fields=["unit"],
+                clarification_question=UNSUPPORTED_UNIT_TEXT,
+            )
+        if parsed.kind == "basis":
+            return AgentDecision(
+                intent="add_sale_item",
+                price_basis="per_kilogram",
+                missing_fields=["product_query", "quantity"],
+            )
+        if parsed.kind == "unit_only":
             return AgentDecision(
                 intent="add_sale_item",
                 unit=parsed.unit,  # type: ignore[arg-type]
@@ -200,27 +169,78 @@ class ScriptedLLMProvider:
                 clarification_question="¿Qué producto y cantidad vendiste?",
                 entities=[AgentEntity(name="unit", value=parsed.unit, provenance="user")],
             )
-        if parsed.unit is None:
+        if parsed.kind == "bare_number":
             return AgentDecision(
                 intent="add_sale_item",
-                product_query=parsed.product_query,
+                quantity=parsed.bare_number,
+                unit_price=parsed.bare_number,
+                missing_fields=["product_query"],
+            )
+        if parsed.kind == "price":
+            return AgentDecision(
+                intent="add_sale_item",
+                unit_price=parsed.unit_price,
+                price_basis="per_kilogram" if parsed.per_kilogram else None,
+                missing_fields=["product_query", "quantity"],
+                clarification_question=None if parsed.price_problem is None else price_problem_text(parsed.price_problem),
+            )
+        if parsed.price_problem:
+            return AgentDecision(
+                intent="add_sale_item",
+                product_query=parsed.display_span,
                 quantity=parsed.quantity,
+                unit=parsed.unit,  # type: ignore[arg-type]
+                missing_fields=["unit_price"],
+                clarification_question=price_problem_text(parsed.price_problem),
+            )
+        missing: list[str] = []
+        if parsed.unit is None:
+            missing.append("unit")
+        if parsed.quantity is None:
+            missing.append("quantity")
+        basis = "per_kilogram" if parsed.per_kilogram else ("per_each" if parsed.unit_price and parsed.unit in {None, "unit", "package"} else None)
+        if parsed.unit is None and parsed.quantity and parsed.display_span:
+            return AgentDecision(
+                intent="add_sale_item",
+                product_query=parsed.display_span,
+                quantity=parsed.quantity,
+                unit_price=parsed.unit_price,
+                price_basis=basis,
+                package_word=parsed.package_word,  # type: ignore[arg-type]
                 missing_fields=["unit"],
                 clarification_question="¿En qué unidad está esa cantidad? Por ejemplo gramos o kilogramos.",
+                candidate_tool="sale.add_item@1" if parsed.unit_price else None,
                 entities=[
-                    AgentEntity(name="product", value=parsed.product_query, provenance="user"),
+                    AgentEntity(name="product", value=parsed.display_span, provenance="user"),
                     AgentEntity(name="quantity", value=parsed.quantity, provenance="user"),
+                ],
+            )
+        if missing:
+            return AgentDecision(
+                intent="add_sale_item",
+                product_query=parsed.display_span,
+                quantity=parsed.quantity,
+                unit=parsed.unit,  # type: ignore[arg-type]
+                unit_price=parsed.unit_price,
+                price_basis=basis,
+                package_word=parsed.package_word,  # type: ignore[arg-type]
+                missing_fields=missing,
+                entities=[
+                    AgentEntity(name="product", value=parsed.display_span, provenance="user"),
                 ],
             )
         return AgentDecision(
             intent="add_sale_item",
-            product_query=parsed.product_query,
+            product_query=parsed.display_span,
             quantity=parsed.quantity,
             unit=parsed.unit,  # type: ignore[arg-type]
+            unit_price=parsed.unit_price,
+            price_basis="per_kilogram" if parsed.per_kilogram else ("per_each" if parsed.unit in {"unit", "package"} and parsed.unit_price else None),
+            package_word=parsed.package_word,  # type: ignore[arg-type]
             candidate_tool="sale.add_item@1",
             response_hints=["99.00"],
             entities=[
-                AgentEntity(name="product", value=parsed.product_query, provenance="user"),
+                AgentEntity(name="product", value=parsed.display_span, provenance="user"),
                 AgentEntity(name="quantity", value=parsed.quantity, provenance="user"),
                 AgentEntity(name="unit", value=parsed.unit, provenance="user"),
                 AgentEntity(name="line_total", value="99.00", provenance="model"),

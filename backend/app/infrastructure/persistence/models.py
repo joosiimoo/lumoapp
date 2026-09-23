@@ -139,6 +139,7 @@ class ProductRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="ck_products_pricing_type",
         ),
         CheckConstraint("status IN ('active', 'inactive')", name="ck_products_status"),
+        UniqueConstraint("id", "business_id", name="uq_products_id_business"),
         {"schema": "catalog"},
     )
 
@@ -339,6 +340,17 @@ class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_sale_items_business_id", "business_id"),
         Index("ix_sale_items_session_id", "sale_session_id"),
+        CheckConstraint(
+            "(source_type = 'catalog' AND product_id IS NOT NULL) OR "
+            "(source_type = 'free_concept' AND product_id IS NULL AND length(btrim(product_name_snapshot)) > 0)",
+            name="ck_sale_items_source",
+        ),
+        CheckConstraint("unit_price > 0 AND line_total > 0", name="ck_sale_items_money_positive"),
+        ForeignKeyConstraint(
+            ["product_id", "business_id"],
+            ["catalog.products.id", "catalog.products.business_id"],
+            name="fk_sale_items_product_business",
+        ),
         {"schema": "sales"},
     )
 
@@ -348,11 +360,12 @@ class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("sales.sale_sessions.id"),
         nullable=False,
     )
-    product_id: Mapped[UUID] = mapped_column(
+    product_id: Mapped[UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("catalog.products.id"),
-        nullable=False,
+        nullable=True,
     )
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False, default="catalog")
     product_name_snapshot: Mapped[str] = mapped_column(String(200), nullable=False)
     quantity_input: Mapped[Decimal] = mapped_column(Numeric(14, 6), nullable=False)
     unit_input: Mapped[str] = mapped_column(String(32), nullable=False)

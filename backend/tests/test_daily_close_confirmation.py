@@ -296,7 +296,12 @@ def test_missing_invalid_and_stale_confirmation_do_not_close(client, db_session)
     refreshed = _token_of(stale)
     assert refreshed and refreshed != stale_token
     assert refreshed not in stale.json()["text"]
-    assert _day(db_session, tenant.business_id).status == "open"
+    set_current_business_id(db_session, tenant.business_id)
+    days = db_session.scalars(
+        select(OperationalDayRow).where(OperationalDayRow.business_id == tenant.business_id)
+    ).all()
+    assert days
+    assert all(day.status == "open" for day in days)
     assert _snapshots(db_session, tenant.business_id) == []
     assert _rows(db_session, tenant.business_id, IdempotencyRecordRow, operation_type="lumo.message.confirm_close") == []
 

@@ -66,15 +66,29 @@ ADD_ITEM = ToolRegistration(
     version=1,
     input_schema={
         "type": "object",
-        "required": ["sale_session_id", "product_id", "quantity", "unit"],
+        "required": ["sale_session_id", "quantity", "unit", "source_type"],
         "properties": {
             "sale_session_id": {"type": "string"},
-            "product_id": {"type": "string"},
             "quantity": {"type": "string"},
             "unit": {"enum": ["gram", "kilogram", "unit", "package"]},
+            "source_type": {"enum": ["catalog", "free_concept"]},
+            "product_id": {"type": ["string", "null"]},
+            "concept_name": {"type": "string"},
+            "unit_price": {
+                "type": "object",
+                "required": ["amount", "currency"],
+                "properties": {"amount": {"type": "string"}, "currency": {"type": "string"}},
+            },
         },
     },
-    output_schema={"type": "object", "required": ["sale_item_id", "line_total"]},
+    output_schema={
+        "type": "object",
+        "required": ["sale_item_id", "line_total", "source_type", "product_name"],
+        "properties": {
+            "source_type": {"enum": ["catalog", "free_concept"]},
+            "product_id": {"type": ["string", "null"]},
+        },
+    },
     permission="sale.create",
     policy_id="SALE-001",
     requires_idempotency=True,

@@ -145,27 +145,62 @@ def _seed_day_with_cash_sale(connection) -> dict:
             "at": CONFIRMED_AT,
         },
     )
-    connection.execute(
+    has_source_type = connection.execute(
         text(
             """
-            INSERT INTO sales.sale_items (
-                id, business_id, sale_session_id, product_id, product_name_snapshot,
-                quantity_input, unit_input, quantity_normalized, unit_normalized,
-                unit_price, currency, line_total, created_at, updated_at
-            ) VALUES (
-                :id, :business_id, :session_id, :product_id, 'Zanahoria',
-                1, 'kilogram', 1, 'kilogram', 25.00, 'MXN', 25.00, :at, :at
+            SELECT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_schema = 'sales'
+                  AND table_name = 'sale_items'
+                  AND column_name = 'source_type'
             )
             """
-        ),
-        {
-            "id": item_id,
-            "business_id": business_id,
-            "session_id": session_id,
-            "product_id": product_id,
-            "at": CONFIRMED_AT,
-        },
-    )
+        )
+    ).scalar_one()
+    if has_source_type:
+        connection.execute(
+            text(
+                """
+                INSERT INTO sales.sale_items (
+                    id, business_id, sale_session_id, product_id, source_type, product_name_snapshot,
+                    quantity_input, unit_input, quantity_normalized, unit_normalized,
+                    unit_price, currency, line_total, created_at, updated_at
+                ) VALUES (
+                    :id, :business_id, :session_id, :product_id, 'catalog', 'Zanahoria',
+                    1, 'kilogram', 1, 'kilogram', 25.00, 'MXN', 25.00, :at, :at
+                )
+                """
+            ),
+            {
+                "id": item_id,
+                "business_id": business_id,
+                "session_id": session_id,
+                "product_id": product_id,
+                "at": CONFIRMED_AT,
+            },
+        )
+    else:
+        connection.execute(
+            text(
+                """
+                INSERT INTO sales.sale_items (
+                    id, business_id, sale_session_id, product_id, product_name_snapshot,
+                    quantity_input, unit_input, quantity_normalized, unit_normalized,
+                    unit_price, currency, line_total, created_at, updated_at
+                ) VALUES (
+                    :id, :business_id, :session_id, :product_id, 'Zanahoria',
+                    1, 'kilogram', 1, 'kilogram', 25.00, 'MXN', 25.00, :at, :at
+                )
+                """
+            ),
+            {
+                "id": item_id,
+                "business_id": business_id,
+                "session_id": session_id,
+                "product_id": product_id,
+                "at": CONFIRMED_AT,
+            },
+        )
     connection.execute(
         text(
             """
@@ -228,7 +263,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
         ).scalar_one()
         seeded = _seed_day_with_cash_sale(connection)
     command.upgrade(_config(), "head")
-    assert _revision(at_0005) == "0007_daily_close_confirmation"
+    assert _revision(at_0005) == "0008_noncatalog_sale_item"
     business_id = seeded["business_id"]
     with at_0005.begin() as connection:
         _tenant(connection, business_id)
@@ -315,7 +350,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
             {"b": business_id},
         ).scalar_one() == 1
     command.upgrade(_config(), "head")
-    assert _revision(at_0005) == "0007_daily_close_confirmation"
+    assert _revision(at_0005) == "0008_noncatalog_sale_item"
 
 
 def test_supersede_constraints_are_composite_and_correctly_deferred(at_head) -> None:
