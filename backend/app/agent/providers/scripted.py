@@ -26,6 +26,15 @@ _PAYMENT_PHRASES = {
 _PAYMENT_METHOD_CLARIFY = {"pagar", "cheque"}
 _PAYMENT_CLARIFICATION = "¿Cómo pagó? Puedo registrar *efectivo*, *tarjeta* o *transferencia*."
 _DAY_SUMMARY_PHRASES = {"como vamos hoy", "ventas de hoy", "cuanto vendimos hoy"}
+_EXPORT_PHRASES = {
+    "exporta las ventas de hoy",
+    "exportar ventas",
+    "descargar excel",
+    "descargar csv",
+}
+_UNSUPPORTED_TEXT = (
+    "Puedo registrar un producto del catálogo con cantidad y unidad. Prueba con *900gr zanahoria*."
+)
 
 _AMOUNT_SLOT = r"\$?\d+(?:[.,]\d{1,2})?"
 _CASH_COUNT_PATTERNS = (
@@ -98,6 +107,11 @@ class ScriptedLLMProvider:
     ) -> AgentDecision:
         _ = (context, allowed_tools)
         normalized = normalize_closed_phrase(message)
+        if normalized in _EXPORT_PHRASES:
+            return AgentDecision(
+                intent="unsupported",
+                clarification_question=_UNSUPPORTED_TEXT,
+            )
         payment_method = _PAYMENT_PHRASES.get(normalized)
         if payment_method is not None:
             return AgentDecision(
@@ -147,7 +161,7 @@ class ScriptedLLMProvider:
         if parsed is None or not _claims_sale(parsed):
             return AgentDecision(
                 intent="unsupported",
-                clarification_question="Puedo registrar un producto del catálogo con cantidad y unidad. Prueba con *900gr zanahoria*.",
+                clarification_question=_UNSUPPORTED_TEXT,
             )
         if parsed.kind == "unsupported":
             return AgentDecision(

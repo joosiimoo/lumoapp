@@ -132,4 +132,52 @@ void main() {
     expect(decoded['client_context'], {'confirmation_token': 'header.payload.sig'});
     expect(decoded['message'].toString().contains('header.payload.sig'), isFalse);
   });
+
+  test('download returns server bytes and filename without an idempotency key', () async {
+    final httpClient = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.headers['authorization'], 'Bearer tok');
+      expect(request.headers['x-correlation-id'], isNotEmpty);
+      expect(request.headers.containsKey('idempotency-key'), isFalse);
+      return http.Response.bytes(
+        [0xEF, 0xBB, 0xBF, 0x61],
+        200,
+        headers: {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': 'attachment; filename="lumo-carrota-ventas-2026-09-23.csv"',
+        },
+      );
+    });
+    final client = LumoApiClient(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      session: SessionStore()..accessToken = 'tok',
+      httpClient: httpClient,
+    );
+    final file = await client.downloadCurrentSalesExport('csv');
+    expect(file.filename, 'lumo-carrota-ventas-2026-09-23.csv');
+    expect(file.mimeType, 'text/csv; charset=utf-8');
+    expect(file.bytes, [0xEF, 0xBB, 0xBF, 0x61]);
+  });
+
+  test('xlsx download keeps the server filename and spreadsheet MIME type', () async {
+    final httpClient = MockClient((request) async {
+      return http.Response.bytes(
+        [0x50, 0x4B],
+        200,
+        headers: {
+          'content-type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'content-disposition': 'attachment; filename="lumo-carrota-ventas-2026-09-23.xlsx"',
+        },
+      );
+    });
+    final client = LumoApiClient(
+      config: const AppConfig(env: 'test', apiBaseUrl: 'http://lumo.test'),
+      session: SessionStore()..accessToken = 'tok',
+      httpClient: httpClient,
+    );
+    final file = await client.downloadCurrentSalesExport('xlsx');
+    expect(file.filename, 'lumo-carrota-ventas-2026-09-23.xlsx');
+    expect(file.mimeType, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    expect(file.bytes, [0x50, 0x4B]);
+  });
 }

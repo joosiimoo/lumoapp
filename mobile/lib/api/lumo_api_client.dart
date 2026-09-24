@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 import 'package:lumo/api/api_error.dart';
@@ -126,6 +127,68 @@ class LumoApiClient {
   Future<Map<String, dynamic>> getSession() {
     return get('/api/v1/session');
   }
+
+  Future<SalesExportFile> downloadCurrentSalesExport(String format) {
+    return downloadFile('/api/v1/operational-days/current/sales-export?format=$format');
+  }
+
+  Future<SalesExportFile> downloadFile(String path) async {
+    final headers = <String, String>{
+      'Accept': '*/*',
+      'X-Correlation-ID': _uuid.v4(),
+    };
+    final token = session.accessToken;
+    if (token != null) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    final response = await _http.get(_uri(path), headers: headers);
+    if (response.statusCode >= 400) {
+      final decoded = response.body.isEmpty ? <String, dynamic>{} : jsonDecode(response.body);
+      if (decoded is Map<String, dynamic> && decoded['error'] != null) {
+        throw ApiError.fromEnvelope(decoded);
+      }
+      throw ApiError(
+        code: 'INTERNAL_ERROR',
+        message: 'Request failed',
+        retryable: response.statusCode >= 500,
+        correlationId: headers['X-Correlation-ID']!,
+      );
+    }
+    final filename = _attachmentFilename(response.headers['content-disposition']);
+    if (filename == null || filename.isEmpty) {
+      throw ApiError(
+        code: 'INTERNAL_ERROR',
+        message: 'Export filename is missing',
+        retryable: false,
+        correlationId: headers['X-Correlation-ID']!,
+      );
+    }
+    return SalesExportFile(
+      bytes: response.bodyBytes,
+      filename: filename,
+      mimeType: response.headers['content-type'] ?? 'application/octet-stream',
+    );
+  }
+}
+
+class SalesExportFile {
+  const SalesExportFile({
+    required this.bytes,
+    required this.filename,
+    required this.mimeType,
+  });
+
+  final Uint8List bytes;
+  final String filename;
+  final String mimeType;
+}
+
+String? _attachmentFilename(String? disposition) {
+  if (disposition == null) {
+    return null;
+  }
+  final match = RegExp('filename="([^"]+)"').firstMatch(disposition);
+  return match?.group(1);
 }
 
 class LumoMessageResponse {

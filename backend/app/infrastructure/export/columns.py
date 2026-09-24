@@ -1,0 +1,41 @@
+"""Canonical daily-sales export columns. CSV and XLSX share this order."""
+
+EXPORT_COLUMNS: tuple[str, ...] = (
+    "business_date",
+    "sale_session_id",
+    "sale_confirmed_at",
+    "sale_item_id",
+    "product_name",
+    "source_type",
+    "product_id",
+    "quantity",
+    "unit",
+    "catalog_unit_price",
+    "unit_price",
+    "price_override_reason",
+    "line_total",
+    "currency",
+    "payment_id",
+    "payment_method",
+    "payment_amount",
+)
+
+COLUMN_WIDTHS: tuple[int, ...] = (
+    14,
+    38,
+    22,
+    38,
+    28,
+    16,
+    38,
+    12,
+    14,
+    20,
+    14,
+    36,
+    14,
+    12,
+    38,
+    16,
+    16,
+)
