@@ -27,8 +27,9 @@ class TotalizeWorkflowResult:
 
 
 def _item_payloads(items: list[SaleItem]) -> list[dict[str, Any]]:
-    return [
-        {
+    payloads: list[dict[str, Any]] = []
+    for item in items:
+        payload = {
             "sale_item_id": str(item.id),
             "product_name": item.product_name_snapshot,
             "quantity_normalized": format_normalized_quantity(item.quantity_normalized, item.unit_normalized),
@@ -36,8 +37,11 @@ def _item_payloads(items: list[SaleItem]) -> list[dict[str, Any]]:
             "unit_price": item.unit_price.to_json(),
             "line_total": item.line_total.to_json(),
         }
-        for item in items
-    ]
+        snapshot = item.catalog_unit_price_snapshot
+        if snapshot is not None and item.unit_price.amount != snapshot.amount:
+            payload["catalog_unit_price"] = snapshot.to_json()
+        payloads.append(payload)
+    return payloads
 
 
 def build_sale_summary(session: SaleSession, items: list[SaleItem]) -> dict[str, Any]:

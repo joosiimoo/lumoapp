@@ -55,6 +55,7 @@ def _to_product(row: ProductRow) -> Product:
 class CatalogRepository:
     def __init__(self, session: Session) -> None:
         self._session = session
+        self._product_lock = None
 
     def resolve(self, *, tenant: TenantContext, query: str):
         tenant = _require_tenant(tenant)
@@ -80,6 +81,28 @@ class CatalogRepository:
         if row is None or row.business_id != tenant.business_id:
             raise ProductNotFoundError("product not found")
         return _to_product(row)
+
+    def get_for_update(self, *, tenant: TenantContext, product_id: UUID) -> Product:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        if self._product_lock is None:
+            self._product_lock = self._session.begin_nested()
+        row = self._session.scalar(
+            select(ProductRow)
+            .where(ProductRow.id == product_id, ProductRow.business_id == tenant.business_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if row is None:
+            self.rollback_product_lock()
+            raise ProductNotFoundError("product not found")
+        return _to_product(row)
+
+    def rollback_product_lock(self) -> None:
+        savepoint = self._product_lock
+        self._product_lock = None
+        if savepoint is not None:
+            savepoint.rollback()
 
     def add(self, *, tenant: TenantContext, product: Product) -> Product:
         tenant = _require_tenant(tenant)
@@ -216,6 +239,10 @@ class SalesRepository:
             unit_price=item.unit_price.amount,
             currency=item.unit_price.currency,
             line_total=item.line_total.amount,
+            catalog_unit_price_snapshot=(
+                None if item.catalog_unit_price_snapshot is None else item.catalog_unit_price_snapshot.amount
+            ),
+            price_override_reason=item.price_override_reason,
         )
         self._session.add(row)
         self._session.flush()
@@ -375,6 +402,12 @@ def _to_item(row: SaleItemRow) -> SaleItem:
         unit_normalized=SaleUnit(row.unit_normalized),
         unit_price=Money(row.unit_price, row.currency),
         line_total=Money(row.line_total, row.currency),
+        catalog_unit_price_snapshot=(
+            None
+            if row.catalog_unit_price_snapshot is None
+            else Money(row.catalog_unit_price_snapshot, row.currency)
+        ),
+        price_override_reason=row.price_override_reason,
     )
 
 

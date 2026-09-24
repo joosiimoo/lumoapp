@@ -79,6 +79,18 @@ ADD_ITEM = ToolRegistration(
                 "required": ["amount", "currency"],
                 "properties": {"amount": {"type": "string"}, "currency": {"type": "string"}},
             },
+            "price_override": {
+                "type": "object",
+                "required": ["unit_price", "reason"],
+                "properties": {
+                    "unit_price": {
+                        "type": "object",
+                        "required": ["amount", "currency"],
+                        "properties": {"amount": {"type": "string"}, "currency": {"type": "string"}},
+                    },
+                    "reason": {"type": "string"},
+                },
+            },
         },
     },
     output_schema={

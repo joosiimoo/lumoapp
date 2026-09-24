@@ -98,20 +98,36 @@ class SaleItem:
     unit_price: Money
     line_total: Money
     source_type: SaleItemSource = SaleItemSource.CATALOG
+    catalog_unit_price_snapshot: Money | None = None
+    price_override_reason: str | None = None
 
     def __post_init__(self) -> None:
         from app.domain.shared.errors import ValidationAppError
 
+        if self.line_total.amount <= 0 or self.unit_price.amount <= 0:
+            raise ValidationAppError("price must be greater than zero")
         if self.source_type is SaleItemSource.CATALOG:
             if self.product_id is None:
                 raise ValidationAppError("a catalog sale item requires a product")
+            snapshot = self.catalog_unit_price_snapshot
+            if snapshot is None or snapshot.amount <= 0:
+                raise ValidationAppError("a catalog sale item requires a catalog price")
+            if snapshot.currency != self.unit_price.currency:
+                raise ValidationAppError("catalog price currency must match the charged price")
+            reason = self.price_override_reason
+            if self.unit_price.amount == snapshot.amount:
+                if reason is not None:
+                    raise ValidationAppError("a normal catalog line cannot store an override reason")
+                return
+            if reason is None or not reason.strip() or reason != reason.strip() or len(reason) > 200:
+                raise ValidationAppError("a catalog override requires a trimmed reason of at most 200 characters")
             return
         if self.product_id is not None:
             raise ValidationAppError("a free concept cannot reference a product")
+        if self.catalog_unit_price_snapshot is not None or self.price_override_reason is not None:
+            raise ValidationAppError("a free concept cannot store a catalog price")
         if not self.product_name_snapshot.strip():
             raise ValidationAppError("a free concept requires a name")
-        if self.line_total.amount <= 0 or self.unit_price.amount <= 0:
-            raise ValidationAppError("price must be greater than zero")
 
 
 def can_add_item(status: SaleSessionStatus) -> bool:

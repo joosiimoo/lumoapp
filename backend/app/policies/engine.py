@@ -109,11 +109,17 @@ class FoundationPolicyEngine:
                 rule_ids=[CAT_001],
                 reason_code="ambiguous_product",
             )
-        if match == "catalog_price_mismatch":
+        if match == "catalog_price_override_reason_required":
             return PolicyDecision(
                 decision=PolicyDecisionName.CLARIFY,
                 rule_ids=[CAT_001],
-                reason_code="catalog_price_mismatch",
+                reason_code="catalog_price_override_reason_required",
+            )
+        if arguments.get("catalog_price_override") is True:
+            return PolicyDecision(
+                decision=PolicyDecisionName.ALLOW,
+                rule_ids=[SALE_001, CAT_001, SEC_003, INT_001, INT_003, INTP_001],
+                reason_code="catalog_price_override",
             )
         if match == "none":
             return self._evaluate_free_concept(arguments)

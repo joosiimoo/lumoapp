@@ -1009,6 +1009,7 @@ def test_add_against_confirmed_rejected_and_next_sale_creates_new_session(
                 unit_normalized=SaleUnit.UNIT,
                 unit_price=Money(Decimal("1.00"), "MXN"),
                 line_total=Money(Decimal("1.00"), "MXN"),
+                catalog_unit_price_snapshot=Money(Decimal("1.00"), "MXN"),
             ),
         )
     db_session.rollback()

@@ -15,6 +15,8 @@ class PendingSaleClarification:
     unit_price: str | None = None
     price_basis: str | None = None
     package_word: str | None = None
+    product_id: str | None = None
+    observed_catalog_unit_price: str | None = None
 
 
 class InMemoryPendingClarificationStore:
@@ -41,6 +43,8 @@ class InMemoryPendingClarificationStore:
         unit_price: str | None = None,
         price_basis: str | None = None,
         package_word: str | None = None,
+        product_id: str | None = None,
+        observed_catalog_unit_price: str | None = None,
     ) -> None:
         self._items[self._key(tenant, conversation_id)] = PendingSaleClarification(
             product_query=product_query,
@@ -50,6 +54,8 @@ class InMemoryPendingClarificationStore:
             unit_price=unit_price,
             price_basis=price_basis,
             package_word=package_word,
+            product_id=product_id,
+            observed_catalog_unit_price=observed_catalog_unit_price,
         )
 
     def clear(self, *, tenant: TenantContext, conversation_id: str | None) -> None:

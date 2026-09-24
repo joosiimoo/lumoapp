@@ -305,6 +305,11 @@ class SaleItemAddedView extends StatelessWidget {
                                 '$quantity ${SaleItemAddedView.displayUnit(unit)} · $unitPrice/${SaleItemAddedView.displayUnit(unit)}',
                                 style: LumoTypography.caption,
                               ),
+                              if (SaleItemAddedView.adjustedPriceCaption(data) != null)
+                                Text(
+                                  SaleItemAddedView.adjustedPriceCaption(data)!,
+                                  style: LumoTypography.caption,
+                                ),
                             ],
                           ),
                         ),
@@ -346,6 +351,19 @@ class SaleItemAddedView extends StatelessWidget {
       default:
         return canonical;
     }
+  }
+
+  static String? adjustedPriceCaption(Map<dynamic, dynamic> data) {
+    final prior = data['catalog_unit_price'];
+    if (prior is! Map) {
+      return null;
+    }
+    final amount = formatAmount(prior);
+    if (amount.isEmpty) {
+      return null;
+    }
+    final unit = displayUnit('${data['unit_normalized'] ?? ''}');
+    return 'Precio ajustado · antes $amount/$unit';
   }
 
   static String formatAmount(Object? value) {
@@ -453,6 +471,11 @@ class SaleSummaryView extends StatelessWidget {
                   '$quantity $unit · $unitPrice/$unit',
                   style: LumoTypography.caption,
                 ),
+                if (SaleItemAddedView.adjustedPriceCaption(item) != null)
+                  Text(
+                    SaleItemAddedView.adjustedPriceCaption(item)!,
+                    style: LumoTypography.caption,
+                  ),
               ],
             ),
           ),

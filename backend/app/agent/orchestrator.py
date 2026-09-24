@@ -36,10 +36,37 @@ from app.application.workflows.get_daily_close_preparation import (
 from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
 from app.application.workflows.record_cash_count import RecordCashCount
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
-from app.domain.sales.concept import basis_question, ground_user_price
+from app.domain.sales.concept import basis_question, ground_user_price, parse_sale_utterance
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.base import utcnow
 from app.policies import PolicyEngine, PolicyRequest
+
+
+_CLOSED_INTENTS = frozenset(
+    {
+        "totalize_sale",
+        "commit_sale",
+        "day_summary",
+        "record_cash_count",
+        "close_preparation",
+        "request_close",
+        "confirm_close",
+    }
+)
+_CLOSED_TOOLS = frozenset(
+    {
+        "sale.totalize@1",
+        "sale.commit@1",
+        "operational_day.summary@1",
+        "closing.submit_cash_count@1",
+        "closing.prepare@1",
+        "closing.confirm@1",
+    }
+)
+
+
+def _closed_sale_intent(decision: AgentDecision) -> bool:
+    return decision.intent in _CLOSED_INTENTS or decision.candidate_tool in _CLOSED_TOOLS
 
 
 class LumoOrchestrator:
@@ -73,11 +100,31 @@ class FoundationOrchestrator:
 
         tenant: TenantContext | None = context.get("tenant")
         conversation_id = context.get("conversation_id")
+        if self.workflow is not None and tenant is not None and context.get("idempotency_key"):
+            replayed = self.workflow.replay_override_completion(
+                tenant=tenant,
+                idempotency_key=context["idempotency_key"],
+                raw_message=message,
+            )
+            if replayed is not None:
+                return self._finish_add_item(replayed, tenant, conversation_id)
         stored = (
             self.pending.get(tenant=tenant, conversation_id=conversation_id)
             if self.pending is not None and tenant is not None
             else None
         )
+        if (
+            stored is not None
+            and stored.kind == "catalog_price_override"
+            and tenant is not None
+            and self.pending is not None
+        ):
+            override_turn = self._catalog_override_turn(
+                message, decision, context, tenant, conversation_id, stored
+            )
+            if override_turn is not None:
+                return override_turn
+            stored = self.pending.get(tenant=tenant, conversation_id=conversation_id)
         if self.pending is not None and tenant is not None:
             repeated = self._mass_basis_yes_no(message, tenant, conversation_id)
             if repeated is not None:
@@ -166,6 +213,41 @@ class FoundationOrchestrator:
             "intent": decision.intent,
         }
         return self.provider.compose(result, [])
+
+    def _catalog_override_turn(
+        self,
+        message: str,
+        decision: AgentDecision,
+        context: dict[str, Any],
+        tenant: TenantContext,
+        conversation_id: str | None,
+        stored: Any,
+    ) -> AgentResponse | None:
+        if self.pending is None:
+            return None
+        normalized = normalize_closed_phrase(message)
+        if normalized in {"cancelar", "cancela", "no"}:
+            self.pending.clear(tenant=tenant, conversation_id=conversation_id)
+            return AgentResponse(text="Listo, no registré ese producto.", ui=[])
+        if _closed_sale_intent(decision):
+            self.pending.clear(tenant=tenant, conversation_id=conversation_id)
+            return None
+        parsed = parse_sale_utterance(message)
+        if parsed is not None and parsed.kind == "utterance" and parsed.quantity and parsed.display_span:
+            self.pending.clear(tenant=tenant, conversation_id=conversation_id)
+            return None
+        if self.workflow is None:
+            return AgentResponse(text="That action is not available.", ui=[])
+        result = self.workflow.complete_price_override(
+            tenant=tenant,
+            pending=stored,
+            raw_message=message,
+            conversation_id=conversation_id,
+            idempotency_key=context["idempotency_key"],
+            correlation_id=context.get("correlation_id", "unknown"),
+            fail_after_write=bool(context.get("fail_after_write")),
+        )
+        return self._finish_add_item(result, tenant, conversation_id)
 
     def _handle_totalize(
         self,
@@ -728,6 +810,8 @@ class FoundationOrchestrator:
                 unit_price=pending_payload.get("unit_price"),
                 price_basis=pending_payload.get("price_basis"),
                 package_word=pending_payload.get("package_word"),
+                product_id=pending_payload.get("product_id"),
+                observed_catalog_unit_price=pending_payload.get("observed_catalog_unit_price"),
             )
             return AgentResponse(text=result.text, ui=[])
         if result.kind in {"clarify", "clarify_unit", "deny"}:
@@ -751,6 +835,11 @@ class FoundationOrchestrator:
                     "unit_normalized": result.payload["unit_normalized"],
                     "unit_price": result.payload["unit_price"],
                     "line_total": result.payload["line_total"],
+                    **(
+                        {"catalog_unit_price": result.payload["catalog_unit_price"]}
+                        if result.payload.get("catalog_unit_price")
+                        else {}
+                    ),
                     "session_item_count": result.payload["session_item_count"],
                     "session_total": result.payload["session_total"],
                 },

@@ -104,7 +104,7 @@ def _session(connection, business_id: UUID) -> UUID:
 
 
 def test_upgrade_backfills_catalog_and_enforces_checks(migrated) -> None:
-    assert _revision(migrated) == "0008_noncatalog_sale_item"
+    assert _revision(migrated) == "0009_catalog_price_override"
     with migrated.begin() as connection:
         roles = {
             row.rolname: row.rolbypassrls
@@ -135,10 +135,10 @@ def test_upgrade_backfills_catalog_and_enforces_checks(migrated) -> None:
                 INSERT INTO sales.sale_items (
                     id, business_id, sale_session_id, product_id, source_type, product_name_snapshot,
                     quantity_input, unit_input, quantity_normalized, unit_normalized,
-                    unit_price, currency, line_total
+                    unit_price, currency, line_total, catalog_unit_price_snapshot
                 ) VALUES (
                     :id, :business_id, :session_id, :product_id, 'catalog', 'Zanahoria',
-                    1, 'unit', 1, 'unit', 25.00, 'MXN', 25.00
+                    1, 'unit', 1, 'unit', 25.00, 'MXN', 25.00, 25.00
                 )
                 """
             ),
@@ -177,10 +177,10 @@ def test_upgrade_backfills_catalog_and_enforces_checks(migrated) -> None:
                     INSERT INTO sales.sale_items (
                         id, business_id, sale_session_id, product_id, source_type, product_name_snapshot,
                         quantity_input, unit_input, quantity_normalized, unit_normalized,
-                        unit_price, currency, line_total
+                        unit_price, currency, line_total, catalog_unit_price_snapshot
                     ) VALUES (
                         :id, :business_id, :session_id, :product_id, 'catalog', 'Zanahoria',
-                        1, 'unit', 1, 'unit', 25.00, 'MXN', 25.00
+                        1, 'unit', 1, 'unit', 25.00, 'MXN', 25.00, 25.00
                     )
                     """
                 ),
@@ -211,6 +211,9 @@ def test_upgrade_backfills_catalog_and_enforces_checks(migrated) -> None:
 
 
 def test_downgrade_refuses_free_concept_and_accepts_catalog_only(migrated) -> None:
+    from tests.test_catalog_price_override_migration import _clear_overrides
+
+    _clear_overrides(migrated)
     engine = migrated
     with engine.begin() as connection:
         business_id = _business(connection)
@@ -232,7 +235,7 @@ def test_downgrade_refuses_free_concept_and_accepts_catalog_only(migrated) -> No
         )
     with pytest.raises(Exception, match="free-concept"):
         command.downgrade(_config(), "0007_daily_close_confirmation")
-    assert _revision(engine) == "0008_noncatalog_sale_item"
+    assert _revision(engine) == "0009_catalog_price_override"
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE sales.sale_items DISABLE ROW LEVEL SECURITY"))
         kept = connection.execute(text("SELECT count(*) FROM sales.sale_items WHERE source_type = 'free_concept'")).scalar_one()
@@ -243,7 +246,7 @@ def test_downgrade_refuses_free_concept_and_accepts_catalog_only(migrated) -> No
     command.downgrade(_config(), "0007_daily_close_confirmation")
     assert _revision(engine) == "0007_daily_close_confirmation"
     command.upgrade(_config(), "head")
-    assert _revision(engine) == "0008_noncatalog_sale_item"
+    assert _revision(engine) == "0009_catalog_price_override"
 
 
 def _revision(engine) -> str:

@@ -209,12 +209,30 @@ def basis_question(amount: Decimal) -> str:
     return f"¿Los ${rendered} son por kilogramo? Responde por kilo."
 
 
-def catalog_mismatch_text(name: str, price: Money, sale_unit: SaleUnit) -> str:
+MAX_OVERRIDE_REASON = 200
+BLANK_OVERRIDE_REASON_TEXT = "Necesito un motivo para registrar ese precio."
+LONG_OVERRIDE_REASON_TEXT = "Ese motivo es demasiado largo."
+
+
+def normalize_override_reason(value: str) -> str:
+    return collapse_display_span(value)
+
+
+def catalog_override_question(
+    name: str,
+    catalog_price: Money,
+    override_price: Decimal,
+    sale_unit: SaleUnit,
+    *,
+    changed: bool = False,
+) -> str:
     label = {"kilogram": "kg", "unit": "unidad", "package": "paquete"}[sale_unit.value]
-    rendered = price.to_json()["amount"]
+    registered = catalog_price.to_json()["amount"]
+    proposed = f"{override_price.quantize(Decimal('0.01')):.2f}"
+    verb = "ahora está" if changed else "está"
     return (
-        f"{name} está registrado a ${rendered} por {label}. "
-        "En esta versión no puedo cambiar el precio de un producto del catálogo."
+        f"{name} {verb} registrado a ${registered} por {label}. "
+        f"¿Por qué lo vendiste a ${proposed}?"
     )
 
 

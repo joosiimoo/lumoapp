@@ -58,19 +58,19 @@ If exactly one active tenant product matches, resolution MUST return that produc
 - **THEN** `match` MUST be `none` and no `catalog.products` row MUST be inserted
 
 ### Requirement: Current price is catalog truth
-`current_price` on the active `Product` MUST be the price source for a catalog-backed add-item. A free-concept line MUST NOT read `current_price`. The LLM MUST NOT supply a trusted price for either source. A grounded user amount MUST be compared to `current_price` with `Decimal` equality at scale 2, not with strings or floats. When the amounts are equal, the stored price MUST still be `Product.current_price`. When they differ, add-item MUST clarify under `CAT-001` reason `catalog_price_mismatch` and MUST NOT persist a line, create a session, reserve idempotency, apply the uttered price, or create a free concept. Price versioning tables, overrides, and discounts are out of scope. This guard is not price-override functionality.
+`current_price` on the active `Product` MUST remain the catalog price. A catalog price override MUST NOT update it. A free-concept line MUST NOT read `current_price`. The LLM MUST NOT supply a trusted price. A grounded user amount MUST be compared to `current_price` with `Decimal` equality at scale 2, not with strings or floats. When the amounts are equal, the stored `unit_price` and `catalog_unit_price_snapshot` MUST be `Product.current_price` and `price_override_reason` MUST be NULL. When they differ, the first turn MUST clarify under `CAT-001` reason `catalog_price_override_reason_required` and MUST NOT persist a line, create a session, reserve idempotency, apply the uttered price, create a free concept, or update the product. Completing that override is owned by `catalog-price-override`. Price versioning tables, promotions, and discounts remain out of scope.
 
 #### Scenario: Seed price
 - **WHEN** the Carrota seed product Zanahoria is loaded
 - **THEN** `current_price` MUST be `25.00` MXN stored as `numeric`
 
-#### Scenario: Uttered price does not override Tomate
+#### Scenario: Different uttered price asks for a reason
 - **WHEN** add-item resolves uniquely to Tomate and the utterance contains a grounded price of `30`
-- **THEN** no `SaleItem` MUST be persisted and the response MUST state that Tomate is registered at `$20.00` per kg
+- **THEN** no `SaleItem` MUST be persisted on that turn, `Product.current_price` MUST remain `20.00`, and the response MUST ask why Tomate was sold at `$30.00`
 
 #### Scenario: Equal uttered price uses the catalog amount
 - **WHEN** add-item resolves uniquely to Tomate and the utterance contains a grounded price of `20`
-- **THEN** the persisted unit price MUST be Tomate `current_price` `20.00` MXN
+- **THEN** the persisted unit price and `catalog_unit_price_snapshot` MUST be Tomate `current_price` `20.00` MXN and `price_override_reason` MUST be NULL
 
 ### Requirement: Carrota catalog seed
 Local API startup (`APP_ENV=local`) and tests MUST seed business `Carrota` and the following active products, all tenant-scoped to that business. The helper MUST be deterministic and idempotent. Staging and production MUST NOT insert this seed automatically. FORCE RLS remains enabled: a SQL client MUST set `app.current_business_id` to the Carrota business id to see catalog/sales rows; `lumo_admin` MUST NOT bypass RLS. Papa MUST NOT be seeded.

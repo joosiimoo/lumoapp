@@ -100,7 +100,72 @@ def _item(amount: str) -> SaleItem:
         unit_normalized=SaleUnit.UNIT,
         unit_price=money,
         line_total=money,
+        catalog_unit_price_snapshot=money,
     )
+
+
+def test_catalog_price_fields_follow_the_override_invariant() -> None:
+    from app.domain.sales import SaleItemSource
+
+    money = Money(Decimal("20.00"), "MXN")
+    charged = Money(Decimal("30.00"), "MXN")
+    normal = _item("20.00")
+    assert normal.catalog_unit_price_snapshot is not None
+    assert normal.catalog_unit_price_snapshot.amount == money.amount
+    assert normal.price_override_reason is None
+    override = SaleItem(
+        id=uuid4(),
+        business_id=uuid4(),
+        sale_session_id=uuid4(),
+        product_id=uuid4(),
+        product_name_snapshot="Tomate",
+        quantity_input=Decimal("900"),
+        unit_input=InputUnit.GRAM,
+        quantity_normalized=Decimal("0.900"),
+        unit_normalized=SaleUnit.KILOGRAM,
+        unit_price=charged,
+        line_total=Money(Decimal("27.00"), "MXN"),
+        catalog_unit_price_snapshot=money,
+        price_override_reason="Precio especial",
+    )
+    assert override.price_override_reason == "Precio especial"
+    with pytest.raises(ValidationAppError):
+        SaleItem(
+            id=uuid4(),
+            business_id=uuid4(),
+            sale_session_id=uuid4(),
+            product_id=None,
+            source_type=SaleItemSource.FREE_CONCEPT,
+            product_name_snapshot="hielo",
+            quantity_input=Decimal("2"),
+            unit_input=InputUnit.PACKAGE,
+            quantity_normalized=Decimal("2"),
+            unit_normalized=SaleUnit.PACKAGE,
+            unit_price=Money(Decimal("18.00"), "MXN"),
+            line_total=Money(Decimal("36.00"), "MXN"),
+            catalog_unit_price_snapshot=money,
+        )
+    with pytest.raises(ValidationAppError):
+        _ = SaleItem(
+            id=uuid4(),
+            business_id=uuid4(),
+            sale_session_id=uuid4(),
+            product_id=uuid4(),
+            product_name_snapshot="Tomate",
+            quantity_input=Decimal("1"),
+            unit_input=InputUnit.KILOGRAM,
+            quantity_normalized=Decimal("1"),
+            unit_normalized=SaleUnit.KILOGRAM,
+            unit_price=Money(Decimal("0.00"), "MXN"),
+            line_total=Money(Decimal("0.00"), "MXN"),
+            catalog_unit_price_snapshot=Money(Decimal("0.00"), "MXN"),
+        )
+
+
+def test_line_totals_use_one_money_times() -> None:
+    assert calculate_line_total(Decimal("0.900"), Money(Decimal("25.00"), "MXN")).to_json()["amount"] == "22.50"
+    assert calculate_line_total(Decimal("0.900"), Money(Decimal("30.00"), "MXN")).to_json()["amount"] == "27.00"
+    assert calculate_line_total(Decimal("3"), Money(Decimal("11.00"), "MXN")).to_json()["amount"] == "33.00"
 
 
 def test_session_total_is_derived_sum() -> None:

@@ -62,6 +62,51 @@ def isolate_database_for_0007_downgrade(engine) -> None:
     from sqlalchemy import text
 
     with engine.begin() as connection:
+        has_sale_items = connection.execute(text("SELECT to_regclass('sales.sale_items')")).scalar()
+        if has_sale_items is not None:
+            has_reason = connection.execute(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'sales' AND table_name = 'sale_items'
+                          AND column_name = 'price_override_reason'
+                    )
+                    """
+                )
+            ).scalar_one()
+            has_source = connection.execute(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = 'sales' AND table_name = 'sale_items'
+                          AND column_name = 'source_type'
+                    )
+                    """
+                )
+            ).scalar_one()
+            if has_reason or has_source:
+                connection.execute(text("ALTER TABLE sales.sale_items DISABLE ROW LEVEL SECURITY"))
+                if has_reason:
+                    connection.execute(
+                        text(
+                            """
+                            DELETE FROM sales.sale_items
+                            WHERE source_type = 'catalog'
+                              AND (
+                                price_override_reason IS NOT NULL
+                                OR catalog_unit_price_snapshot IS DISTINCT FROM unit_price
+                              )
+                            """
+                        )
+                    )
+                if has_source:
+                    connection.execute(
+                        text("DELETE FROM sales.sale_items WHERE source_type = 'free_concept' OR product_id IS NULL")
+                    )
+                connection.execute(text("ALTER TABLE sales.sale_items ENABLE ROW LEVEL SECURITY"))
+                connection.execute(text("ALTER TABLE sales.sale_items FORCE ROW LEVEL SECURITY"))
         if connection.execute(text("SELECT to_regclass('operations.closing_snapshots')")).scalar() is None:
             return
         connection.execute(text("ALTER TABLE operations.closing_snapshots DISABLE ROW LEVEL SECURITY"))

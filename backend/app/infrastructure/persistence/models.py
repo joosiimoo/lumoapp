@@ -346,6 +346,18 @@ class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="ck_sale_items_source",
         ),
         CheckConstraint("unit_price > 0 AND line_total > 0", name="ck_sale_items_money_positive"),
+        CheckConstraint(
+            "(source_type = 'catalog' AND product_id IS NOT NULL AND catalog_unit_price_snapshot IS NOT NULL "
+            "AND catalog_unit_price_snapshot > 0 AND unit_price = catalog_unit_price_snapshot "
+            "AND price_override_reason IS NULL) OR "
+            "(source_type = 'catalog' AND product_id IS NOT NULL AND catalog_unit_price_snapshot IS NOT NULL "
+            "AND catalog_unit_price_snapshot > 0 AND unit_price <> catalog_unit_price_snapshot "
+            "AND price_override_reason IS NOT NULL AND length(btrim(price_override_reason)) > 0 "
+            "AND price_override_reason = btrim(price_override_reason)) OR "
+            "(source_type = 'free_concept' AND product_id IS NULL AND catalog_unit_price_snapshot IS NULL "
+            "AND price_override_reason IS NULL)",
+            name="ck_sale_items_catalog_price",
+        ),
         ForeignKeyConstraint(
             ["product_id", "business_id"],
             ["catalog.products.id", "catalog.products.business_id"],
@@ -374,6 +386,8 @@ class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
     line_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
+    catalog_unit_price_snapshot: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    price_override_reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
 
 
 class PaymentRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):

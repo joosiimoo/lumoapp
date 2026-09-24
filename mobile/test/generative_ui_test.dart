@@ -226,6 +226,27 @@ void main() {
     expect(SaleItemAddedView.displayUnit('package'), 'paquete');
   });
 
+  testWidgets('override caption uses the server catalog price and stays off normal lines', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final override = GenerativeUiContract.fromJson({
+      ..._goldenContract(lineTotal: '27.00'),
+      'data': {
+        ..._goldenContract(lineTotal: '27.00')['data'] as Map<String, dynamic>,
+        'product_name': 'Tomate',
+        'unit_price': {'amount': '30.00', 'currency': 'MXN'},
+        'catalog_unit_price': {'amount': '20.00', 'currency': 'MXN'},
+      },
+      'fallback_text': 'Agregué 0.900 kg de Tomate · \$27.00',
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(override))));
+    expect(find.text('Precio ajustado · antes \$20.00/kg'), findsOneWidget);
+    expect(find.textContaining('precio especial'), findsNothing);
+
+    final normal = GenerativeUiContract.fromJson(_goldenContract());
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(normal))));
+    expect(find.textContaining('Precio ajustado'), findsNothing);
+  });
+
   testWidgets('golden card shows server fields without multiplying', (tester) async {
     const renderer = GenerativeUIRenderer();
     final contract = GenerativeUiContract.fromJson(_goldenContract());

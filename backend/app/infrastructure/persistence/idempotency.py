@@ -57,6 +57,24 @@ class SqlAlchemyIdempotencyService:
             return None
         return None
 
+    def find_completed(
+        self,
+        *,
+        tenant: TenantContext,
+        operation_type: str,
+        key: str,
+    ) -> dict[str, Any] | None:
+        existing = self._session.scalar(
+            select(IdempotencyRecordRow).where(
+                IdempotencyRecordRow.business_id == tenant.business_id,
+                IdempotencyRecordRow.operation_type == operation_type,
+                IdempotencyRecordRow.key == key,
+            )
+        )
+        if existing is None or existing.status != "completed" or existing.response_body is None:
+            return None
+        return {"request_hash": existing.request_hash, "body": existing.response_body}
+
     def peek(
         self,
         *,

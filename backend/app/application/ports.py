@@ -51,11 +51,23 @@ class IdempotencyService(Protocol):
         body: dict[str, Any],
     ) -> None: ...
 
+    def find_completed(
+        self,
+        *,
+        tenant: TenantContext,
+        operation_type: str,
+        key: str,
+    ) -> dict[str, Any] | None: ...
+
 
 class CatalogPort(Protocol):
     def resolve(self, *, tenant: TenantContext, query: str) -> Any: ...
 
     def get(self, *, tenant: TenantContext, product_id: UUID) -> Any: ...
+
+    def get_for_update(self, *, tenant: TenantContext, product_id: UUID) -> Any: ...
+
+    def rollback_product_lock(self) -> None: ...
 
 
 class SalesPort(Protocol):
