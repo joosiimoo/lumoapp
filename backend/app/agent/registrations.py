@@ -170,6 +170,20 @@ OPERATIONAL_DAY_SUMMARY = ToolRegistration(
     side_effect="read",
 )
 
+NEXT_BEST_ACTION = ToolRegistration(
+    tool_id="operational_day.next_best_action",
+    version=1,
+    input_schema={"type": "object", "additionalProperties": False, "properties": {}},
+    output_schema={
+        "type": "object",
+        "required": ["operational_day_id", "day_status", "pending_count", "next_best_action"],
+    },
+    permission="sale.create",
+    policy_id="NBA-001",
+    requires_idempotency=False,
+    side_effect="read",
+)
+
 _PREPARATION_OUTPUT_REQUIRED = [
     "operational_day_id",
     "business_date",
@@ -349,6 +363,27 @@ DAILY_CLOSE_CONFIRMED_UI = GenerativeUIRegistration(
     },
 )
 
+NEXT_BEST_ACTION_UI = GenerativeUIRegistration(
+    component="next_best_action",
+    version=1,
+    data_schema={
+        "type": "object",
+        "required": ["work_item_id", "type", "title", "reason", "priority", "status"],
+        "properties": {
+            "outcome_type": {"enum": ["daily_close_ready"]},
+            "type": {
+                "enum": [
+                    "cash_count_required",
+                    "cash_difference_review",
+                    "close_confirmation_required",
+                ]
+            },
+            "status": {"enum": ["open"]},
+            "expires_at": {"type": "null"},
+        },
+    },
+)
+
 
 def register_conversational_sale_tools(registry: ToolRegistry) -> None:
     for item in (
@@ -358,6 +393,7 @@ def register_conversational_sale_tools(registry: ToolRegistry) -> None:
         TOTALIZE_SALE,
         COMMIT_SALE,
         OPERATIONAL_DAY_SUMMARY,
+        NEXT_BEST_ACTION,
         SUBMIT_CASH_COUNT,
         CLOSING_PREPARE,
         CLOSING_CONFIRM,
@@ -387,3 +423,7 @@ def register_daily_close_preparation_ui(registry: GenerativeUIRegistry) -> None:
 
 def register_daily_close_confirmed_ui(registry: GenerativeUIRegistry) -> None:
     registry.register(DAILY_CLOSE_CONFIRMED_UI)
+
+
+def register_next_best_action_ui(registry: GenerativeUIRegistry) -> None:
+    registry.register(NEXT_BEST_ACTION_UI)

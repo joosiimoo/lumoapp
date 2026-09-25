@@ -128,6 +128,10 @@ class LumoApiClient {
     return get('/api/v1/session');
   }
 
+  Future<Map<String, dynamic>> getCurrentNextBestAction() {
+    return get('/api/v1/operational-days/current/next-best-action');
+  }
+
   Future<SalesExportFile> downloadCurrentSalesExport(String format) {
     return downloadFile('/api/v1/operational-days/current/sales-export?format=$format');
   }

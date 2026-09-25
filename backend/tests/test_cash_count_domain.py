@@ -224,6 +224,7 @@ class _SpyOperations:
         self.current = current
         self.day = day
         self.calls: list[str] = []
+        self.work_items: list = []
 
     def lock_day_for_update(self, **_kwargs):
         self.calls.append("lock")
@@ -254,7 +255,25 @@ class _SpyOperations:
 
     def insert_cash_count(self, *, tenant, cash_count):  # noqa: ANN001
         self.calls.append("insert")
+        self.current = cash_count
         return cash_count
+
+    def list_open_work_items(self, **_kwargs):
+        self.calls.append("list_open_work_items")
+        return [item for item in self.work_items if item.status.value == "open"]
+
+    def insert_work_item(self, *, tenant, work_item):  # noqa: ANN001
+        self.calls.append("insert_work_item")
+        self.work_items.append(work_item)
+        return work_item
+
+    def refresh_work_item_evidence(self, *, tenant, work_item_id, reason_code, evidence, updated_at):  # noqa: ANN001
+        self.calls.append("refresh_work_item_evidence")
+        return next(item for item in self.work_items if item.id == work_item_id)
+
+    def resolve_work_item(self, **_kwargs):
+        self.calls.append("resolve_work_item")
+        raise AssertionError("cash count unit fixtures have no open work item to resolve")
 
 
 class _SpyAudit:
@@ -333,7 +352,10 @@ def test_recount_reserves_the_key_and_updates_before_inserting() -> None:
     assert result.kind == "committed"
     assert idempotency.calls == ["peek", "begin", "complete"]
     assert operations.calls.index("mark_superseded") < operations.calls.index("insert")
-    assert [record["action"] for record in audit.records] == ["closing.submit_cash_count@1"]
+    assert [record["action"] for record in audit.records] == [
+        "closing.submit_cash_count@1",
+        "work_item.created",
+    ]
     assert outbox.events == ["cash_count.recorded"]
 
 

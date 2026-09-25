@@ -50,10 +50,18 @@ String _shareFilename(String filename) {
 }
 
 class HoyPage extends StatefulWidget {
-  const HoyPage({super.key, required this.apiClient, this.shareExport});
+  const HoyPage({
+    super.key,
+    required this.apiClient,
+    this.shareExport,
+    this.conversationId,
+    this.onSwitchToInicio,
+  });
 
   final LumoApiClient apiClient;
   final Future<void> Function(SalesExportFile file)? shareExport;
+  final String? conversationId;
+  final VoidCallback? onSwitchToInicio;
 
   @override
   State<HoyPage> createState() => _HoyPageState();
@@ -62,6 +70,41 @@ class HoyPage extends StatefulWidget {
 class _HoyPageState extends State<HoyPage> {
   String? _notice;
   bool _busy = false;
+  Map<String, dynamic>? _next;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadNext();
+  }
+
+  Future<void> _loadNext() async {
+    try {
+      final body = await widget.apiClient.getCurrentNextBestAction();
+      if (!mounted) {
+        return;
+      }
+      setState(() => _next = body);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _next = null);
+    }
+  }
+
+  Future<void> _requestClose() async {
+    final conversationId = widget.conversationId;
+    if (conversationId == null || conversationId.isEmpty) {
+      return;
+    }
+    widget.onSwitchToInicio?.call();
+    await widget.apiClient.postMessage(
+      'cerrar el día',
+      operation: 'hoy.close.${DateTime.now().microsecondsSinceEpoch}',
+      conversationId: conversationId,
+    );
+  }
 
   Future<void> _download(String format) async {
     if (_busy) {
@@ -111,6 +154,32 @@ class _HoyPageState extends State<HoyPage> {
         const SizedBox(height: 12),
         Text('Jornada', style: LumoTypography.titleSerifMd),
         const SizedBox(height: 16),
+        if (_showsNext) ...[
+          LumoCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Próximo paso', style: LumoTypography.eyebrow),
+                const SizedBox(height: 8),
+                Text(_title, style: LumoTypography.cardTitle),
+                const SizedBox(height: 8),
+                Text(_reason, style: LumoTypography.body),
+                if (_pendingCount == 1) ...[
+                  const SizedBox(height: 8),
+                  Text('1 pendiente', style: LumoTypography.caption),
+                ],
+                if (_offersClose) ...[
+                  const SizedBox(height: 16),
+                  LumoSecondaryButton(
+                    label: 'Cerrar el día',
+                    onPressed: _requestClose,
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+        ],
         LumoCard(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -135,5 +204,38 @@ class _HoyPageState extends State<HoyPage> {
         ),
       ],
     );
+  }
+
+  bool get _showsNext => _action != null;
+
+  Map<String, dynamic>? get _action {
+    final value = _next?['next_best_action'];
+    if (value is Map<String, dynamic>) {
+      return value;
+    }
+    if (value is Map) {
+      return Map<String, dynamic>.from(value);
+    }
+    return null;
+  }
+
+  String get _title => '${_action?['title'] ?? ''}';
+
+  String get _reason => '${_action?['reason'] ?? ''}';
+
+  int get _pendingCount {
+    final value = _next?['pending_count'];
+    if (value is int) {
+      return value;
+    }
+    return 0;
+  }
+
+  bool get _offersClose {
+    final actions = _action?['actions'];
+    if (actions is! List) {
+      return false;
+    }
+    return actions.any((item) => item is Map && item['action_id'] == 'closing.request@1');
   }
 }

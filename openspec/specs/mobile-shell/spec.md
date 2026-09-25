@@ -69,9 +69,9 @@ The client MUST reuse the same `Idempotency-Key` when retrying a mutation that m
 - **THEN** the client MUST resend that action's original `idempotency_key` and MUST NOT show a confirmed sale before the successful response
 
 ### Requirement: GenerativeUIRenderer owns rendering
-Flutter MUST provide a `GenerativeUIRenderer` that renders only backend-emitted generative UI contracts. It MUST register `sale_item_added` version `1`, `sale_summary` version `1`, `sale_confirmed` version `1`, `operational_day_summary` version `1`, `daily_close_preparation` version `1`, and `daily_close_confirmed` version `1`. Unknown components or versions MUST display `fallback_text` and MUST NOT run actions. Unknown action ids MUST NOT run. Flutter MUST NOT compose or register backend UI contracts. Flutter MUST NOT calculate line totals, session totals, summary totals, payment amounts, daily totals, expected cash, counted cash, or cash differences. Flutter MUST NOT display `confirmation_token` or `context_token`.
+Flutter MUST provide a `GenerativeUIRenderer` that renders only backend-emitted generative UI contracts. It MUST register `sale_item_added` version `1`, `sale_summary` version `1`, `sale_confirmed` version `1`, `operational_day_summary` version `1`, `daily_close_preparation` version `1`, `daily_close_confirmed` version `1`, and `next_best_action` version `1`. Unknown components or versions MUST display `fallback_text` and MUST NOT run actions. Unknown action ids MUST NOT run. Flutter MUST NOT compose or register backend UI contracts. Flutter MUST NOT calculate line totals, session totals, summary totals, payment amounts, daily totals, expected cash, counted cash, or cash differences. Flutter MUST NOT display `confirmation_token` or `context_token`.
 
-When the response contains one known version-1 contract and `text.strip()` equals that contract's `fallback_text.strip()`, Flutter MUST render the card as the assistant artifact and MUST NOT also render a visible prose block if the component is `sale_item_added`, `sale_summary`, `sale_confirmed`, `operational_day_summary`, or `daily_close_confirmed`, or if it is `daily_close_preparation` and `fallback_text` starts with `Cierre `. In every other case with a known card, Flutter MUST render the response `text` and the card. An empty `ui` MUST render `text` only. The card SHOULD expose `fallback_text` as an accessibility summary when the visible prose is omitted.
+When the response contains one known version-1 contract and `text.strip()` equals that contract's `fallback_text.strip()`, Flutter MUST render the card as the assistant artifact and MUST NOT also render a visible prose block if the component is `sale_item_added`, `sale_summary`, `sale_confirmed`, `operational_day_summary`, `next_best_action`, or `daily_close_confirmed`, or if it is `daily_close_preparation` and `fallback_text` starts with `Cierre `. In every other case with a known card, Flutter MUST render the response `text` and the card. An empty `ui` MUST render `text` only. The card SHOULD expose `fallback_text` as an accessibility summary when the visible prose is omitted.
 
 #### Scenario: Fallback for unknown component
 - **WHEN** the API returns a UI payload whose `component` is unknown to the renderer
@@ -97,8 +97,16 @@ When the response contains one known version-1 contract and `text.strip()` equal
 - **WHEN** the API returns `daily_close_confirmed` version `1`
 - **THEN** the renderer MUST handle it and MUST display the server gross, expected cash, counted cash, and difference without recomputing them
 
+#### Scenario: Next best action is handled
+- **WHEN** the API returns `next_best_action` version `1`
+- **THEN** the renderer MUST handle it and MUST display the server `title` and `reason` without calculating money or choosing another action
+
 #### Scenario: Duplicate preparation prose is omitted
 - **WHEN** the response `text` equals the `daily_close_preparation@1` `fallback_text` and that text starts with `Cierre `
+- **THEN** the stream MUST show the card and MUST NOT show a second visible copy of that sentence
+
+#### Scenario: Duplicate next-action prose is omitted
+- **WHEN** the response `text` equals the `next_best_action@1` `fallback_text`
 - **THEN** the stream MUST show the card and MUST NOT show a second visible copy of that sentence
 
 #### Scenario: Request-close prose is kept

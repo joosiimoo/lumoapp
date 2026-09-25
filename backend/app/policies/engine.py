@@ -20,6 +20,7 @@ SALE_004 = "SALE-004"
 SALE_005 = "SALE-005"
 PAY_001 = "PAY-001"
 DAY_001 = "DAY-001"
+NBA_001 = "NBA-001"
 CLOSE_001 = "CLOSE-001"
 CLOSE_002 = "CLOSE-002"
 CLOSE_003 = "CLOSE-003"
@@ -31,6 +32,7 @@ REGISTERED_SLICE_TOOLS = {
     "sale.totalize@1",
     "sale.commit@1",
     "operational_day.summary@1",
+    "operational_day.next_best_action@1",
     "closing.submit_cash_count@1",
     "closing.prepare@1",
     "closing.confirm@1",
@@ -71,6 +73,19 @@ SERVER_OWNED_CLOSE_ARGUMENTS = frozenset(
         "cash_count_id",
     }
 )
+NBA_DENIED_ARGUMENTS = frozenset(
+    {
+        "work_item_id",
+        "type",
+        "priority",
+        "amount",
+        "operational_day_id",
+        "expected_cash",
+        "counted_cash",
+        "difference",
+        "cash_difference",
+    }
+)
 
 
 class FoundationPolicyEngine:
@@ -92,6 +107,20 @@ class FoundationPolicyEngine:
                 decision=PolicyDecisionName.ALLOW,
                 rule_ids=[DAY_001, SEC_003, INT_001, INT_003, INTP_001],
                 reason_code="operational_day_summary_read",
+            )
+        if request.tool_id == "operational_day.next_best_action@1":
+            arguments = request.arguments or {}
+            supplied = set(arguments)
+            if supplied & NBA_DENIED_ARGUMENTS or supplied - NBA_DENIED_ARGUMENTS:
+                return PolicyDecision(
+                    decision=PolicyDecisionName.DENY,
+                    rule_ids=[NBA_001],
+                    reason_code="next_best_action_arguments_denied",
+                )
+            return PolicyDecision(
+                decision=PolicyDecisionName.ALLOW,
+                rule_ids=[NBA_001],
+                reason_code="next_best_action_read",
             )
         arguments = request.arguments or {}
         if request.tool_id in CLOSING_TOOLS:

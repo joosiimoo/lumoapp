@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from app.bootstrap.settings import Settings, get_settings
 from app.domain.shared.ids import new_uuid7
 from tests.conftest import DEFAULT_ADMIN_URL, DEFAULT_APP_URL, TEST_SECRET, postgres_available, settings_kwargs
+from tests.sale_cleanup import discard_work_items
 
 BACKEND = Path(__file__).resolve().parents[1]
 
@@ -104,7 +105,7 @@ def _session(connection, business_id: UUID) -> UUID:
 
 
 def test_upgrade_backfills_catalog_and_enforces_checks(migrated) -> None:
-    assert _revision(migrated) == "0009_catalog_price_override"
+    assert _revision(migrated) == "0010_work_items"
     with migrated.begin() as connection:
         roles = {
             row.rolname: row.rolbypassrls
@@ -233,9 +234,10 @@ def test_downgrade_refuses_free_concept_and_accepts_catalog_only(migrated) -> No
             ),
             {"id": new_uuid7(), "business_id": business_id, "session_id": session_id},
         )
+    discard_work_items(engine)
     with pytest.raises(Exception, match="free-concept"):
         command.downgrade(_config(), "0007_daily_close_confirmation")
-    assert _revision(engine) == "0009_catalog_price_override"
+    assert _revision(engine) == "0010_work_items"
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE sales.sale_items DISABLE ROW LEVEL SECURITY"))
         kept = connection.execute(text("SELECT count(*) FROM sales.sale_items WHERE source_type = 'free_concept'")).scalar_one()
@@ -243,10 +245,11 @@ def test_downgrade_refuses_free_concept_and_accepts_catalog_only(migrated) -> No
         connection.execute(text("ALTER TABLE sales.sale_items ENABLE ROW LEVEL SECURITY"))
         connection.execute(text("ALTER TABLE sales.sale_items FORCE ROW LEVEL SECURITY"))
     assert kept >= 1
+    discard_work_items(engine)
     command.downgrade(_config(), "0007_daily_close_confirmation")
     assert _revision(engine) == "0007_daily_close_confirmation"
     command.upgrade(_config(), "head")
-    assert _revision(engine) == "0009_catalog_price_override"
+    assert _revision(engine) == "0010_work_items"
 
 
 def _revision(engine) -> str:

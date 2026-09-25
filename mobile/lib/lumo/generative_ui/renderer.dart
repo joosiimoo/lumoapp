@@ -84,6 +84,7 @@ bool hideAssistantProse(String text, GenerativeUiContract contract) {
     'sale_confirmed',
     'operational_day_summary',
     'daily_close_confirmed',
+    'next_best_action',
   };
   if (listed.contains(contract.component)) {
     return true;
@@ -115,6 +116,7 @@ class GenerativeUIRenderer {
     'operational_day_summary': 1,
     'daily_close_preparation': 1,
     'daily_close_confirmed': 1,
+    'next_best_action': 1,
   };
 
   GenerativeUiRenderResult render(GenerativeUiContract contract) {
@@ -148,6 +150,9 @@ class GenerativeUIRenderer {
     }
     if (contract.component == 'daily_close_confirmed') {
       return DailyCloseConfirmedView(contract: contract, chrome: chrome);
+    }
+    if (contract.component == 'next_best_action') {
+      return NextBestActionView(contract: contract, chrome: chrome);
     }
     return SaleItemAddedView(contract: contract, chrome: chrome);
   }
@@ -846,6 +851,55 @@ class DailyCloseConfirmedView extends StatelessWidget {
                     ],
                   ),
                 ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class NextBestActionView extends StatelessWidget {
+  const NextBestActionView({super.key, required this.contract, required this.chrome});
+
+  final GenerativeUiContract contract;
+  final UiActionChrome chrome;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = '${contract.data['title'] ?? ''}';
+    final reason = '${contract.data['reason'] ?? ''}';
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const LumoMark(),
+        const SizedBox(width: 8),
+        Expanded(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: LumoSizes.contentMaxWidth),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (!chrome.hideFallback) ...[
+                  Text(contract.fallbackText, style: LumoTypography.body),
+                  const SizedBox(height: 8),
+                ],
+                Semantics(
+                  label: chrome.hideFallback ? contract.fallbackText : null,
+                  child: LumoCard(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(title, style: LumoTypography.cardTitle),
+                        const SizedBox(height: 8),
+                        Text(reason, style: LumoTypography.body),
+                        UiActionBar(actions: contract.actions, chrome: chrome),
+                      ],
+                    ),
+                  ),
                 ),
               ],
             ),

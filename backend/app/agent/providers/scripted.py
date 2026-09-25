@@ -26,6 +26,15 @@ _PAYMENT_PHRASES = {
 _PAYMENT_METHOD_CLARIFY = {"pagar", "cheque"}
 _PAYMENT_CLARIFICATION = "¿Cómo pagó? Puedo registrar *efectivo*, *tarjeta* o *transferencia*."
 _DAY_SUMMARY_PHRASES = {"como vamos hoy", "ventas de hoy", "cuanto vendimos hoy"}
+_NEXT_BEST_ACTION_PHRASES = {
+    "que sigue",
+    "que falta",
+    "que tengo pendiente",
+    "que sigue con el cierre",
+    "que falta para cerrar",
+    "que falta para el cierre",
+    "que tengo pendiente para cerrar",
+}
 _EXPORT_PHRASES = {
     "exporta las ventas de hoy",
     "exportar ventas",
@@ -133,6 +142,11 @@ class ScriptedLLMProvider:
             return AgentDecision(
                 intent="day_summary",
                 candidate_tool="operational_day.summary@1",
+            )
+        if normalized in _NEXT_BEST_ACTION_PHRASES:
+            return AgentDecision(
+                intent="next_best_action",
+                candidate_tool="operational_day.next_best_action@1",
             )
         counted_amount = parse_counted_phrase(normalized)
         if counted_amount is not None:

@@ -9,10 +9,12 @@ from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db, get_tenant
+from app.application.queries.get_next_best_action import GetNextBestAction
 from app.application.queries.export_daily_sales import ExportDailySales
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.export.daily_sales_csv import render_daily_sales_csv
 from app.infrastructure.export.daily_sales_xlsx import render_daily_sales_xlsx
+from app.infrastructure.persistence.operations import OperationsRepository
 from app.infrastructure.persistence.repositories import IdentityRepository
 from app.infrastructure.persistence.sales_export import SalesExportRepository
 
@@ -20,6 +22,16 @@ router = APIRouter()
 
 _CSV_TYPE = "text/csv; charset=utf-8"
 _XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+@router.get("/api/v1/operational-days/current/next-best-action")
+def get_current_next_best_action(
+    tenant: TenantContext = Depends(get_tenant),
+    session: Session = Depends(get_db),
+) -> dict:
+    identities = IdentityRepository(session)
+    operations = OperationsRepository(session)
+    return GetNextBestAction(identities=identities, operations=operations).execute(tenant=tenant)
 
 
 @router.get("/api/v1/operational-days/{operational_day_ref}/sales-export")

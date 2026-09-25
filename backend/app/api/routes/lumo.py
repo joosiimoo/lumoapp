@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.orchestrator import FoundationOrchestrator
 from app.api.dependencies import get_correlation_id, get_db, get_tenant
+from app.application.queries.get_next_best_action import GetNextBestAction
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
 from app.application.workflows.commit_sale_session import CommitSaleSession
 from app.application.workflows.confirm_daily_close import ConfirmDailyClose
@@ -178,6 +179,7 @@ def _orchestrator(request: Request, session: Session) -> FoundationOrchestrator:
         outbox=outbox,
     )
     day_summary = GetOperationalDaySummary(identities=identities, operations=operations)
+    next_best_action = GetNextBestAction(identities=identities, operations=operations)
     record_cash_count = RecordCashCount(
         identities=identities,
         operations=operations,
@@ -202,6 +204,7 @@ def _orchestrator(request: Request, session: Session) -> FoundationOrchestrator:
         totalize=totalize,
         commit=commit,
         day_summary=day_summary,
+        next_best_action=next_best_action,
         record_cash_count=record_cash_count,
         close_preparation=close_preparation,
         confirm_close=confirm_close,

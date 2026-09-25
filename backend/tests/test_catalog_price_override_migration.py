@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from app.bootstrap.settings import Settings, get_settings
 from app.domain.shared.ids import new_uuid7
 from tests.conftest import DEFAULT_ADMIN_URL, DEFAULT_APP_URL, TEST_SECRET, postgres_available, settings_kwargs
+from tests.sale_cleanup import discard_work_items
 
 BACKEND = Path(__file__).resolve().parents[1]
 
@@ -126,6 +127,7 @@ def _insert_line(connection, **values) -> UUID:
 
 
 def _clear_overrides(engine) -> None:
+    discard_work_items(engine)
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE sales.sale_items DISABLE ROW LEVEL SECURITY"))
         connection.execute(
@@ -303,6 +305,7 @@ def test_catalog_only_downgrade_succeeds(migrated) -> None:
             snapshot=20,
             reason=None,
         )
+    discard_work_items(migrated)
     command.downgrade(_config(), "0008_noncatalog_sale_item")
     assert _revision(migrated) == "0008_noncatalog_sale_item"
     command.upgrade(_config(), "head")
@@ -338,6 +341,7 @@ def test_free_concept_does_not_block_downgrade_and_survives(migrated) -> None:
             snapshot=None,
             reason=None,
         )
+    discard_work_items(migrated)
     command.downgrade(_config(), "0008_noncatalog_sale_item")
     assert _revision(migrated) == "0008_noncatalog_sale_item"
     with migrated.begin() as connection:
@@ -378,9 +382,10 @@ def test_catalog_override_blocks_downgrade_without_deleting_rows(migrated) -> No
             snapshot=20,
             reason="precio especial para cliente",
         )
+    discard_work_items(migrated)
     with pytest.raises(Exception, match="cannot downgrade 0009 while a catalog price override exists"):
         command.downgrade(_config(), "0008_noncatalog_sale_item")
-    assert _revision(migrated) == "0009_catalog_price_override"
+    assert _revision(migrated) == "0010_work_items"
     with migrated.begin() as connection:
         connection.execute(text("ALTER TABLE sales.sale_items DISABLE ROW LEVEL SECURITY"))
         kept = connection.execute(

@@ -14,7 +14,7 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 from app.bootstrap.settings import Settings, get_settings
 from app.domain.shared.ids import new_uuid7
 from tests.conftest import DEFAULT_ADMIN_URL, DEFAULT_APP_URL, TEST_SECRET, postgres_available, settings_kwargs
-from tests.sale_cleanup import isolate_database_for_0007_downgrade
+from tests.sale_cleanup import discard_work_items, isolate_database_for_0007_downgrade
 
 BACKEND = Path(__file__).resolve().parents[1]
 STAMP = datetime(2026, 9, 22, 18, 0, tzinfo=UTC)
@@ -164,7 +164,7 @@ def test_upgrade_from_0006_keeps_open_days_and_adds_snapshots(admin_engine) -> N
         business_id = _insert_business(connection)
         day_id = _insert_day(connection, business_id)
     command.upgrade(_config(), "head")
-    assert _revision(admin_engine) == "0009_catalog_price_override"
+    assert _revision(admin_engine) == "0010_work_items"
     with admin_engine.begin() as connection:
         _tenant(connection, business_id)
         status = connection.execute(
@@ -209,9 +209,10 @@ def test_downgrade_refuses_when_a_confirmed_close_exists(admin_engine) -> None:
     with admin_engine.begin() as connection:
         business_id = _insert_business(connection)
         closed = _close_pair(connection, business_id)
+    discard_work_items(admin_engine)
     with pytest.raises(Exception, match="cannot downgrade 0007 while a confirmed close exists"):
         command.downgrade(_config(), "0006_cash_count")
-    assert _revision(admin_engine) == "0009_catalog_price_override"
+    assert _revision(admin_engine) == "0010_work_items"
     with admin_engine.begin() as connection:
         _tenant(connection, business_id)
         status = connection.execute(

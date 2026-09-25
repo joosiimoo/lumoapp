@@ -21,6 +21,11 @@ from app.application.closing_confirmation_token import issue_closing_confirmatio
 from app.application.ui_action_token import issue_ui_action_token, verify_ui_action_token
 from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.ids import new_uuid7
+from app.application.queries.get_next_best_action import (
+    NO_PENDING_STEP_TEXT,
+    GetNextBestAction,
+    fallback_text_for,
+)
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
 from app.application.workflows.commit_sale_session import CommitSaleSession
 from app.application.workflows.confirm_daily_close import ConfirmDailyClose
@@ -47,6 +52,7 @@ _CLOSED_INTENTS = frozenset(
         "totalize_sale",
         "commit_sale",
         "day_summary",
+        "next_best_action",
         "record_cash_count",
         "close_preparation",
         "request_close",
@@ -58,6 +64,7 @@ _CLOSED_TOOLS = frozenset(
         "sale.totalize@1",
         "sale.commit@1",
         "operational_day.summary@1",
+        "operational_day.next_best_action@1",
         "closing.submit_cash_count@1",
         "closing.prepare@1",
         "closing.confirm@1",
@@ -82,6 +89,7 @@ class FoundationOrchestrator:
     totalize: TotalizeSaleSession | None = None
     commit: CommitSaleSession | None = None
     day_summary: GetOperationalDaySummary | None = None
+    next_best_action: GetNextBestAction | None = None
     record_cash_count: RecordCashCount | None = None
     close_preparation: GetDailyClosePreparation | None = None
     confirm_close: ConfirmDailyClose | None = None
@@ -146,6 +154,9 @@ class FoundationOrchestrator:
 
         if decision.intent == "day_summary" or decision.candidate_tool == "operational_day.summary@1":
             return self._handle_day_summary(decision, context, tenant)
+
+        if decision.intent == "next_best_action" or decision.candidate_tool == "operational_day.next_best_action@1":
+            return self._handle_next_best_action(decision, context, tenant, conversation_id)
 
         if decision.intent == "record_cash_count" or decision.candidate_tool == "closing.submit_cash_count@1":
             return self._handle_cash_count(decision, message, context, tenant, conversation_id)
@@ -424,6 +435,81 @@ class FoundationOrchestrator:
             )
             ui = [self.ui_composer.compose(contract)]
         return AgentResponse(text=result["text"], ui=ui)
+
+    def _handle_next_best_action(
+        self,
+        decision: AgentDecision,
+        context: dict[str, Any],
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+    ) -> AgentResponse:
+        tool_id = "operational_day.next_best_action@1"
+        registered = self.tools.is_registered(tool_id)
+        policy = self.policies.evaluate(
+            PolicyRequest(
+                action="execute_tool",
+                tool_id=tool_id,
+                tool_registered=registered,
+                from_llm=True,
+                arguments={},
+            )
+        )
+        if not registered or policy.decision.value == "deny":
+            return AgentResponse(
+                text=decision.clarification_question or "That action is not available.",
+                ui=[],
+            )
+        if self.next_best_action is None or tenant is None:
+            return AgentResponse(text="That action is not available.", ui=[])
+        body = self.next_best_action.execute(tenant=tenant, now=context.get("now"))
+        action = body.get("next_best_action")
+        if not isinstance(action, dict):
+            return AgentResponse(text=NO_PENDING_STEP_TEXT, ui=[])
+        text = fallback_text_for(action)
+        return AgentResponse(
+            text=text,
+            ui=self._next_best_action_ui(action, text, tenant, conversation_id, context.get("now") or utcnow()),
+        )
+
+    def _next_best_action_ui(
+        self,
+        action: dict[str, Any],
+        text: str,
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+        issued_at: Any,
+    ) -> list[dict[str, Any]]:
+        if self.ui_composer is None:
+            return []
+        actions: list[GenerativeUIAction] = []
+        requested = action.get("actions") or []
+        wants_request = any(
+            isinstance(item, dict) and item.get("action_id") == REQUEST_CLOSE_ACTION_ID for item in requested
+        )
+        if wants_request and tenant is not None and conversation_id:
+            actions.append(
+                GenerativeUIAction(
+                    action_id=REQUEST_CLOSE_ACTION_ID,
+                    option_id=None,
+                    context_token=issue_ui_action_token(
+                        secret=self.token_secret,
+                        action_id=REQUEST_CLOSE_ACTION_ID,
+                        business_id=tenant.business_id,
+                        actor_id=tenant.actor_id,
+                        conversation_id=conversation_id,
+                        issued_at=issued_at,
+                    ),
+                    idempotency_key=str(new_uuid7()),
+                )
+            )
+        contract = GenerativeUIContract(
+            component="next_best_action",
+            version=1,
+            data=action,
+            actions=actions,
+            fallback_text=text,
+        )
+        return [self.ui_composer.compose(contract)]
 
     def _handle_cash_count(
         self,

@@ -229,7 +229,11 @@ class _LumoHomeState extends State<LumoHome> {
             busyCardKey: _busyCardKey,
             busyActionKey: _busyActionKey,
           ),
-        LumoTab.hoy => HoyPage(apiClient: widget.apiClient),
+        LumoTab.hoy => HoyPage(
+            apiClient: widget.apiClient,
+            conversationId: _conversationId,
+            onSwitchToInicio: () => setState(() => _tab = LumoTab.inicio),
+          ),
         LumoTab.memoria => const MemoriaPage(),
         LumoTab.negocio => const NegocioPage(),
       },

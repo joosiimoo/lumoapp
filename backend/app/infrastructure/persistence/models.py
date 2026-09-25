@@ -307,6 +307,83 @@ class ClosingSnapshotRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class WorkItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "work_items"
+    __table_args__ = (
+        Index("ix_work_items_business_id", "business_id"),
+        Index(
+            "uq_work_items_one_open",
+            "business_id",
+            "operational_day_id",
+            "type",
+            unique=True,
+            postgresql_where=text("status = 'open'"),
+        ),
+        CheckConstraint(
+            "type IN ('cash_count_required', 'cash_difference_review', 'close_confirmation_required')",
+            name="ck_work_items_type",
+        ),
+        CheckConstraint("status IN ('open', 'resolved')", name="ck_work_items_status"),
+        CheckConstraint("responsible_party = 'business'", name="ck_work_items_responsible_party"),
+        CheckConstraint("source = 'daily_close_rule'", name="ck_work_items_source"),
+        CheckConstraint("jsonb_typeof(evidence) = 'object'", name="ck_work_items_evidence_object"),
+        CheckConstraint(
+            "("
+            "type = 'cash_count_required' AND priority = 'critical' AND reason_code = 'cash_count_missing'"
+            ") OR ("
+            "type = 'cash_difference_review' AND priority = 'high' "
+            "AND reason_code IN ('cash_short', 'cash_over')"
+            ") OR ("
+            "type = 'close_confirmation_required' AND priority = 'normal' "
+            "AND reason_code = 'close_confirmation_required'"
+            ")",
+            name="ck_work_items_type_priority_reason",
+        ),
+        CheckConstraint(
+            "resolution_actor_type IS NULL OR resolution_actor_type IN ('business', 'system')",
+            name="ck_work_items_resolution_actor_type",
+        ),
+        CheckConstraint(
+            "resolution_code IS NULL OR resolution_code IN ("
+            "'cash_count_recorded', 'cash_balanced', 'day_closed', 'cash_unbalanced')",
+            name="ck_work_items_resolution_code",
+        ),
+        CheckConstraint(
+            "("
+            "status = 'open' AND resolved_at IS NULL AND resolution_actor_type IS NULL "
+            "AND resolved_by_actor_id IS NULL AND resolution_code IS NULL"
+            ") OR ("
+            "status = 'resolved' AND resolution_actor_type = 'business' AND resolved_at IS NOT NULL "
+            "AND resolved_by_actor_id IS NOT NULL AND resolution_code IS NOT NULL"
+            ") OR ("
+            "status = 'resolved' AND resolution_actor_type = 'system' AND resolved_at IS NOT NULL "
+            "AND resolved_by_actor_id IS NULL AND resolution_code IS NOT NULL"
+            ")",
+            name="ck_work_items_resolution",
+        ),
+        ForeignKeyConstraint(
+            ["operational_day_id", "business_id"],
+            ["operations.operational_days.id", "operations.operational_days.business_id"],
+            name="fk_work_items_operational_day",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    operational_day_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    type: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    priority: Mapped[str] = mapped_column(String(16), nullable=False)
+    responsible_party: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    source: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolution_actor_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    resolved_by_actor_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    resolution_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "sale_sessions"
     __table_args__ = (

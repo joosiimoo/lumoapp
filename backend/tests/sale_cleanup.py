@@ -21,6 +21,7 @@ from app.infrastructure.persistence.models import (
     PaymentRow,
     SaleItemRow,
     SaleSessionRow,
+    WorkItemRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
 
@@ -32,6 +33,8 @@ SALE_AUDIT_ACTIONS = (
     "operational_day.opened",
     "closing.submit_cash_count@1",
     "closing.confirm@1",
+    "work_item.created",
+    "work_item.resolved",
 )
 SALE_OUTBOX_EVENTS = (
     "sale.item.added",
@@ -51,6 +54,19 @@ SALE_MESSAGE_OPERATIONS = (
 )
 SALE_OUTBOX_EVENT = "sale.item.added"
 SALE_MESSAGE_OPERATION = "lumo.message.add_sale_item"
+
+
+def discard_work_items(engine) -> None:
+    """Test isolation. Product downgrade still aborts while any WorkItem exists."""
+    from sqlalchemy import text
+
+    with engine.begin() as connection:
+        if connection.execute(text("SELECT to_regclass('operations.work_items')")).scalar() is None:
+            return
+        connection.execute(text("ALTER TABLE operations.work_items DISABLE ROW LEVEL SECURITY"))
+        connection.execute(text("DELETE FROM operations.work_items"))
+        connection.execute(text("ALTER TABLE operations.work_items ENABLE ROW LEVEL SECURITY"))
+        connection.execute(text("ALTER TABLE operations.work_items FORCE ROW LEVEL SECURITY"))
 
 
 def isolate_database_for_0007_downgrade(engine) -> None:
@@ -107,6 +123,11 @@ def isolate_database_for_0007_downgrade(engine) -> None:
                     )
                 connection.execute(text("ALTER TABLE sales.sale_items ENABLE ROW LEVEL SECURITY"))
                 connection.execute(text("ALTER TABLE sales.sale_items FORCE ROW LEVEL SECURITY"))
+        if connection.execute(text("SELECT to_regclass('operations.work_items')")).scalar() is not None:
+            connection.execute(text("ALTER TABLE operations.work_items DISABLE ROW LEVEL SECURITY"))
+            connection.execute(text("DELETE FROM operations.work_items"))
+            connection.execute(text("ALTER TABLE operations.work_items ENABLE ROW LEVEL SECURITY"))
+            connection.execute(text("ALTER TABLE operations.work_items FORCE ROW LEVEL SECURITY"))
         if connection.execute(text("SELECT to_regclass('operations.closing_snapshots')")).scalar() is None:
             return
         connection.execute(text("ALTER TABLE operations.closing_snapshots DISABLE ROW LEVEL SECURITY"))
@@ -127,6 +148,7 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(SaleSessionRow.__table__.delete().where(SaleSessionRow.business_id == business_id))
     session.execute(ClosingSnapshotRow.__table__.delete().where(ClosingSnapshotRow.business_id == business_id))
     session.execute(CashCountRow.__table__.delete().where(CashCountRow.business_id == business_id))
+    session.execute(WorkItemRow.__table__.delete().where(WorkItemRow.business_id == business_id))
     session.execute(OperationalDayRow.__table__.delete().where(OperationalDayRow.business_id == business_id))
     session.execute(
         OutboxEventRow.__table__.delete().where(

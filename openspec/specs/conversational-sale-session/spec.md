@@ -90,7 +90,7 @@ The actions `sale.pay.cash@1`, `sale.pay.card@1`, and `sale.pay.transfer@1` MUST
 
 Commit MUST ensure and attach the `OperationalDay` for the confirmation's business date exactly as `operational-day-foundation` requires: the same transaction MUST resolve or lazily create the one open day for that date and MUST set the confirmed session's `operational_day_id`. This supersedes the earlier statement that commit MUST NOT create an `OperationalDay`, which contradicted the implemented baseline.
 
-Commit MUST NOT create a `CashCount`, a `WorkItem`, or an invoice, MUST NOT perform a final Daily Close, MUST NOT change `OperationalDay.status`, and MUST NOT compute or persist expected cash, counted cash, or a cash difference. Cash counting is owned by `cash-count-foundation` and requires a separate explicit write.
+Commit MUST NOT create a `CashCount` or an invoice, MUST NOT perform a final Daily Close, MUST NOT change `OperationalDay.status`, and MUST NOT compute or persist counted cash or a cash difference. The same transaction MUST run Daily Close WorkItem sync after the day and payment exist, as `work-item-foundation` requires. When that day has no current `CashCount`, sync MUST leave one open `cash_count_required` row. Cash counting is owned by `cash-count-foundation` and requires a separate explicit write. Idempotent replay and a confirmed read-back MUST NOT run sync again.
 
 #### Scenario: Cash completion
 - **WHEN** a conversation has added Zanahoria `22.50`, Tomate `10.00`, and Galleta A `24.00`, posted `totalizar`, then posted `efectivo`
@@ -113,8 +113,8 @@ Commit MUST NOT create a `CashCount`, a `WorkItem`, or an invoice, MUST NOT perf
 - **THEN** exactly one open `operations.operational_days` row MUST exist for that business and date and the confirmed session's `operational_day_id` MUST reference it
 
 #### Scenario: Commit does not count cash or close
-- **WHEN** a sale is confirmed with `efectivo` or with `sale.pay.cash@1`
-- **THEN** `operations.cash_counts` MUST NOT gain a row, no `WorkItem` or invoice MUST be created, no Daily Close MUST be performed, and the day's `status` MUST remain `open`
+- **WHEN** a sale is confirmed with `efectivo` or with `sale.pay.cash@1` and no `CashCount` exists
+- **THEN** `operations.cash_counts` MUST NOT gain a row, no invoice MUST be created, no Daily Close MUST be performed, the day's `status` MUST remain `open`, and exactly one open `cash_count_required` WorkItem MUST exist for that day
 
 ### Requirement: Repeat commit on confirmed is a stable read-back
 When the latest session for the interaction context is `confirmed` and no newer active session exists, another semantic payment intent, including a payment action, MUST return the current `sale_confirmed@1` and MUST NOT create a second `Payment`, MUST NOT emit another `sale.confirmed` or `payment.recorded` outbox event, and MUST NOT create another transition audit. Replaying the original `Idempotency-Key` and payload hash MUST return the original persisted response. A different `Idempotency-Key` MUST be treated as a non-mutating read-back and MUST NOT insert a new `lumo.message.commit_sale` idempotency record.
@@ -207,3 +207,9 @@ If `catalog_price_override` is pending and the actor sends a complete sale utter
 - **WHEN** a Tomate override question is pending and the actor posts `2 galletas A`
 - **THEN** no Tomate override line MUST exist and the Galleta utterance MUST be interpreted on its own
 
+### Requirement: Existing close and payment behavior stays in force
+A confirming commit MUST still record exactly one `Payment` with `status=recorded`. It MUST NOT leave a confirmed sale without a payment. `ready_to_charge` MUST remain unattached to an OperationalDay. This requirement does not add `payment_required`.
+
+#### Scenario: Ready to charge stays off the day
+- **WHEN** a session is `ready_to_charge`
+- **THEN** its `operational_day_id` MUST be NULL and no Daily Close WorkItem MUST reference that session

@@ -1212,6 +1212,64 @@ void main() {
     }));
     await tester.pumpAndSettle();
   });
+
+  testWidgets('next best action shows server copy and hides duplicate prose', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    const title = 'Hay un faltante de \$14.00. Revisa la diferencia antes de confirmar el cierre.';
+    const reason = 'El conteo es \$80.00 y las ventas registradas en Lumo esperan \$94.00 en efectivo.';
+    final contract = GenerativeUiContract.fromJson({
+      'component': 'next_best_action',
+      'version': 1,
+      'fallback_text': '$title $reason',
+      'data': {
+        'title': title,
+        'reason': reason,
+        'evidence': {
+          'expected_cash': '94.00',
+          'counted_cash': '80.00',
+          'cash_difference': '-14.00',
+        },
+      },
+      'actions': [
+        {
+          'action_id': 'closing.request@1',
+          'option_id': null,
+          'context_token': 'request-token',
+          'idempotency_key': 'close-key',
+        },
+      ],
+    });
+    expect(renderer.render(contract).handled, isTrue);
+    expect(hideAssistantProse(contract.fallbackText, contract), isTrue);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: renderer.build(contract, chrome: const UiActionChrome(hideFallback: true, onAction: _ignoreAction))),
+    ));
+    expect(find.text(title), findsOneWidget);
+    expect(find.text(reason), findsOneWidget);
+    expect(find.text('Cerrar el día'), findsOneWidget);
+    expect(find.text('80.00 − 94.00'), findsNothing);
+    expect(find.text(contract.fallbackText), findsNothing);
+
+    final unknown = GenerativeUiContract.fromJson({
+      'component': 'next_best_action',
+      'version': 2,
+      'fallback_text': 'Solo el texto de respaldo',
+      'data': {'title': title, 'reason': reason},
+      'actions': [
+        {
+          'action_id': 'closing.request@1',
+          'option_id': null,
+          'context_token': 'request-token',
+          'idempotency_key': 'close-key',
+        },
+      ],
+    });
+    expect(renderer.render(unknown).handled, isFalse);
+    expect(renderer.canRunActions(unknown), isFalse);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(unknown))));
+    expect(find.text('Solo el texto de respaldo'), findsOneWidget);
+    expect(find.text('Cerrar el día'), findsNothing);
+  });
 }
 
 void _ignoreAction(GenerativeUiAction action) {}

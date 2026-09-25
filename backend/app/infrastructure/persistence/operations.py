@@ -16,6 +16,12 @@ from app.domain.operations import (
     DaySummaryTotals,
     OperationalDay,
     OperationalDayStatus,
+    ResolutionActorType,
+    ResolutionCode,
+    WorkItem,
+    WorkItemPriority,
+    WorkItemStatus,
+    WorkItemType,
 )
 from app.domain.sales import PaymentStatus, SaleSessionStatus
 from app.domain.shared.errors import TenantScopeViolationError, ValidationAppError
@@ -27,6 +33,7 @@ from app.infrastructure.persistence.models import (
     OperationalDayRow,
     PaymentRow,
     SaleSessionRow,
+    WorkItemRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
 
@@ -310,6 +317,139 @@ class OperationsRepository:
             raise ValidationAppError("operational day could not be closed")
         self._session.expire_all()
 
+    def list_work_items(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+    ) -> list[WorkItem]:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        rows = self._session.scalars(
+            select(WorkItemRow)
+            .where(
+                WorkItemRow.business_id == tenant.business_id,
+                WorkItemRow.operational_day_id == operational_day_id,
+            )
+            .order_by(WorkItemRow.created_at, WorkItemRow.id)
+        ).all()
+        return [_to_work_item(row) for row in rows]
+
+    def list_open_work_items(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+    ) -> list[WorkItem]:
+        return [
+            item
+            for item in self.list_work_items(tenant=tenant, operational_day_id=operational_day_id)
+            if item.status is WorkItemStatus.OPEN
+        ]
+
+    def insert_work_item(self, *, tenant: TenantContext, work_item: WorkItem) -> WorkItem:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        if work_item.business_id != tenant.business_id:
+            raise TenantScopeViolationError("work item business does not match the tenant")
+        if work_item.status is not WorkItemStatus.OPEN:
+            raise ValidationAppError("a new work item must be open")
+        row = WorkItemRow(
+            id=work_item.id,
+            business_id=tenant.business_id,
+            operational_day_id=work_item.operational_day_id,
+            type=work_item.type.value,
+            status=WorkItemStatus.OPEN.value,
+            priority=work_item.priority.value,
+            responsible_party=work_item.responsible_party,
+            reason_code=work_item.reason_code,
+            source=work_item.source,
+            evidence=dict(work_item.evidence),
+            created_at=work_item.created_at,
+            updated_at=work_item.updated_at,
+            resolved_at=None,
+            resolution_actor_type=None,
+            resolved_by_actor_id=None,
+            resolution_code=None,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _to_work_item(row)
+
+    def refresh_work_item_evidence(
+        self,
+        *,
+        tenant: TenantContext,
+        work_item_id: UUID,
+        reason_code: str,
+        evidence: dict,
+        updated_at: datetime,
+    ) -> WorkItem:
+        """Update evidence on an open row. A matching row is left untouched."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(WorkItemRow).where(
+                WorkItemRow.id == work_item_id,
+                WorkItemRow.business_id == tenant.business_id,
+            )
+        )
+        if row is None or row.status != WorkItemStatus.OPEN.value:
+            raise ValidationAppError("open work item could not be refreshed")
+        if row.reason_code == reason_code and dict(row.evidence) == evidence:
+            return _to_work_item(row)
+        row.reason_code = reason_code
+        row.evidence = evidence
+        row.updated_at = updated_at
+        self._session.flush()
+        return _to_work_item(row)
+
+    def resolve_work_item(
+        self,
+        *,
+        tenant: TenantContext,
+        work_item_id: UUID,
+        resolved_at: datetime,
+        resolution_actor_type: ResolutionActorType,
+        resolved_by_actor_id: UUID | None,
+        resolution_code: ResolutionCode,
+    ) -> WorkItem:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        if resolution_actor_type is ResolutionActorType.BUSINESS and resolved_by_actor_id is None:
+            raise ValidationAppError("a business resolution requires an actor")
+        if resolution_actor_type is ResolutionActorType.SYSTEM and resolved_by_actor_id is not None:
+            raise ValidationAppError("a system resolution must not store an actor")
+        result = self._session.execute(
+            update(WorkItemRow)
+            .where(
+                WorkItemRow.id == work_item_id,
+                WorkItemRow.business_id == tenant.business_id,
+                WorkItemRow.status == WorkItemStatus.OPEN.value,
+            )
+            .values(
+                status=WorkItemStatus.RESOLVED.value,
+                resolved_at=resolved_at,
+                resolution_actor_type=resolution_actor_type.value,
+                resolved_by_actor_id=resolved_by_actor_id,
+                resolution_code=resolution_code.value,
+                updated_at=resolved_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise ValidationAppError("open work item could not be resolved")
+        self._session.expire_all()
+        row = self._session.scalar(
+            select(WorkItemRow).where(
+                WorkItemRow.id == work_item_id,
+                WorkItemRow.business_id == tenant.business_id,
+            )
+        )
+        if row is None:
+            raise ValidationAppError("resolved work item could not be read")
+        return _to_work_item(row)
+
 
 def _money(amount: Decimal | int | str, currency: str) -> str:
     if isinstance(amount, float):
@@ -357,6 +497,31 @@ def _to_snapshot(row: ClosingSnapshotRow) -> ClosingSnapshot:
         closed_at=row.closed_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _to_work_item(row: WorkItemRow) -> WorkItem:
+    actor_type = (
+        ResolutionActorType(row.resolution_actor_type) if row.resolution_actor_type is not None else None
+    )
+    code = ResolutionCode(row.resolution_code) if row.resolution_code is not None else None
+    return WorkItem(
+        id=row.id,
+        business_id=row.business_id,
+        operational_day_id=row.operational_day_id,
+        type=WorkItemType(row.type),
+        status=WorkItemStatus(row.status),
+        priority=WorkItemPriority(row.priority),
+        responsible_party=row.responsible_party,
+        reason_code=row.reason_code,
+        source=row.source,
+        evidence=dict(row.evidence),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        resolved_at=row.resolved_at,
+        resolution_actor_type=actor_type,
+        resolved_by_actor_id=row.resolved_by_actor_id,
+        resolution_code=code,
     )
 
 

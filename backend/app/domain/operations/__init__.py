@@ -9,6 +9,22 @@ from app.domain.operations.cash_count import (
 )
 from app.domain.operations.closing_snapshot import ClosingSnapshot, preparation_fingerprint
 from app.domain.operations.day import DaySummaryTotals, OperationalDay, OperationalDayStatus
+from app.domain.operations.work_item import (
+    RANKED_TYPES,
+    RESPONSIBLE_PARTY_BUSINESS,
+    SOURCE_DAILY_CLOSE_RULE,
+    ReasonCode,
+    ResolutionActorType,
+    ResolutionCode,
+    WorkItem,
+    WorkItemPriority,
+    WorkItemStatus,
+    WorkItemType,
+    desired_open_type,
+    priority_for,
+    reason_code_for,
+    resolution_for,
+)
 
 __all__ = [
     "CashCount",
@@ -19,9 +35,23 @@ __all__ = [
     "InvalidBusinessTimezone",
     "OperationalDay",
     "OperationalDayStatus",
+    "RANKED_TYPES",
+    "RESPONSIBLE_PARTY_BUSINESS",
+    "ReasonCode",
+    "ResolutionActorType",
+    "ResolutionCode",
+    "SOURCE_DAILY_CLOSE_RULE",
+    "WorkItem",
+    "WorkItemPriority",
+    "WorkItemStatus",
+    "WorkItemType",
     "business_date_for",
     "cash_difference",
     "cash_status_for",
+    "desired_open_type",
     "parse_counted_amount",
     "preparation_fingerprint",
+    "priority_for",
+    "reason_code_for",
+    "resolution_for",
 ]

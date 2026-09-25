@@ -18,6 +18,18 @@ void main() {
     SalesExportFile? shared;
     final httpClient = MockClient((request) async {
       requests.add(request);
+      if (request.url.path.endsWith('next-best-action')) {
+        return http.Response(
+          jsonEncode({
+            'operational_day_id': null,
+            'day_status': null,
+            'pending_count': 0,
+            'next_best_action': null,
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
       final format = request.url.queryParameters['format'];
       return http.Response.bytes(
         utf8.encode(format == 'csv' ? 'business_date\r\n' : 'xlsx-bytes'),
@@ -44,13 +56,14 @@ void main() {
     await tester.tap(find.text('Descargar CSV'));
     await tester.pumpAndSettle();
 
-    expect(requests, hasLength(1));
-    expect(requests.single.method, 'GET');
-    expect(requests.single.url.path, '/api/v1/operational-days/current/sales-export');
-    expect(requests.single.url.queryParameters['format'], 'csv');
-    expect(requests.single.headers['authorization'], 'Bearer tok');
-    expect(requests.single.headers['x-correlation-id'], isNotEmpty);
-    expect(requests.single.headers.containsKey('idempotency-key'), isFalse);
+    final exports = requests.where((request) => request.url.path.endsWith('sales-export')).toList();
+    expect(exports, hasLength(1));
+    expect(exports.single.method, 'GET');
+    expect(exports.single.url.path, '/api/v1/operational-days/current/sales-export');
+    expect(exports.single.url.queryParameters['format'], 'csv');
+    expect(exports.single.headers['authorization'], 'Bearer tok');
+    expect(exports.single.headers['x-correlation-id'], isNotEmpty);
+    expect(exports.single.headers.containsKey('idempotency-key'), isFalse);
     expect(shared!.filename, 'lumo-nandu-hijos-ventas-2026-09-23.csv');
     expect(utf8.decode(shared!.bytes), 'business_date\r\n');
     expect(find.text('Todavía no hay actividad de hoy para exportar.'), findsNothing);
@@ -173,6 +186,71 @@ void main() {
     } finally {
       await directory.delete(recursive: true);
     }
+  });
+
+  testWidgets('Hoy shows the server next step and posts cerrar el día', (tester) async {
+    final requests = <http.Request>[];
+    var switched = false;
+    final httpClient = MockClient((request) async {
+      requests.add(request);
+      if (request.url.path.endsWith('next-best-action')) {
+        return http.Response(
+          jsonEncode({
+            'operational_day_id': 'day-1',
+            'day_status': 'open',
+            'pending_count': 1,
+            'next_best_action': {
+              'type': 'cash_difference_review',
+              'title': 'Hay un faltante de \$14.00. Revisa la diferencia antes de confirmar el cierre.',
+              'reason': 'El conteo es \$80.00 y las ventas registradas en Lumo esperan \$94.00 en efectivo.',
+              'actions': [
+                {'action_id': 'closing.request@1'},
+              ],
+            },
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response(
+        jsonEncode({
+          'message_id': 'm1',
+          'status': 'completed',
+          'text': 'El cierre está preparado',
+          'ui': [],
+          'correlation_id': 'c1',
+        }),
+        200,
+        headers: {'content-type': 'application/json'},
+      );
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: HoyPage(
+          apiClient: _client(httpClient),
+          conversationId: 'conv-hoy',
+          onSwitchToInicio: () => switched = true,
+          shareExport: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Próximo paso'), findsOneWidget);
+    expect(find.text('1 pendiente'), findsOneWidget);
+    expect(find.text('2 pendientes'), findsNothing);
+    expect(
+      find.text('Hay un faltante de \$14.00. Revisa la diferencia antes de confirmar el cierre.'),
+      findsOneWidget,
+    );
+    await tester.tap(find.text('Cerrar el día'));
+    await tester.pumpAndSettle();
+    expect(switched, isTrue);
+    final posted = requests.where((request) => request.method == 'POST').toList();
+    expect(posted, hasLength(1));
+    expect(posted.single.url.path, '/api/v1/lumo/messages');
+    expect(jsonDecode(posted.single.body)['message'], 'cerrar el día');
+    expect(jsonDecode(posted.single.body)['conversation_id'], 'conv-hoy');
+    expect(requests.any((request) => request.url.path.contains('/actions')), isFalse);
   });
 }
 

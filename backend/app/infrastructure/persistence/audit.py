@@ -25,11 +25,12 @@ class SqlAlchemyAuditService:
         policy_decision: dict[str, Any] | None = None,
         before_payload: dict[str, Any] | None = None,
         after_payload: dict[str, Any] | None = None,
+        omit_actor: bool = False,
     ) -> None:
         self._session.add(
             AuditEventRow(
                 business_id=tenant.business_id,
-                actor_id=tenant.actor_id,
+                actor_id=None if omit_actor else tenant.actor_id,
                 action=action,
                 route_or_tool=route_or_tool,
                 policy_decision=policy_decision,

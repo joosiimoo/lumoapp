@@ -19,6 +19,7 @@ class AuditService(Protocol):
         policy_decision: dict[str, Any] | None = None,
         before_payload: dict[str, Any] | None = None,
         after_payload: dict[str, Any] | None = None,
+        omit_actor: bool = False,
     ) -> None: ...
 
 
