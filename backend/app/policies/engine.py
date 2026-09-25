@@ -84,6 +84,7 @@ NBA_DENIED_ARGUMENTS = frozenset(
         "counted_cash",
         "difference",
         "cash_difference",
+        "outcome_run_id",
     }
 )
 

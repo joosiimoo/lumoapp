@@ -72,6 +72,7 @@ def project_work_item(item: WorkItem) -> dict[str, Any]:
         "expires_at": None,
         "status": "open",
         "actions": actions,
+        "outcome_run_id": None if item.outcome_run_id is None else str(item.outcome_run_id),
     }
 
 

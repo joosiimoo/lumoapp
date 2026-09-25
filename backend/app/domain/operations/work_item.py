@@ -74,6 +74,7 @@ class WorkItem:
     resolution_actor_type: ResolutionActorType | None = None
     resolved_by_actor_id: UUID | None = None
     resolution_code: ResolutionCode | None = None
+    outcome_run_id: UUID | None = None
 
 
 def priority_for(item_type: WorkItemType) -> WorkItemPriority:

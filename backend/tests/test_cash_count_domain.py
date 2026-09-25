@@ -225,6 +225,30 @@ class _SpyOperations:
         self.day = day
         self.calls: list[str] = []
         self.work_items: list = []
+        self.outcome = None
+
+    def get_snapshot_for_day(self, **_kwargs):
+        return None
+
+    def get_daily_close_outcome(self, **_kwargs):
+        return self.outcome
+
+    def insert_daily_close_outcome(self, *, tenant, outcome):  # noqa: ANN001
+        self.calls.append("insert_outcome")
+        self.outcome = outcome
+        return outcome
+
+    def update_daily_close_outcome_evidence(self, *, tenant, outcome_run_id, evidence, updated_at):  # noqa: ANN001
+        self.calls.append("update_outcome_evidence")
+        return self.outcome
+
+    def update_daily_close_outcome_status(self, **_kwargs):
+        self.calls.append("update_outcome_status")
+        return self.outcome
+
+    def link_null_work_items(self, **_kwargs) -> int:
+        self.calls.append("link_work_items")
+        return 0
 
     def lock_day_for_update(self, **_kwargs):
         self.calls.append("lock")
@@ -354,6 +378,7 @@ def test_recount_reserves_the_key_and_updates_before_inserting() -> None:
     assert operations.calls.index("mark_superseded") < operations.calls.index("insert")
     assert [record["action"] for record in audit.records] == [
         "closing.submit_cash_count@1",
+        "outcome_run.created",
         "work_item.created",
     ]
     assert outbox.events == ["cash_count.recorded"]

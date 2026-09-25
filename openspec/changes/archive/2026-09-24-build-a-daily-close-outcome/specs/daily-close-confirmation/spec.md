@@ -1,0 +1,53 @@
+## MODIFIED Requirements
+
+### Requirement: closing.confirm@1 confirms today's open day
+`ToolRegistry` MUST register `closing.confirm@1` as a write tool. Input MUST be exactly `{ "confirmation_token": string }` and MUST NOT accept totals, expected cash, counted cash, a difference, `cash_status`, an operational day id, a snapshot id, a business date, a currency, an actor id, a cash count id, or `closed_at`. Permission MUST be `closing.confirm`. Policy MUST be `CLOSE-003`. Side effect MUST be `write`. Idempotency MUST be required. `closing.reopen@1` MUST remain unregistered. The tool MUST NOT create an `OperationalDay`, a `WorkItem`, or a `NextBestAction`, and MUST NOT register `daily_close_ready.execute@1`. A successful confirm MUST complete the day's `daily_close_ready@1` OutcomeRun as `daily-close-outcome` requires. A business date with no `OperationalDay` MUST clarify with reason `operational_day_not_started` and MUST NOT insert a day, a snapshot, an OutcomeRun, an audit row, an outbox row, or an idempotency row.
+
+#### Scenario: No day does not close
+- **WHEN** the actor confirms a close and no OperationalDay exists for today's business date
+- **THEN** the response MUST clarify with `operational_day_not_started`, and `operations.operational_days`, `operations.closing_snapshots`, and `operations.outcome_runs` MUST gain no row
+
+#### Scenario: Reopen stays unregistered
+- **WHEN** a decision names `closing.reopen@1`
+- **THEN** the registry MUST report the tool as unregistered, policy MUST `deny` under `SEC-002`, and no day MUST change status
+
+### Requirement: Confirm transaction order
+The write MUST run in one application-owned transaction in this order: peek `lumo.message.confirm_close`; read timezone and currency; take one clock reading; derive today's business date; lock today's day `FOR UPDATE`; peek again; if `closed`, read back the snapshot; if open and uncounted, clarify; recompute `summarize_day` under the lock; verify the token; reserve idempotency only when a snapshot will be inserted; insert the snapshot while status is still `open`; update status to `closed` only where `status=open`; resolve the open Daily Close WorkItem with `day_closed`; complete the existing OutcomeRun, or insert it already `completed` if it is missing; set `outcome_run_id` on any WorkItems for that operational day whose `outcome_run_id` is still null, including the WorkItem just resolved; write the `closing.confirm@1` audit; enqueue one `closing.confirmed` outbox event; complete parent idempotency; commit. The `outcome_run_id` update MUST NOT write `work_item.created` or `work_item.resolved` and MUST NOT change that WorkItem's id, status, resolution fields, or evidence. Success and `daily_close_confirmed@1` MUST be produced only after commit. A failure before commit MUST leave the day `open` and MUST leave no snapshot, no completed OutcomeRun, no `closing.confirm@1` audit, no outcome audit, and no `closing.confirmed` event.
+
+#### Scenario: Rollback leaves the day open
+- **WHEN** a confirm writes the snapshot and the status change and then fails before commit
+- **THEN** the day MUST remain `open`, no snapshot MUST remain, no OutcomeRun MUST be `completed`, and no close audit or outbox row MUST remain
+
+### Requirement: Close idempotency audit and outbox
+The message path MUST use `operation_type` `lumo.message.confirm_close`. The request hash MUST cover the raw message, `conversation_id`, and the token string. The same key and hash MUST return the stored body and MUST NOT insert a second snapshot, a second outcome completion, an audit row, or an event. The same key and a different hash MUST return `IDEMPOTENCY_CONFLICT` and MUST NOT write. A different key after the day is already `closed` MUST return the existing snapshot as `daily_close_confirmed@1` and MUST NOT insert a snapshot, an audit row, an outbox row, an idempotency row, or a second outcome completion. A clarify MUST NOT reserve a key. The successful close MUST write one audit action `closing.confirm@1` whose `before_payload` has `status=open`, `operational_day_id`, and `cash_count_id`, and whose `after_payload` has the snapshot id, the cash count id, the frozen totals, `cash_status`, `closed_at`, `previous_status=open`, and `new_status=closed`. It MUST enqueue exactly one `closing.confirmed` outbox event with those frozen values. It MUST NOT enqueue an OutcomeRun event. A later read MUST use the snapshot row, not the audit row.
+
+#### Scenario: Same-key replay
+- **WHEN** the actor resubmits the same confirm message, token, and idempotency key after a successful close
+- **THEN** the original body MUST be returned and exactly one snapshot, one completed OutcomeRun, and one `closing.confirmed` event MUST exist
+
+#### Scenario: Different key after close
+- **WHEN** the day is already `closed` and the actor posts `confirmar cierre` with a new idempotency key
+- **THEN** the response MUST describe the existing snapshot, and no second snapshot, audit, outbox, outcome completion, or `lumo.message.confirm_close` row MUST be created
+
+#### Scenario: Close audit and outbox once
+- **WHEN** a confirm commits
+- **THEN** exactly one `closing.confirm@1` audit row and exactly one `closing.confirmed` outbox row MUST exist for that snapshot, and no OutcomeRun outbox row MUST exist
+
+### Requirement: Successful close resolves open Daily Close WorkItems
+In the same transaction that inserts the `ClosingSnapshot` and sets the day to `closed`, `closing.confirm@1` MUST resolve the one open WorkItem for that day with `resolution_code=day_closed`, `resolution_actor_type=business`, and the confirmer's actor id, MUST complete that day's OutcomeRun or insert it already `completed` when it is missing, and MUST then set `outcome_run_id` on any of that day's WorkItems that are still null, including the row just resolved. That link MUST NOT write `work_item.created` or `work_item.resolved` and MUST NOT change the WorkItem id, status, resolution fields, or evidence. It MUST NOT insert a WorkItem or a `NextBestAction` row. A short or over day MUST be closable while its only open row is `cash_difference_review`. `balanced`, `short`, and `over` MUST remain closable. `not_counted` MUST still clarify with `cash_count_required` and MUST NOT close or complete the OutcomeRun. A clarify or stale confirmation MUST NOT resolve WorkItems or update the OutcomeRun. A same-key replay and a different-key read-back of an already closed day MUST NOT resolve rows again, MUST NOT insert a second snapshot, and MUST NOT complete the OutcomeRun again.
+
+#### Scenario: Short close still commits and clears active work
+- **WHEN** expected cash is `22.50`, the current count is `20.00`, the only open Daily Close WorkItem is `cash_difference_review`, and the actor confirms with a matching token
+- **THEN** the snapshot MUST store `cash_difference` `-2.50` and `cash_status=short`, the day MUST be `closed`, that difference row MUST be `resolved` with `resolution_code=day_closed` and `resolution_actor_type=business`, the OutcomeRun MUST be `completed` with `reason_code=closed_confirmed`, and no `close_confirmation_required` row needs to have existed or be inserted
+
+#### Scenario: Not counted still cannot close
+- **WHEN** the actor confirms and no current `CashCount` exists
+- **THEN** the response MUST clarify with `cash_count_required`, the day MUST stay `open`, the OutcomeRun MUST stay `in_progress`, and no snapshot MUST be written
+
+#### Scenario: A missing outcome is inserted completed and the resolved work is linked
+- **WHEN** the initializer was skipped, no OutcomeRun exists, the open Daily Close WorkItem has `outcome_run_id` null, and `closing.confirm@1` commits
+- **THEN** one OutcomeRun MUST be inserted with `status=completed` and `ready_at` equal to `completed_at`, that resolved WorkItem's `outcome_run_id` MUST equal the new OutcomeRun id, exactly one `work_item.resolved` audit MUST exist for that close, and the link MUST NOT write `work_item.created` or a second `work_item.resolved`
+
+#### Scenario: Already closed read-back does not rewrite WorkItems
+- **WHEN** the day is already `closed` and a new confirm key returns the existing snapshot
+- **THEN** no additional WorkItem resolve audit MUST be written for that read-back and the OutcomeRun MUST NOT be completed a second time

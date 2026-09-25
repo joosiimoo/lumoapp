@@ -30,6 +30,7 @@ from app.api.schemas.errors import app_error_handler, http_exception_handler, un
 from app.application.pending import InMemoryPendingClarificationStore
 from app.application.workflows.outcomes import EmptyOutcomeEngine
 from app.bootstrap.settings import AppEnv, Settings, get_settings
+from app.domain.operations.daily_close_outcome import OUTCOME_DEFINITION_ID, daily_close_ready_definition
 from app.domain.shared.errors import AppError
 from app.infrastructure.persistence.engine import create_engine_from_settings, create_session_factory
 from app.infrastructure.persistence.seed import ensure_carrota_seed
@@ -78,7 +79,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.generative_ui_registry = ui_registry
     app.state.generative_ui_composer = GenerativeUIComposer(ui_registry)
     app.state.orchestrator = orchestrator
-    app.state.outcome_engine = EmptyOutcomeEngine()
+    outcome_engine = EmptyOutcomeEngine()
+    outcome_engine.register(OUTCOME_DEFINITION_ID, daily_close_ready_definition())
+    app.state.outcome_engine = outcome_engine
     app.state.llm_provider = provider
     app.state.policies = policies
     app.state.carrota_token = None

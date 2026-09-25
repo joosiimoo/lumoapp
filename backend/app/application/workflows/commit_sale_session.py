@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from app.application.ports import AuditService, IdempotencyService, IdentityPort, Outbox, SalesPort
-from app.application.workflows.sync_daily_close_work_items import sync_daily_close_work_items
+from app.application.workflows.sync_daily_close_outcome import maintain_open_daily_close
 from app.domain.operations import InvalidBusinessTimezone, business_date_for
 from app.infrastructure.persistence.base import utcnow
 from app.infrastructure.persistence.operations import OperationsRepository
@@ -402,7 +402,7 @@ class CommitSaleSession:
             event_type="payment.recorded",
             payload={"payment_id": str(payment.id), "sale_session_id": str(updated.id)},
         )
-        sync_daily_close_work_items(
+        maintain_open_daily_close(
             identities=self._identities,
             operations=self._operations,
             audit=self._audit,

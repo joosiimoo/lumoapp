@@ -49,7 +49,7 @@ def test_0010_creates_work_items_without_backfill_or_extra_schemas(migrated) -> 
 
     discard_work_items(migrated)
     command.downgrade(_config(), "0009_catalog_price_override")
-    command.upgrade(_config(), "head")
+    command.upgrade(_config(), "0010_work_items")
     with migrated.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0010_work_items"
         assert connection.execute(text("SELECT to_regclass('operations.work_items')")).scalar_one() is not None
@@ -125,6 +125,9 @@ def test_0010_creates_work_items_without_backfill_or_extra_schemas(migrated) -> 
 
 
 def test_downgrade_aborts_while_a_work_item_exists(migrated) -> None:
+    from tests.sale_cleanup import discard_work_items
+
+    discard_work_items(migrated)
     with migrated.begin() as connection:
         connection.execute(text("ALTER TABLE identity.businesses DISABLE ROW LEVEL SECURITY"))
         connection.execute(text("ALTER TABLE operations.operational_days DISABLE ROW LEVEL SECURITY"))
@@ -184,7 +187,7 @@ def test_downgrade_aborts_while_a_work_item_exists(migrated) -> None:
     with pytest.raises(Exception, match="cannot downgrade 0010 while a work item exists"):
         command.downgrade(_config(), "0009_catalog_price_override")
     with migrated.connect() as connection:
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0010_work_items"
-    from tests.sale_cleanup import discard_work_items
-
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            "0011_daily_close_outcome"
+        )
     discard_work_items(migrated)

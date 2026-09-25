@@ -17,6 +17,7 @@ from app.infrastructure.persistence.models import (
     ClosingSnapshotRow,
     IdempotencyRecordRow,
     OperationalDayRow,
+    OutcomeRunRow,
     OutboxEventRow,
     PaymentRow,
     SaleItemRow,
@@ -35,6 +36,8 @@ SALE_AUDIT_ACTIONS = (
     "closing.confirm@1",
     "work_item.created",
     "work_item.resolved",
+    "outcome_run.created",
+    "outcome_run.status_changed",
 )
 SALE_OUTBOX_EVENTS = (
     "sale.item.added",
@@ -61,12 +64,17 @@ def discard_work_items(engine) -> None:
     from sqlalchemy import text
 
     with engine.begin() as connection:
-        if connection.execute(text("SELECT to_regclass('operations.work_items')")).scalar() is None:
+        if connection.execute(text("SELECT to_regclass('operations.work_items')")).scalar() is not None:
+            connection.execute(text("ALTER TABLE operations.work_items DISABLE ROW LEVEL SECURITY"))
+            connection.execute(text("DELETE FROM operations.work_items"))
+            connection.execute(text("ALTER TABLE operations.work_items ENABLE ROW LEVEL SECURITY"))
+            connection.execute(text("ALTER TABLE operations.work_items FORCE ROW LEVEL SECURITY"))
+        if connection.execute(text("SELECT to_regclass('operations.outcome_runs')")).scalar() is None:
             return
-        connection.execute(text("ALTER TABLE operations.work_items DISABLE ROW LEVEL SECURITY"))
-        connection.execute(text("DELETE FROM operations.work_items"))
-        connection.execute(text("ALTER TABLE operations.work_items ENABLE ROW LEVEL SECURITY"))
-        connection.execute(text("ALTER TABLE operations.work_items FORCE ROW LEVEL SECURITY"))
+        connection.execute(text("ALTER TABLE operations.outcome_runs DISABLE ROW LEVEL SECURITY"))
+        connection.execute(text("DELETE FROM operations.outcome_runs"))
+        connection.execute(text("ALTER TABLE operations.outcome_runs ENABLE ROW LEVEL SECURITY"))
+        connection.execute(text("ALTER TABLE operations.outcome_runs FORCE ROW LEVEL SECURITY"))
 
 
 def isolate_database_for_0007_downgrade(engine) -> None:
@@ -128,6 +136,11 @@ def isolate_database_for_0007_downgrade(engine) -> None:
             connection.execute(text("DELETE FROM operations.work_items"))
             connection.execute(text("ALTER TABLE operations.work_items ENABLE ROW LEVEL SECURITY"))
             connection.execute(text("ALTER TABLE operations.work_items FORCE ROW LEVEL SECURITY"))
+        if connection.execute(text("SELECT to_regclass('operations.outcome_runs')")).scalar() is not None:
+            connection.execute(text("ALTER TABLE operations.outcome_runs DISABLE ROW LEVEL SECURITY"))
+            connection.execute(text("DELETE FROM operations.outcome_runs"))
+            connection.execute(text("ALTER TABLE operations.outcome_runs ENABLE ROW LEVEL SECURITY"))
+            connection.execute(text("ALTER TABLE operations.outcome_runs FORCE ROW LEVEL SECURITY"))
         if connection.execute(text("SELECT to_regclass('operations.closing_snapshots')")).scalar() is None:
             return
         connection.execute(text("ALTER TABLE operations.closing_snapshots DISABLE ROW LEVEL SECURITY"))
@@ -146,9 +159,10 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(PaymentRow.__table__.delete().where(PaymentRow.business_id == business_id))
     session.execute(SaleItemRow.__table__.delete().where(SaleItemRow.business_id == business_id))
     session.execute(SaleSessionRow.__table__.delete().where(SaleSessionRow.business_id == business_id))
+    session.execute(WorkItemRow.__table__.delete().where(WorkItemRow.business_id == business_id))
+    session.execute(OutcomeRunRow.__table__.delete().where(OutcomeRunRow.business_id == business_id))
     session.execute(ClosingSnapshotRow.__table__.delete().where(ClosingSnapshotRow.business_id == business_id))
     session.execute(CashCountRow.__table__.delete().where(CashCountRow.business_id == business_id))
-    session.execute(WorkItemRow.__table__.delete().where(WorkItemRow.business_id == business_id))
     session.execute(OperationalDayRow.__table__.delete().where(OperationalDayRow.business_id == business_id))
     session.execute(
         OutboxEventRow.__table__.delete().where(
@@ -317,4 +331,39 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
         snap = payload.get("closing_snapshot_id")
         if snap and snap not in {str(row.id) for row in snapshots}:
             orphans.append(f"audit:{event.id}:missing_snapshot={snap}")
+    outcomes = session.scalars(select(OutcomeRunRow).where(OutcomeRunRow.business_id == business_id)).all()
+    work_items = session.scalars(select(WorkItemRow).where(WorkItemRow.business_id == business_id)).all()
+    snapshot_ids = {str(row.id) for row in snapshots}
+    snapshots_by_day = {str(row.operational_day_id): str(row.id) for row in snapshots}
+    identity_counts: dict[tuple[str, str, int], int] = {}
+    for run in outcomes:
+        day_key = str(run.operational_day_id)
+        identity = (day_key, run.outcome_type, run.outcome_version)
+        identity_counts[identity] = identity_counts.get(identity, 0) + 1
+        day = days_by_id.get(day_key)
+        if day is None or day.business_id != run.business_id:
+            orphans.append(f"outcome:{run.id}:missing_or_cross_tenant_day={run.operational_day_id}")
+            continue
+        if run.status == "completed":
+            if day.status != "closed":
+                orphans.append(f"outcome:{run.id}:completed_on_open_day")
+            if run.completed_at is None or run.ready_at is None:
+                orphans.append(f"outcome:{run.id}:completed_timestamps")
+            if run.reason_code != "closed_confirmed":
+                orphans.append(f"outcome:{run.id}:completed_reason")
+            expected_snapshot = snapshots_by_day.get(day_key)
+            if run.closing_snapshot_id is None or str(run.closing_snapshot_id) != expected_snapshot:
+                orphans.append(f"outcome:{run.id}:snapshot_mismatch")
+            elif str(run.closing_snapshot_id) not in snapshot_ids:
+                orphans.append(f"outcome:{run.id}:missing_snapshot")
+            if any(
+                item.operational_day_id == run.operational_day_id and item.status == "open"
+                for item in work_items
+            ):
+                orphans.append(f"outcome:{run.id}:open_work_item")
+        if day.status == "open" and run.status == "completed":
+            orphans.append(f"outcome:{run.id}:open_day_completed")
+    for identity, count in identity_counts.items():
+        if count > 1:
+            orphans.append(f"outcome:day={identity[0]}:rows={count}")
     return orphans

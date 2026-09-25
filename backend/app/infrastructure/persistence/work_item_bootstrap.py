@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
-from app.application.workflows.sync_daily_close_work_items import sync_daily_close_work_items
+from app.application.workflows.sync_daily_close_outcome import maintain_open_daily_close
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.audit import SqlAlchemyAuditService
 from app.infrastructure.persistence.engine import create_session_factory
@@ -15,6 +15,7 @@ from app.infrastructure.persistence.repositories import IdentityRepository
 
 _BOOTSTRAP_ACTOR = UUID(int=0)
 _ROUTE = "work_item.bootstrap"
+_OUTCOME_ROUTE = "outcome_run.bootstrap"
 _ORIGIN = "rollout_bootstrap"
 
 
@@ -42,7 +43,7 @@ def bootstrap_open_today_work_items(*, admin_url: str, now: datetime | None = No
 
 def _initialize_one(session: Session, *, business_id: UUID, now: datetime | None) -> int:
     tenant = TenantContext(business_id=business_id, actor_id=_BOOTSTRAP_ACTOR)
-    return sync_daily_close_work_items(
+    return maintain_open_daily_close(
         identities=IdentityRepository(session),
         operations=OperationsRepository(session),
         audit=SqlAlchemyAuditService(session),
@@ -51,7 +52,7 @@ def _initialize_one(session: Session, *, business_id: UUID, now: datetime | None
         correlation_id=_ROUTE,
         idempotency_key=None,
         route_or_tool=_ROUTE,
-        closing=False,
+        outcome_route_or_tool=_OUTCOME_ROUTE,
         origin=_ORIGIN,
         omit_actor=True,
     )

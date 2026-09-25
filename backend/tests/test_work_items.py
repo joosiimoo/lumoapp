@@ -186,7 +186,12 @@ def test_pending_work_phrases_are_exact() -> None:
 
 def test_nba_policy_denies_model_amounts() -> None:
     engine = FoundationPolicyEngine()
-    for arguments in ({"expected_cash": "1.00"}, {"priority": "critical"}, {"work_item_id": "x"}):
+    for arguments in (
+        {"expected_cash": "1.00"},
+        {"priority": "critical"},
+        {"work_item_id": "x"},
+        {"outcome_run_id": "x"},
+    ):
         decision = engine.evaluate(
             PolicyRequest(
                 action="execute_tool",

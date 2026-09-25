@@ -45,6 +45,7 @@ def sync_daily_close_work_items(
     closing: bool = False,
     origin: str | None = None,
     omit_actor: bool = False,
+    outcome_run_id: UUID | None = None,
 ) -> int:
     """Reconcile today's Daily Close WorkItems inside the caller's transaction.
 
@@ -139,6 +140,7 @@ def sync_daily_close_work_items(
         evidence=evidence,
         created_at=instant,
         updated_at=instant,
+        outcome_run_id=outcome_run_id,
     )
     stored = operations.insert_work_item(tenant=tenant, work_item=created)
     _audit_created(

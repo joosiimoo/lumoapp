@@ -130,23 +130,23 @@ Build A MUST expose exactly one `LumoOrchestrator` port. The orchestrator MAY lo
 - **THEN** the decision MUST be `deny` under `CLOSE-003` and no snapshot MUST be written
 
 ### Requirement: OutcomeEngine contract
-`OutcomeEngine` MUST accept versioned outcome definitions and evaluate gates deterministically from confirmed state. The LLM MUST NOT overwrite a gate result. The engine port MUST exist with an empty definition registry. This change MUST NOT register `daily_sales_operations_ready@1` or `daily_close_ready@1`, and cash-count, preparation, or close-confirmation activity MUST NOT mark any outcome ready.
+`OutcomeEngine` MUST accept versioned outcome definitions and evaluate gates deterministically from confirmed state. The LLM MUST NOT overwrite a gate result. The engine port MUST register `daily_close_ready@1` as specified by `daily-close-outcome` and MUST NOT register `daily_sales_operations_ready@1`. `evaluate` MUST ignore model text. An unknown outcome id MUST return the evaluation verdict `not_ready` and MUST NOT write. `not_ready` MUST NOT be an `OutcomeRun.status`, a persisted reason, or a value of the `operations.outcome_runs` status check. Persisted statuses MUST remain `in_progress`, `ready`, and `completed`. Evaluating `daily_close_ready@1` MUST return one of those three predicate statuses and MUST NOT insert or update an OutcomeRun. Cash-count, preparation, and close-confirmation activity MUST change an OutcomeRun only through the write hooks in `daily-close-outcome`, not through `evaluate`.
 
 #### Scenario: Unknown outcome fails closed
-- **WHEN** a caller evaluates `daily_close_ready@1` before it is registered
-- **THEN** the engine MUST NOT mark the outcome ready
+- **WHEN** a caller evaluates `daily_sales_operations_ready@1`
+- **THEN** the engine MUST return the evaluation verdict `not_ready`, MUST NOT write an OutcomeRun, and MUST NOT store `not_ready` as a status or reason
 
 #### Scenario: Model text cannot complete a gate
 - **WHEN** a model response claims an outcome is complete
-- **THEN** the engine MUST ignore that claim and use only registered gate functions
+- **THEN** the engine MUST ignore that claim and use only the registered gate function
 
-#### Scenario: Balanced cash does not complete an outcome
+#### Scenario: Balanced cash is ready only through the write hook
 - **WHEN** a balanced cash count is recorded for today's OperationalDay
-- **THEN** the definition registry MUST remain empty, no OutcomeRun MUST be created, and no gate MUST report ready
+- **THEN** the persisted OutcomeRun MUST be `ready` because the cash-count transaction ran the write hook, and a later `evaluate` call MUST NOT insert a second row
 
-#### Scenario: Confirmed close does not create an outcome
+#### Scenario: Confirmed close completes the registered outcome
 - **WHEN** `closing.confirm@1` commits a snapshot
-- **THEN** no OutcomeRun MUST be created and `daily_close_ready@1` MUST remain unregistered
+- **THEN** the persisted OutcomeRun MUST be `completed` and `daily_close_ready.execute@1` MUST remain unregistered
 
 ### Requirement: Backend generative UI contracts
 The backend MUST expose `GenerativeUIRegistry` and `GenerativeUIComposer` ports. The shared versioned contract is `component`, `version`, `data`, `actions`, and `fallback_text`. Actions MUST carry opaque `action_id`, optional `option_id`, `context_token`, and an idempotency key. `GenerativeUIRegistry` MUST include `sale_item_added@1`, `sale_summary@1`, `sale_confirmed@1`, `operational_day_summary@1`, `daily_close_preparation@1`, and `daily_close_confirmed@1`, and MUST NOT include `closing_ready_card`, `cash_difference_card`, `daily_summary_card`, `sale_confirmed_card`, or `sale_completed`. `GenerativeUIComposer` MUST validate against the registry and emit only registered versioned contracts. The backend MUST NOT render widgets. Component versions MUST remain `1`. `actions` MUST remain optional: an empty array is valid. `sale_summary@1` MUST emit `sale.pay.cash@1`, `sale.pay.card@1`, and `sale.pay.transfer@1` only while the session is `ready_to_charge`. `sale_confirmed@1`, `sale_item_added@1`, `operational_day_summary@1`, and `daily_close_confirmed@1` MUST keep `actions` empty. `daily_close_preparation@1` MUST emit `closing.request@1` only for a counted open day with `cash_status` `balanced`, `short`, or `over` and a null confirmation token, and MUST emit only `closing.confirm@1` after `request_close` issues a token. It MUST emit no actions when `cash_status` is `not_counted`, when no day exists, or when no current cash count exists. The close confirmation token MUST be the `closing.confirm@1` action `context_token` and MUST also be copied to `data.confirmation_token`. Those two strings MUST be equal. `fallback_text` MUST remain present and MUST NOT contain the token.
@@ -232,12 +232,12 @@ The daily sales file MUST be produced only by the deterministic HTTP read in `da
 - **THEN** that text MUST NOT be stored or returned as the sales export
 
 ### Requirement: Next Best Action tool and component are registered
-`ToolRegistry` MUST include `operational_day.next_best_action@1` as specified by `next-best-action`. `PolicyEngine` MUST include `NBA-001`. `GenerativeUIRegistry` MUST include `next_best_action` version `1`. `UiActionRegistry` MUST NOT gain an action id. `closing.reopen@1`, `operational_day.export_sales@1`, and `payment.resolve` MUST remain unregistered. The outcome definition registry MUST remain empty of `daily_close_ready@1`; the projection constant `outcome_type=daily_close_ready` MUST NOT insert an OutcomeRun.
+`ToolRegistry` MUST include `operational_day.next_best_action@1` as specified by `next-best-action`. `PolicyEngine` MUST include `NBA-001`. `GenerativeUIRegistry` MUST include `next_best_action` version `1`. `UiActionRegistry` MUST NOT gain an action id. `closing.reopen@1`, `operational_day.export_sales@1`, `payment.resolve`, and `daily_close_ready.execute@1` MUST remain unregistered. The outcome definition registry MUST contain `daily_close_ready@1`. Projecting `outcome_type=daily_close_ready` MUST NOT by itself insert an OutcomeRun.
 
 #### Scenario: Boot catalog gains the read tool and the card
 - **WHEN** the application boots
-- **THEN** `ToolRegistry` MUST report `operational_day.next_best_action@1`, `GenerativeUIRegistry` MUST report `next_best_action` version `1`, and `UiActionRegistry` MUST still contain exactly `sale.pay.cash@1`, `sale.pay.card@1`, `sale.pay.transfer@1`, `closing.request@1`, and `closing.confirm@1`
+- **THEN** `ToolRegistry` MUST report `operational_day.next_best_action@1`, `GenerativeUIRegistry` MUST report `next_best_action` version `1`, the outcome registry MUST report `daily_close_ready@1`, and `UiActionRegistry` MUST still contain exactly `sale.pay.cash@1`, `sale.pay.card@1`, `sale.pay.transfer@1`, `closing.request@1`, and `closing.confirm@1`
 
-#### Scenario: OutcomeRun stays absent
-- **WHEN** a Next Best Action is projected for an open day
-- **THEN** no OutcomeRun row MUST be created
+#### Scenario: A projection does not create an outcome
+- **WHEN** a Next Best Action is projected for an open day that already has an OutcomeRun
+- **THEN** no additional OutcomeRun row MUST be created

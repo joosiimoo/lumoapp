@@ -11,7 +11,7 @@ from app.application.workflows.get_daily_close_preparation import (
     build_close_preparation,
     business_date_now,
 )
-from app.application.workflows.sync_daily_close_work_items import sync_daily_close_work_items
+from app.application.workflows.sync_daily_close_outcome import maintain_open_daily_close
 from app.domain.operations import CashCount, CashCountSource, OperationalDayStatus, parse_counted_amount
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
@@ -227,7 +227,7 @@ class RecordCashCount:
                 "supersedes_cash_count_id": payload["supersedes_cash_count_id"],
             },
         )
-        sync_daily_close_work_items(
+        maintain_open_daily_close(
             identities=self._identities,
             operations=self._operations,
             audit=self._audit,

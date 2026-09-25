@@ -253,6 +253,12 @@ class ClosingSnapshotRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         UniqueConstraint("operational_day_id", name="uq_closing_snapshots_operational_day"),
         UniqueConstraint("id", "business_id", name="uq_closing_snapshots_id_business"),
+        UniqueConstraint(
+            "id",
+            "business_id",
+            "operational_day_id",
+            name="uq_closing_snapshots_id_business_day",
+        ),
         UniqueConstraint("cash_count_id", name="uq_closing_snapshots_cash_count"),
         Index("ix_closing_snapshots_business_id", "business_id"),
         CheckConstraint("sale_count >= 0", name="ck_closing_snapshots_sale_count"),
@@ -366,6 +372,15 @@ class WorkItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             ["operations.operational_days.id", "operations.operational_days.business_id"],
             name="fk_work_items_operational_day",
         ),
+        ForeignKeyConstraint(
+            ["outcome_run_id", "business_id", "operational_day_id"],
+            [
+                "operations.outcome_runs.id",
+                "operations.outcome_runs.business_id",
+                "operations.outcome_runs.operational_day_id",
+            ],
+            name="fk_work_items_outcome_run",
+        ),
         {"schema": "operations"},
     )
 
@@ -382,6 +397,91 @@ class WorkItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     resolution_actor_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     resolved_by_actor_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     resolution_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    outcome_run_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+
+
+class OutcomeRunRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "outcome_runs"
+    __table_args__ = (
+        UniqueConstraint("id", "business_id", name="uq_outcome_runs_id_business"),
+        UniqueConstraint(
+            "id",
+            "business_id",
+            "operational_day_id",
+            name="uq_outcome_runs_id_business_day",
+        ),
+        UniqueConstraint(
+            "business_id",
+            "operational_day_id",
+            "outcome_type",
+            "outcome_version",
+            name="uq_outcome_runs_identity",
+        ),
+        Index("ix_outcome_runs_business_id", "business_id"),
+        CheckConstraint("outcome_type = 'daily_close_ready'", name="ck_outcome_runs_type"),
+        CheckConstraint("outcome_version = 1", name="ck_outcome_runs_version"),
+        CheckConstraint("owner_type = 'business'", name="ck_outcome_runs_owner"),
+        CheckConstraint(
+            "status IN ('in_progress', 'ready', 'completed')",
+            name="ck_outcome_runs_status",
+        ),
+        CheckConstraint(
+            "reason_code IN ("
+            "'awaiting_cash_count', 'ready_balanced', 'ready_cash_short', "
+            "'ready_cash_over', 'closed_confirmed')",
+            name="ck_outcome_runs_reason",
+        ),
+        CheckConstraint("jsonb_typeof(evidence) = 'object'", name="ck_outcome_runs_evidence_object"),
+        CheckConstraint(
+            "("
+            "status = 'in_progress' AND reason_code = 'awaiting_cash_count' "
+            "AND ready_at IS NULL AND completed_at IS NULL AND closing_snapshot_id IS NULL "
+            "AND evidence->>'cash_status' = 'not_counted' "
+            "AND NOT (evidence ? 'current_cash_count_id')"
+            ") OR ("
+            "status = 'ready' AND ready_at IS NOT NULL AND completed_at IS NULL "
+            "AND closing_snapshot_id IS NULL AND ("
+            "(reason_code = 'ready_balanced' AND evidence->>'cash_status' = 'balanced') "
+            "OR (reason_code = 'ready_cash_short' AND evidence->>'cash_status' = 'short') "
+            "OR (reason_code = 'ready_cash_over' AND evidence->>'cash_status' = 'over')"
+            ") AND evidence ? 'current_cash_count_id'"
+            ") OR ("
+            "status = 'completed' AND reason_code = 'closed_confirmed' "
+            "AND ready_at IS NOT NULL AND completed_at IS NOT NULL "
+            "AND closing_snapshot_id IS NOT NULL "
+            "AND evidence->>'cash_status' IN ('balanced', 'short', 'over') "
+            "AND evidence ? 'current_cash_count_id'"
+            ")",
+            name="ck_outcome_runs_state",
+        ),
+        ForeignKeyConstraint(
+            ["operational_day_id", "business_id"],
+            ["operations.operational_days.id", "operations.operational_days.business_id"],
+            name="fk_outcome_runs_operational_day",
+        ),
+        ForeignKeyConstraint(
+            ["closing_snapshot_id", "business_id", "operational_day_id"],
+            [
+                "operations.closing_snapshots.id",
+                "operations.closing_snapshots.business_id",
+                "operations.closing_snapshots.operational_day_id",
+            ],
+            name="fk_outcome_runs_closing_snapshot",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    operational_day_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    outcome_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    owner_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    reason_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    ready_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closing_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
 
 
 class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):

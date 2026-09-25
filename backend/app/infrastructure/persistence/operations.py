@@ -9,6 +9,8 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.domain.operations import (
+    OUTCOME_TYPE_DAILY_CLOSE_READY,
+    OUTCOME_VERSION,
     CashCount,
     CashCountSource,
     CashStatus,
@@ -16,6 +18,8 @@ from app.domain.operations import (
     DaySummaryTotals,
     OperationalDay,
     OperationalDayStatus,
+    OutcomeRun,
+    OutcomeRunStatus,
     ResolutionActorType,
     ResolutionCode,
     WorkItem,
@@ -31,6 +35,7 @@ from app.infrastructure.persistence.models import (
     CashCountRow,
     ClosingSnapshotRow,
     OperationalDayRow,
+    OutcomeRunRow,
     PaymentRow,
     SaleSessionRow,
     WorkItemRow,
@@ -371,6 +376,7 @@ class OperationsRepository:
             resolution_actor_type=None,
             resolved_by_actor_id=None,
             resolution_code=None,
+            outcome_run_id=work_item.outcome_run_id,
         )
         self._session.add(row)
         self._session.flush()
@@ -450,6 +456,138 @@ class OperationsRepository:
             raise ValidationAppError("resolved work item could not be read")
         return _to_work_item(row)
 
+    def get_daily_close_outcome(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+    ) -> OutcomeRun | None:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(OutcomeRunRow).where(
+                OutcomeRunRow.business_id == tenant.business_id,
+                OutcomeRunRow.operational_day_id == operational_day_id,
+                OutcomeRunRow.outcome_type == OUTCOME_TYPE_DAILY_CLOSE_READY,
+                OutcomeRunRow.outcome_version == OUTCOME_VERSION,
+            )
+        )
+        return _to_outcome(row) if row is not None else None
+
+    def insert_daily_close_outcome(self, *, tenant: TenantContext, outcome: OutcomeRun) -> OutcomeRun:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        if outcome.business_id != tenant.business_id:
+            raise TenantScopeViolationError("outcome business does not match the tenant")
+        row = OutcomeRunRow(
+            id=outcome.id,
+            business_id=tenant.business_id,
+            operational_day_id=outcome.operational_day_id,
+            outcome_type=outcome.outcome_type,
+            outcome_version=outcome.outcome_version,
+            status=outcome.status.value,
+            owner_type=outcome.owner_type,
+            reason_code=outcome.reason_code,
+            evidence=dict(outcome.evidence),
+            created_at=outcome.created_at,
+            updated_at=outcome.updated_at,
+            ready_at=outcome.ready_at,
+            completed_at=outcome.completed_at,
+            closing_snapshot_id=outcome.closing_snapshot_id,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _to_outcome(row)
+
+    def update_daily_close_outcome_evidence(
+        self,
+        *,
+        tenant: TenantContext,
+        outcome_run_id: UUID,
+        evidence: dict,
+        updated_at: datetime,
+    ) -> OutcomeRun:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._require_outcome(tenant, outcome_run_id)
+        if dict(row.evidence) == evidence:
+            return _to_outcome(row)
+        row.evidence = evidence
+        row.updated_at = updated_at
+        self._session.flush()
+        return _to_outcome(row)
+
+    def update_daily_close_outcome_status(
+        self,
+        *,
+        tenant: TenantContext,
+        outcome_run_id: UUID,
+        status: OutcomeRunStatus,
+        reason_code: str,
+        evidence: dict,
+        ready_at: datetime | None,
+        completed_at: datetime | None,
+        closing_snapshot_id: UUID | None,
+        updated_at: datetime,
+    ) -> OutcomeRun:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._require_outcome(tenant, outcome_run_id)
+        unchanged = (
+            row.status == status.value
+            and row.reason_code == reason_code
+            and dict(row.evidence) == evidence
+            and row.ready_at == ready_at
+            and row.completed_at == completed_at
+            and row.closing_snapshot_id == closing_snapshot_id
+        )
+        if unchanged:
+            return _to_outcome(row)
+        row.status = status.value
+        row.reason_code = reason_code
+        row.evidence = evidence
+        row.ready_at = ready_at
+        row.completed_at = completed_at
+        row.closing_snapshot_id = closing_snapshot_id
+        row.updated_at = updated_at
+        self._session.flush()
+        return _to_outcome(row)
+
+    def link_null_work_items(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+        outcome_run_id: UUID,
+    ) -> int:
+        """Stamp outcome_run_id on rows that are still null. Nothing else changes."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        result = self._session.execute(
+            update(WorkItemRow)
+            .where(
+                WorkItemRow.business_id == tenant.business_id,
+                WorkItemRow.operational_day_id == operational_day_id,
+                WorkItemRow.outcome_run_id.is_(None),
+            )
+            .values(outcome_run_id=outcome_run_id)
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount:
+            self._session.expire_all()
+        return result.rowcount or 0
+
+    def _require_outcome(self, tenant: TenantContext, outcome_run_id: UUID) -> OutcomeRunRow:
+        row = self._session.scalar(
+            select(OutcomeRunRow).where(
+                OutcomeRunRow.id == outcome_run_id,
+                OutcomeRunRow.business_id == tenant.business_id,
+            )
+        )
+        if row is None:
+            raise ValidationAppError("outcome run could not be updated")
+        return row
+
 
 def _money(amount: Decimal | int | str, currency: str) -> str:
     if isinstance(amount, float):
@@ -522,6 +660,26 @@ def _to_work_item(row: WorkItemRow) -> WorkItem:
         resolution_actor_type=actor_type,
         resolved_by_actor_id=row.resolved_by_actor_id,
         resolution_code=code,
+        outcome_run_id=row.outcome_run_id,
+    )
+
+
+def _to_outcome(row: OutcomeRunRow) -> OutcomeRun:
+    return OutcomeRun(
+        id=row.id,
+        business_id=row.business_id,
+        operational_day_id=row.operational_day_id,
+        outcome_type=row.outcome_type,
+        outcome_version=row.outcome_version,
+        status=OutcomeRunStatus(row.status),
+        owner_type=row.owner_type,
+        reason_code=row.reason_code,
+        evidence=dict(row.evidence),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        ready_at=row.ready_at,
+        completed_at=row.completed_at,
+        closing_snapshot_id=row.closing_snapshot_id,
     )
 
 

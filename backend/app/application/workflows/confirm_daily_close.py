@@ -12,6 +12,7 @@ from app.application.closing_confirmation_token import (
     verify_closing_confirmation_token,
 )
 from app.application.ports import AuditService, IdempotencyService, IdentityPort, Outbox
+from app.application.workflows.sync_daily_close_outcome import sync_daily_close_outcome
 from app.application.workflows.sync_daily_close_work_items import sync_daily_close_work_items
 from app.application.workflows.get_daily_close_preparation import (
     CASH_COUNT_REQUIRED_TEXT,
@@ -228,6 +229,23 @@ class ConfirmDailyClose:
             route_or_tool="closing.confirm@1",
             closing=True,
         )
+        completed = sync_daily_close_outcome(
+            identities=self._identities,
+            operations=self._operations,
+            audit=self._audit,
+            tenant=tenant,
+            now=instant,
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            route_or_tool="closing.confirm@1",
+            closing=True,
+        )
+        if completed is not None:
+            self._operations.link_null_work_items(
+                tenant=tenant,
+                operational_day_id=completed.operational_day_id,
+                outcome_run_id=completed.id,
+            )
         payload = build_confirmed_close(snapshot)
         policy_payload = policy.model_dump() if policy is not None and hasattr(policy, "model_dump") else None
         self._audit.record(
