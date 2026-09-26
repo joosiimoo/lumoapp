@@ -1,4 +1,18 @@
 from app.domain.operations.business_date import InvalidBusinessTimezone, business_date_for
+from app.domain.operations.business_event import (
+    BusinessEvent,
+    BusinessEventSourceType,
+    BusinessEventType,
+    SourceEntityType,
+)
+from app.domain.operations.source_coverage import (
+    LIMITATION_ONLY_LUMO_REGISTERED_OPERATIONS,
+    CoverageDomain,
+    CoverageSourceType,
+    CoverageStatus,
+    SourceCoverageRecord,
+    recorded_operations_declaration,
+)
 from app.domain.operations.cash_count import (
     CashCount,
     CashCountSource,
@@ -41,7 +55,14 @@ from app.domain.operations.work_item import (
 )
 
 __all__ = [
+    "BusinessEvent",
+    "BusinessEventSourceType",
+    "BusinessEventType",
     "CashCount",
+    "CoverageDomain",
+    "CoverageSourceType",
+    "CoverageStatus",
+    "LIMITATION_ONLY_LUMO_REGISTERED_OPERATIONS",
     "CashCountSource",
     "CashStatus",
     "ClosingSnapshot",
@@ -63,6 +84,8 @@ __all__ = [
     "ResolutionActorType",
     "ResolutionCode",
     "SOURCE_DAILY_CLOSE_RULE",
+    "SourceCoverageRecord",
+    "SourceEntityType",
     "WorkItem",
     "WorkItemPriority",
     "WorkItemStatus",
@@ -79,5 +102,6 @@ __all__ = [
     "preparation_fingerprint",
     "priority_for",
     "reason_code_for",
+    "recorded_operations_declaration",
     "resolution_for",
 ]

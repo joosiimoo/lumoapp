@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.infrastructure.persistence.models import (
     AuditEventRow,
+    BusinessEventRow,
     CashCountRow,
     ClosingSnapshotRow,
     IdempotencyRecordRow,
@@ -22,6 +23,7 @@ from app.infrastructure.persistence.models import (
     PaymentRow,
     SaleItemRow,
     SaleSessionRow,
+    SourceCoverageRecordRow,
     WorkItemRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
@@ -59,11 +61,24 @@ SALE_OUTBOX_EVENT = "sale.item.added"
 SALE_MESSAGE_OPERATION = "lumo.message.add_sale_item"
 
 
+def _purge_rls_table(connection, table: str) -> None:
+    from sqlalchemy import text
+
+    if connection.execute(text("SELECT to_regclass(:name)"), {"name": table}).scalar() is None:
+        return
+    connection.execute(text(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY"))
+    connection.execute(text(f"DELETE FROM {table}"))
+    connection.execute(text(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"))
+    connection.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+
+
 def discard_work_items(engine) -> None:
     """Test isolation. Product downgrade still aborts while any WorkItem exists."""
     from sqlalchemy import text
 
     with engine.begin() as connection:
+        _purge_rls_table(connection, "operations.business_events")
+        _purge_rls_table(connection, "operations.source_coverage_records")
         if connection.execute(text("SELECT to_regclass('operations.work_items')")).scalar() is not None:
             connection.execute(text("ALTER TABLE operations.work_items DISABLE ROW LEVEL SECURITY"))
             connection.execute(text("DELETE FROM operations.work_items"))
@@ -86,6 +101,8 @@ def isolate_database_for_0007_downgrade(engine) -> None:
     from sqlalchemy import text
 
     with engine.begin() as connection:
+        _purge_rls_table(connection, "operations.business_events")
+        _purge_rls_table(connection, "operations.source_coverage_records")
         has_sale_items = connection.execute(text("SELECT to_regclass('sales.sale_items')")).scalar()
         if has_sale_items is not None:
             has_reason = connection.execute(
@@ -163,6 +180,10 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(OutcomeRunRow.__table__.delete().where(OutcomeRunRow.business_id == business_id))
     session.execute(ClosingSnapshotRow.__table__.delete().where(ClosingSnapshotRow.business_id == business_id))
     session.execute(CashCountRow.__table__.delete().where(CashCountRow.business_id == business_id))
+    session.execute(BusinessEventRow.__table__.delete().where(BusinessEventRow.business_id == business_id))
+    session.execute(
+        SourceCoverageRecordRow.__table__.delete().where(SourceCoverageRecordRow.business_id == business_id)
+    )
     session.execute(OperationalDayRow.__table__.delete().where(OperationalDayRow.business_id == business_id))
     session.execute(
         OutboxEventRow.__table__.delete().where(

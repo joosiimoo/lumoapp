@@ -297,7 +297,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
         ).scalar_one()
         seeded = _seed_day_with_cash_sale(connection)
     command.upgrade(_config(), "head")
-    assert _revision(at_0005) == "0011_daily_close_outcome"
+    assert _revision(at_0005) == "0012_source_coverage_event_memory"
     business_id = seeded["business_id"]
     with at_0005.begin() as connection:
         _tenant(connection, business_id)
@@ -384,7 +384,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
             {"b": business_id},
         ).scalar_one() == 1
     command.upgrade(_config(), "head")
-    assert _revision(at_0005) == "0011_daily_close_outcome"
+    assert _revision(at_0005) == "0012_source_coverage_event_memory"
 
 
 def test_supersede_constraints_are_composite_and_correctly_deferred(at_head) -> None:

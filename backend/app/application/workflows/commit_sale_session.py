@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from app.application.ports import AuditService, IdempotencyService, IdentityPort, Outbox, SalesPort
+from app.application.workflows.record_source_memory import record_confirmed_sale
 from app.application.workflows.sync_daily_close_outcome import maintain_open_daily_close
 from app.domain.operations import InvalidBusinessTimezone, business_date_for
 from app.infrastructure.persistence.base import utcnow
@@ -411,6 +412,18 @@ class CommitSaleSession:
             correlation_id=correlation_id,
             idempotency_key=idempotency_key,
             route_or_tool="sale.commit@1",
+        )
+        record_confirmed_sale(
+            operations=self._operations,
+            tenant=tenant,
+            operational_day_id=day.id,
+            sale_session_id=updated.id,
+            payment_id=payment.id,
+            payment_method=payment.method.value,
+            amount=payment.amount.amount,
+            currency=payment.amount.currency,
+            occurred_at=updated.confirmed_at,
+            created_at=instant,
         )
         if fail_after_write:
             raise RuntimeError("forced rollback")

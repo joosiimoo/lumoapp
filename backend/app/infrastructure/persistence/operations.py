@@ -11,10 +11,16 @@ from sqlalchemy.orm import Session
 from app.domain.operations import (
     OUTCOME_TYPE_DAILY_CLOSE_READY,
     OUTCOME_VERSION,
+    BusinessEvent,
+    BusinessEventSourceType,
+    BusinessEventType,
     CashCount,
     CashCountSource,
     CashStatus,
     ClosingSnapshot,
+    CoverageDomain,
+    CoverageSourceType,
+    CoverageStatus,
     DaySummaryTotals,
     OperationalDay,
     OperationalDayStatus,
@@ -22,6 +28,8 @@ from app.domain.operations import (
     OutcomeRunStatus,
     ResolutionActorType,
     ResolutionCode,
+    SourceCoverageRecord,
+    SourceEntityType,
     WorkItem,
     WorkItemPriority,
     WorkItemStatus,
@@ -32,12 +40,14 @@ from app.domain.shared.errors import TenantScopeViolationError, ValidationAppErr
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.models import (
+    BusinessEventRow,
     CashCountRow,
     ClosingSnapshotRow,
     OperationalDayRow,
     OutcomeRunRow,
     PaymentRow,
     SaleSessionRow,
+    SourceCoverageRecordRow,
     WorkItemRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
@@ -577,6 +587,101 @@ class OperationsRepository:
             self._session.expire_all()
         return result.rowcount or 0
 
+    def insert_source_coverage_if_absent(
+        self,
+        *,
+        tenant: TenantContext,
+        record: SourceCoverageRecord,
+    ) -> SourceCoverageRecord:
+        """Insert the coverage row when that identity is absent. Never update it."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        if record.business_id != tenant.business_id:
+            raise TenantScopeViolationError("source coverage business does not match the tenant")
+        self._session.execute(
+            insert(SourceCoverageRecordRow)
+            .values(
+                id=record.id,
+                business_id=tenant.business_id,
+                operational_day_id=record.operational_day_id,
+                domain=record.domain.value,
+                source_type=record.source_type.value,
+                status=record.status.value,
+                limitation_code=record.limitation_code,
+                created_at=record.created_at,
+            )
+            .on_conflict_do_nothing(constraint="uq_source_coverage_records_identity")
+        )
+        row = self._session.scalar(
+            select(SourceCoverageRecordRow).where(
+                SourceCoverageRecordRow.business_id == tenant.business_id,
+                SourceCoverageRecordRow.operational_day_id == record.operational_day_id,
+                SourceCoverageRecordRow.domain == record.domain.value,
+                SourceCoverageRecordRow.source_type == record.source_type.value,
+            )
+        )
+        if row is None:
+            raise ValidationAppError("source coverage could not be read")
+        return _to_source_coverage(row)
+
+    def list_source_coverage(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+    ) -> list[SourceCoverageRecord]:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        rows = self._session.scalars(
+            select(SourceCoverageRecordRow)
+            .where(
+                SourceCoverageRecordRow.business_id == tenant.business_id,
+                SourceCoverageRecordRow.operational_day_id == operational_day_id,
+            )
+            .order_by(SourceCoverageRecordRow.domain.asc(), SourceCoverageRecordRow.source_type.asc())
+        ).all()
+        return [_to_source_coverage(row) for row in rows]
+
+    def append_business_event(self, *, tenant: TenantContext, event: BusinessEvent) -> BusinessEvent:
+        """Append one immutable event. Product workflows do not update or delete it."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        if event.business_id != tenant.business_id:
+            raise TenantScopeViolationError("business event business does not match the tenant")
+        row = BusinessEventRow(
+            id=event.id,
+            business_id=tenant.business_id,
+            operational_day_id=event.operational_day_id,
+            event_type=event.event_type.value,
+            occurred_at=event.occurred_at,
+            source_type=event.source_type.value,
+            source_entity_type=event.source_entity_type.value,
+            source_entity_id=event.source_entity_id,
+            facts=dict(event.facts),
+            created_at=event.created_at,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return _to_business_event(row)
+
+    def list_business_events(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+    ) -> list[BusinessEvent]:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        rows = self._session.scalars(
+            select(BusinessEventRow)
+            .where(
+                BusinessEventRow.business_id == tenant.business_id,
+                BusinessEventRow.operational_day_id == operational_day_id,
+            )
+            .order_by(BusinessEventRow.occurred_at.asc(), BusinessEventRow.id.asc())
+        ).all()
+        return [_to_business_event(row) for row in rows]
+
     def _require_outcome(self, tenant: TenantContext, outcome_run_id: UUID) -> OutcomeRunRow:
         row = self._session.scalar(
             select(OutcomeRunRow).where(
@@ -692,6 +797,37 @@ def _to_day(row: OperationalDayRow) -> OperationalDay:
         timezone=row.timezone,
         created_at=row.created_at,
         updated_at=row.updated_at,
+    )
+
+
+def _to_source_coverage(row: SourceCoverageRecordRow) -> SourceCoverageRecord:
+    return SourceCoverageRecord(
+        id=row.id,
+        business_id=row.business_id,
+        operational_day_id=row.operational_day_id,
+        domain=CoverageDomain(row.domain),
+        source_type=CoverageSourceType(row.source_type),
+        status=CoverageStatus(row.status),
+        limitation_code=row.limitation_code,
+        created_at=row.created_at,
+    )
+
+
+def _to_business_event(row: BusinessEventRow) -> BusinessEvent:
+    facts = dict(row.facts)
+    if "sale_count" in facts and not isinstance(facts["sale_count"], bool):
+        facts["sale_count"] = int(facts["sale_count"])
+    return BusinessEvent(
+        id=row.id,
+        business_id=row.business_id,
+        operational_day_id=row.operational_day_id,
+        event_type=BusinessEventType(row.event_type),
+        occurred_at=row.occurred_at,
+        source_type=BusinessEventSourceType(row.source_type),
+        source_entity_type=SourceEntityType(row.source_entity_type),
+        source_entity_id=row.source_entity_id,
+        facts=facts,
+        created_at=row.created_at,
     )
 
 

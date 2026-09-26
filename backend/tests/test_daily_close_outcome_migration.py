@@ -28,6 +28,7 @@ def migrated():
 
 def test_0011_creates_outcome_runs_without_backfill(migrated) -> None:
     discard_work_items(migrated)
+    command.downgrade(_config(), "0011_daily_close_outcome")
     with migrated.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
             "0011_daily_close_outcome"
@@ -89,6 +90,8 @@ def test_0011_creates_outcome_runs_without_backfill(migrated) -> None:
             "operations.next_best_actions",
             "public.next_best_actions",
             "operations.source_coverage",
+            "operations.source_coverage_records",
+            "operations.business_events",
             "operations.event_memory",
             "operations.outcome_costs",
         ]
@@ -273,7 +276,7 @@ def test_downgrade_aborts_while_an_outcome_exists(migrated) -> None:
         command.downgrade(_config(), "0010_work_items")
     with migrated.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0011_daily_close_outcome"
+            "0012_source_coverage_event_memory"
         )
     discard_work_items(migrated)
     with migrated.begin() as connection:

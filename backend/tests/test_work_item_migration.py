@@ -188,6 +188,6 @@ def test_downgrade_aborts_while_a_work_item_exists(migrated) -> None:
         command.downgrade(_config(), "0009_catalog_price_override")
     with migrated.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0011_daily_close_outcome"
+            "0012_source_coverage_event_memory"
         )
     discard_work_items(migrated)

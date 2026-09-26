@@ -11,6 +11,7 @@ from app.application.workflows.get_daily_close_preparation import (
     build_close_preparation,
     business_date_now,
 )
+from app.application.workflows.record_source_memory import record_cash_count
 from app.application.workflows.sync_daily_close_outcome import maintain_open_daily_close
 from app.domain.operations import CashCount, CashCountSource, OperationalDayStatus, parse_counted_amount
 from app.domain.shared.ids import new_uuid7
@@ -236,6 +237,17 @@ class RecordCashCount:
             correlation_id=correlation_id,
             idempotency_key=idempotency_key,
             route_or_tool="closing.submit_cash_count@1",
+        )
+        record_cash_count(
+            operations=self._operations,
+            tenant=tenant,
+            operational_day_id=day.id,
+            cash_count_id=count.id,
+            expected_cash=expected_cash,
+            counted_cash=count.amount,
+            currency=count.currency,
+            occurred_at=count.counted_at,
+            created_at=instant,
         )
         if fail_after_write:
             raise RuntimeError("forced rollback")

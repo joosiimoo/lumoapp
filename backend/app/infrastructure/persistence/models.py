@@ -484,6 +484,72 @@ class OutcomeRunRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     closing_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
 
 
+class SourceCoverageRecordRow(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "source_coverage_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id",
+            "operational_day_id",
+            "domain",
+            "source_type",
+            name="uq_source_coverage_records_identity",
+        ),
+        Index("ix_source_coverage_records_business_id", "business_id"),
+        CheckConstraint("domain IN ('sales', 'cash_count')", name="ck_source_coverage_records_domain"),
+        CheckConstraint("source_type = 'manual_capture'", name="ck_source_coverage_records_source_type"),
+        CheckConstraint("status = 'observed'", name="ck_source_coverage_records_status"),
+        CheckConstraint(
+            "limitation_code = 'only_lumo_registered_operations'",
+            name="ck_source_coverage_records_limitation",
+        ),
+        ForeignKeyConstraint(
+            ["operational_day_id", "business_id"],
+            ["operations.operational_days.id", "operations.operational_days.business_id"],
+            name="fk_source_coverage_records_operational_day",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    operational_day_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    domain: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    limitation_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class BusinessEventRow(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "business_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id",
+            "event_type",
+            "source_entity_type",
+            "source_entity_id",
+            name="uq_business_events_source",
+        ),
+        Index("ix_business_events_business_day", "business_id", "operational_day_id"),
+        CheckConstraint("source_type = 'manual_capture'", name="ck_business_events_source_type"),
+        ForeignKeyConstraint(
+            ["operational_day_id", "business_id"],
+            ["operations.operational_days.id", "operations.operational_days.business_id"],
+            name="fk_business_events_operational_day",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    operational_day_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    source_entity_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    facts: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "sale_sessions"
     __table_args__ = (

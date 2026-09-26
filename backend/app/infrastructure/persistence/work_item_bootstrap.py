@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session
 
+from app.application.workflows.record_source_memory import ensure_recorded_coverage_for_open_today
 from app.application.workflows.sync_daily_close_outcome import maintain_open_daily_close
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.audit import SqlAlchemyAuditService
@@ -43,9 +44,11 @@ def bootstrap_open_today_work_items(*, admin_url: str, now: datetime | None = No
 
 def _initialize_one(session: Session, *, business_id: UUID, now: datetime | None) -> int:
     tenant = TenantContext(business_id=business_id, actor_id=_BOOTSTRAP_ACTOR)
-    return maintain_open_daily_close(
-        identities=IdentityRepository(session),
-        operations=OperationsRepository(session),
+    identities = IdentityRepository(session)
+    operations = OperationsRepository(session)
+    inserted = maintain_open_daily_close(
+        identities=identities,
+        operations=operations,
         audit=SqlAlchemyAuditService(session),
         tenant=tenant,
         now=now,
@@ -56,6 +59,13 @@ def _initialize_one(session: Session, *, business_id: UUID, now: datetime | None
         origin=_ORIGIN,
         omit_actor=True,
     )
+    ensure_recorded_coverage_for_open_today(
+        identities=identities,
+        operations=operations,
+        tenant=tenant,
+        now=now,
+    )
+    return inserted
 
 
 def _list_businesses(engine) -> list[tuple[UUID, str]]:

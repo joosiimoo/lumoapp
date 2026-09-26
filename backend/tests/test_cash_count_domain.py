@@ -282,6 +282,14 @@ class _SpyOperations:
         self.current = cash_count
         return cash_count
 
+    def insert_source_coverage_if_absent(self, *, tenant, record):  # noqa: ANN001
+        self.calls.append("insert_source_coverage")
+        return record
+
+    def append_business_event(self, *, tenant, event):  # noqa: ANN001
+        self.calls.append("append_business_event")
+        return event
+
     def list_open_work_items(self, **_kwargs):
         self.calls.append("list_open_work_items")
         return [item for item in self.work_items if item.status.value == "open"]
