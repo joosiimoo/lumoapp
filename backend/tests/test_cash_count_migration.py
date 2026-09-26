@@ -18,6 +18,8 @@ from app.infrastructure.persistence.models import CashCountRow
 from tests.conftest import DEFAULT_ADMIN_URL, DEFAULT_APP_URL, TEST_SECRET, postgres_available, settings_kwargs
 from tests.sale_cleanup import isolate_database_for_0007_downgrade
 
+pytestmark = pytest.mark.schema_migration
+
 BACKEND = Path(__file__).resolve().parents[1]
 CONFIRMED_AT = datetime(2026, 1, 15, 18, 0, 0, tzinfo=UTC)
 COUNTED_AT = datetime(2026, 1, 15, 23, 10, 0, tzinfo=UTC)

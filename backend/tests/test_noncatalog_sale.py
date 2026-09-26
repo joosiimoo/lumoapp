@@ -24,7 +24,7 @@ from app.infrastructure.persistence.models import (
 from app.infrastructure.persistence.outbox import SqlAlchemyOutbox
 from app.infrastructure.persistence.rls import set_current_business_id
 from app.infrastructure.persistence.seed import TOMATE_NAME, ZANAHORIA_NAME
-from tests.test_conversational_sale import _post, _sales_for, _seed_carrota
+from tests.test_conversational_sale import _post, _sales_for, _seed_catalog
 from tests.sale_cleanup import clear_tenant_sale_mutations
 from tests.test_daily_close_confirmation import _confirm, _day, _snapshots, _token_of
 from tests.test_daily_close_preparation import _post as _close_post
@@ -50,7 +50,7 @@ def _workflow(db_session) -> AddCatalogSaleItem:
 
 
 def test_catalog_price_guard_and_existing_path(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     carrot = _post(client, token, "900gr zanahoria", "cat-z", "conv-cat")
     assert carrot.status_code == 200, carrot.text
     assert carrot.json()["ui"][0]["data"]["product_name"] == ZANAHORIA_NAME
@@ -75,7 +75,7 @@ def test_catalog_price_guard_and_existing_path(client: TestClient, db_session) -
 
 
 def test_free_concept_packages_units_and_follow_ups(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     before = _products(db_session, tenant.business_id)
     bags = _post(client, token, "2 bolsas de hielo a 18", "bags", "conv-bags")
     assert bags.status_code == 200, bags.text
@@ -129,7 +129,7 @@ def test_free_concept_packages_units_and_follow_ups(client: TestClient, db_sessi
 
 
 def test_mass_basis_display_and_direct_tool(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     ambiguous = _post(client, token, "500g de hielo a 40", "mass-ask", "conv-mass")
     assert ambiguous.json()["ui"] == []
     assert ambiguous.json()["text"] == "¿Los $40.00 son por kilogramo? Responde por kilo."
@@ -234,7 +234,7 @@ def test_mass_basis_display_and_direct_tool(client: TestClient, db_session) -> N
 
 
 def test_mixed_session_payments_replay_and_audit(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     _post(client, token, "900gr zanahoria", "mix-z", "conv-mix")
     bags = _post(client, token, "2 bolsas de hielo a 18", "mix-b", "conv-mix")
     assert bags.json()["ui"][0]["data"]["session_total"]["amount"] == "58.50"
@@ -296,7 +296,7 @@ def test_mixed_session_payments_replay_and_audit(client: TestClient, db_session)
 
 
 def test_display_limits_day_and_post_close(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     empty = _post(client, token, "2 a 18", "empty", "conv-empty")
     assert empty.json()["ui"] == []
     assert _sales_for(db_session, tenant.business_id)[1] == []

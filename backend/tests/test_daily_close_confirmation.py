@@ -21,14 +21,13 @@ from app.infrastructure.persistence.models import (
     OutboxEventRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
-from app.infrastructure.persistence.seed import ensure_carrota_seed
 from app.policies import PolicyRequest
 from app.policies.engine import CLOSE_003, SEC_002, FoundationPolicyEngine
 from tests.conftest import seed_business
-from tests.sale_cleanup import clear_tenant_sale_mutations, sale_integrity_orphans
+from tests.sale_cleanup import sale_integrity_orphans
 from tests.test_daily_close_preparation import _cash_sale, _rows
 
-BUSINESS = UUID("01900000-0000-7000-8000-000000000001")
+SAMPLE_BUSINESS = UUID("018f0000-0000-7000-8000-0000000000a1")
 DAY = UUID("01900000-0000-7000-8000-000000000010")
 COUNT = UUID("01900000-0000-7000-8000-000000000011")
 
@@ -58,10 +57,9 @@ def _post(
 
 
 def _seed(db_session):
-    tenant, token = ensure_carrota_seed(db_session, token_secret="test-dev-secret-16-chars-minimum")
-    db_session.commit()
-    clear_tenant_sale_mutations(db_session, tenant.business_id)
-    return tenant, token
+    from tests.isolation import seed_catalog_tenant
+
+    return seed_catalog_tenant(db_session)
 
 
 def _token_of(response) -> str | None:
@@ -108,7 +106,7 @@ def _snapshots(db_session, business_id) -> list[ClosingSnapshotRow]:
 
 def test_preparation_fingerprint_is_v1_sha256() -> None:
     digest = preparation_fingerprint(
-        business_id=BUSINESS,
+        business_id=SAMPLE_BUSINESS,
         operational_day_id=DAY,
         cash_count_id=COUNT,
         business_date=datetime(2026, 9, 22, tzinfo=UTC).date(),
@@ -124,11 +122,11 @@ def test_preparation_fingerprint_is_v1_sha256() -> None:
         cash_status="short",
     )
     canonical = (
-        f"v1|{BUSINESS}|{DAY}|{COUNT}|2026-09-22|MXN|1|22.50|22.50|0.00|0.00|22.50|20.00|-2.50|short"
+        f"v1|{SAMPLE_BUSINESS}|{DAY}|{COUNT}|2026-09-22|MXN|1|22.50|22.50|0.00|0.00|22.50|20.00|-2.50|short"
     )
     assert digest == sha256(canonical.encode()).hexdigest()
     changed = preparation_fingerprint(
-        business_id=BUSINESS,
+        business_id=SAMPLE_BUSINESS,
         operational_day_id=DAY,
         cash_count_id=COUNT,
         business_date=datetime(2026, 9, 22, tzinfo=UTC).date(),
@@ -149,7 +147,7 @@ def test_preparation_fingerprint_is_v1_sha256() -> None:
     assert status_for_difference(Decimal("0")) is CashStatus.BALANCED
     with pytest.raises(TypeError, match="must not use float"):
         preparation_fingerprint(
-            business_id=BUSINESS,
+            business_id=SAMPLE_BUSINESS,
             operational_day_id=DAY,
             cash_count_id=COUNT,
             business_date=datetime(2026, 9, 22, tzinfo=UTC).date(),
@@ -244,7 +242,7 @@ def test_balanced_short_and_over_close_only_after_confirmation(client, db_sessio
     assert _day(db_session, tenant.business_id).status == "closed"
     assert sale_integrity_orphans(db_session, tenant.business_id) == []
 
-    _seed(db_session)
+    tenant, token = _seed(db_session)
     short_token, _short_requested = _ready(client, token, "short", "20.00")
     short = _confirm(client, token, "short", short_token)
     assert short.status_code == 200, short.text
@@ -252,7 +250,7 @@ def test_balanced_short_and_over_close_only_after_confirmation(client, db_sessio
     assert "Faltante" in short.json()["text"]
     assert _snapshots(db_session, tenant.business_id)[0].cash_difference == Decimal("-2.50")
 
-    _seed(db_session)
+    tenant, token = _seed(db_session)
     over_token, _over_requested = _ready(client, token, "over", "25.00")
     over = _confirm(client, token, "over", over_token)
     assert over.status_code == 200, over.text
@@ -465,7 +463,7 @@ def test_confirm_races_recount_and_sale_without_a_partial_close(client, db_sessi
         assert snapshots == []
         assert confirm_response.json()["text"] == "El cierre cambió. Revisa los datos y confírmalo otra vez."
 
-    _seed(db_session)
+    tenant, token = _seed(db_session)
     sale_token, _requested_sale = _ready(client, token, "sale-race")
     assert _post(client, token, "900gr zanahoria", "sale-race-add-2", "conv-sale-race-2").status_code == 200
     assert _post(client, token, "totalizar", "sale-race-tot-2", "conv-sale-race-2").status_code == 200
@@ -498,12 +496,12 @@ def test_confirm_races_recount_and_sale_without_a_partial_close(client, db_sessi
 
 
 def test_wrong_actor_token_is_invalid(client, db_session) -> None:
-    _tenant, token = _seed(db_session)
+    tenant, token = _seed(db_session)
     confirmation, requested = _ready(client, token, "actor")
     data = requested.json()["ui"][0]["data"]
     forged = issue_closing_confirmation_token(
         secret="test-dev-secret-16-chars-minimum",
-        business_id=BUSINESS,
+        business_id=tenant.business_id,
         actor_id=UUID("01900000-0000-7000-8000-000000000099"),
         operational_day_id=UUID(data["operational_day_id"]),
         cash_count_id=UUID(data["cash_count_id"]),

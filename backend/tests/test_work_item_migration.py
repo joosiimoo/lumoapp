@@ -14,6 +14,8 @@ from tests.conftest import DEFAULT_ADMIN_URL, DEFAULT_APP_URL, TEST_SECRET, post
 
 BACKEND = Path(__file__).resolve().parents[1]
 
+pytestmark = pytest.mark.schema_migration
+
 
 def _config() -> Config:
     os.environ.setdefault("APP_ENV", "test")

@@ -170,6 +170,50 @@ OPERATIONAL_DAY_SUMMARY = ToolRegistration(
     side_effect="read",
 )
 
+BUSINESS_FACTS = ToolRegistration(
+    tool_id="memory.business_facts",
+    version=1,
+    input_schema={
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["query_type"],
+        "properties": {
+            "query_type": {
+                "enum": [
+                    "day_summary",
+                    "day_events",
+                    "sales_summary",
+                    "cash_summary",
+                    "close_summary",
+                    "latest_close",
+                    "recent_cash_differences",
+                ]
+            },
+            "business_date": {"type": "string"},
+            "recent_days": {"type": "integer", "minimum": 1, "maximum": 30},
+        },
+    },
+    output_schema={
+        "type": "object",
+        "required": [
+            "query_type",
+            "business_id",
+            "business_date",
+            "period_start",
+            "period_end",
+            "facts",
+            "events",
+            "source_coverage",
+            "limitation_code",
+            "empty_reason",
+        ],
+    },
+    permission="sale.create",
+    policy_id="MEM-001",
+    requires_idempotency=False,
+    side_effect="read",
+)
+
 NEXT_BEST_ACTION = ToolRegistration(
     tool_id="operational_day.next_best_action",
     version=1,
@@ -393,6 +437,7 @@ def register_conversational_sale_tools(registry: ToolRegistry) -> None:
         TOTALIZE_SALE,
         COMMIT_SALE,
         OPERATIONAL_DAY_SUMMARY,
+        BUSINESS_FACTS,
         NEXT_BEST_ACTION,
         SUBMIT_CASH_COUNT,
         CLOSING_PREPARE,

@@ -30,6 +30,21 @@ class LumoApiClient {
     return _send('GET', path);
   }
 
+  Future<Map<String, dynamic>> getMemoryEvents({int? limit, String? before}) {
+    final params = <String, String>{};
+    if (limit != null) {
+      params['limit'] = '$limit';
+    }
+    if (before != null && before.isNotEmpty) {
+      params['before'] = before;
+    }
+    final query = params.entries
+        .map((entry) => '${entry.key}=${Uri.encodeQueryComponent(entry.value)}')
+        .join('&');
+    final path = query.isEmpty ? '/api/v1/memory/events' : '/api/v1/memory/events?$query';
+    return get(path);
+  }
+
   Future<Map<String, dynamic>> post(
     String path, {
     Map<String, dynamic>? body,

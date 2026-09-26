@@ -34,6 +34,23 @@ class AgentDecision(BaseModel):
     package_word: Literal["bolsa", "paquete"] | None = None
     payment_method: Literal["cash", "card", "transfer"] | None = None
     counted_amount: str | None = None
+    factual_query_type: (
+        Literal[
+            "day_summary",
+            "day_events",
+            "sales_summary",
+            "cash_summary",
+            "close_summary",
+            "latest_close",
+            "recent_cash_differences",
+        ]
+        | None
+    ) = None
+    factual_scope: Literal["today", "yesterday", "date", "latest", "recent"] | None = None
+    factual_business_date: str | None = None
+    factual_month: int | None = None
+    factual_day: int | None = None
+    factual_recent_days: int | None = None
 
     @field_validator("intent")
     @classmethod

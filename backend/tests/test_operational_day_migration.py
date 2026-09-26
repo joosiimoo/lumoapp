@@ -18,6 +18,8 @@ from tests.sale_cleanup import isolate_database_for_0007_downgrade
 from app.bootstrap.settings import Settings
 
 BACKEND = Path(__file__).resolve().parents[1]
+
+pytestmark = pytest.mark.schema_migration
 T1 = datetime(2026, 1, 15, 18, 0, 0, tzinfo=UTC)
 T2 = datetime(2026, 1, 16, 5, 59, 59, tzinfo=UTC)
 T3 = datetime(2026, 1, 16, 6, 0, 0, tzinfo=UTC)

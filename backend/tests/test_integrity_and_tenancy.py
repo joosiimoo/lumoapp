@@ -20,12 +20,12 @@ def _auth(token: str, **extra: str) -> dict[str, str]:
 
 
 def test_session_is_tenant_scoped(client: TestClient, db_session) -> None:
-    business_id, _user_id, token = seed_business(db_session, name="Carrota")
+    business_id, _user_id, token = seed_business(db_session, name="Lumo Test Business")
     response = client.get("/api/v1/session", headers=_auth(token))
     assert response.status_code == 200
     body = response.json()
     assert body["business"]["id"] == str(business_id)
-    assert body["business"]["name"] == "Carrota"
+    assert body["business"]["name"] == "Lumo Test Business"
 
 
 def test_client_supplied_business_id_is_ignored(client: TestClient, db_session) -> None:
@@ -253,10 +253,9 @@ def test_debug_fail_after_write_only_in_local_and_test() -> None:
 
 def test_unscoped_catalog_select_is_empty_despite_seed(db_session) -> None:
     from app.infrastructure.persistence.engine import create_engine_from_settings, create_session_factory
-    from app.infrastructure.persistence.seed import ensure_carrota_seed
+    from tests.isolation import seed_catalog_tenant
 
-    ensure_carrota_seed(db_session, token_secret="test-dev-secret-16-chars-minimum")
-    db_session.commit()
+    seed_catalog_tenant(db_session)
     engine = create_engine_from_settings(make_settings())
     other = create_session_factory(engine)()
     try:

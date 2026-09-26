@@ -26,6 +26,66 @@ _PAYMENT_PHRASES = {
 _PAYMENT_METHOD_CLARIFY = {"pagar", "cheque"}
 _PAYMENT_CLARIFICATION = "¿Cómo pagó? Puedo registrar *efectivo*, *tarjeta* o *transferencia*."
 _DAY_SUMMARY_PHRASES = {"como vamos hoy", "ventas de hoy", "cuanto vendimos hoy"}
+FACTUAL_SCOPE_TEXT = (
+    "Puedo consultar hechos registrados en Lumo para hoy, ayer, una fecha ya transcurrida, "
+    "el último cierre, o las diferencias de caja de los últimos días. "
+    "No encuentro esa consulta entre esos hechos."
+)
+_FACTUAL_UNSUPPORTED = {
+    "el trimestre pasado",
+    "este ano",
+    "el ano pasado",
+    "que paso el trimestre pasado",
+    "que paso este ano",
+    "que vendi este ano",
+    "que vendi el ano pasado",
+}
+_FACTUAL_DAY_SUMMARY = {"que paso hoy": "today", "que paso ayer": "yesterday"}
+_FACTUAL_SALES = {
+    "cuanto vendi hoy": "today",
+    "cuantas ventas tuve hoy": "today",
+    "cuanto vendi ayer": "yesterday",
+    "cuantas ventas tuve ayer": "yesterday",
+}
+_FACTUAL_CLOSE = {"como cerre hoy": "today", "como cerre ayer": "yesterday"}
+_FACTUAL_LATEST = {"cual fue mi ultimo cierre", "que paso en el ultimo cierre"}
+_FACTUAL_CASH = {"hubo diferencia de caja", "hay diferencia de caja"}
+_FACTUAL_RECENT = "he tenido diferencias de caja ultimamente"
+_FACTUAL_EVENTS = {"que eventos hubo hoy": "today", "que eventos hubo ayer": "yesterday"}
+_MONTH_MAX_DAY = {
+    1: 31,
+    2: 29,
+    3: 31,
+    4: 30,
+    5: 31,
+    6: 30,
+    7: 31,
+    8: 31,
+    9: 30,
+    10: 31,
+    11: 30,
+    12: 31,
+}
+_SPANISH_MONTHS = {
+    "enero": 1,
+    "febrero": 2,
+    "marzo": 3,
+    "abril": 4,
+    "mayo": 5,
+    "junio": 6,
+    "julio": 7,
+    "agosto": 8,
+    "septiembre": 9,
+    "octubre": 10,
+    "noviembre": 11,
+    "diciembre": 12,
+}
+_FACTUAL_ISO_DATE = re.compile(r"^que paso el (\d{4})-(\d{2})-(\d{2})$")
+_FACTUAL_SPOKEN_DATE = re.compile(
+    r"^que paso el (\d{1,2}) de ("
+    + "|".join(_SPANISH_MONTHS)
+    + r")(?: de (\d{4}))?$"
+)
 _NEXT_BEST_ACTION_PHRASES = {
     "que sigue",
     "que falta",
@@ -96,6 +156,86 @@ def _claims_sale(parsed) -> bool:
     return re.fullmatch(r"(?:cajas?|litros?|ml|manojos?|docenas?)", span, re.IGNORECASE) is None
 
 
+def _factual_decision(normalized: str) -> AgentDecision | None:
+    if normalized in _FACTUAL_UNSUPPORTED:
+        return AgentDecision(intent="factual_memory_unsupported", clarification_question=FACTUAL_SCOPE_TEXT)
+    scope = _FACTUAL_DAY_SUMMARY.get(normalized)
+    if scope is not None:
+        return _factual("day_summary", scope)
+    scope = _FACTUAL_SALES.get(normalized)
+    if scope is not None:
+        return _factual("sales_summary", scope)
+    scope = _FACTUAL_CLOSE.get(normalized)
+    if scope is not None:
+        return _factual("close_summary", scope)
+    if normalized in _FACTUAL_LATEST:
+        return _factual("latest_close", "latest")
+    if normalized in _FACTUAL_CASH:
+        return _factual("cash_summary", "today")
+    if normalized == _FACTUAL_RECENT:
+        return AgentDecision(
+            intent="factual_memory",
+            candidate_tool="memory.business_facts@1",
+            factual_query_type="recent_cash_differences",
+            factual_scope="recent",
+            factual_recent_days=7,
+        )
+    scope = _FACTUAL_EVENTS.get(normalized)
+    if scope is not None:
+        return _factual("day_events", scope)
+    iso = _FACTUAL_ISO_DATE.fullmatch(normalized)
+    if iso is not None:
+        year, month, day = (int(part) for part in iso.groups())
+        return _explicit_date(year, month, day, include_year=True)
+    spoken = _FACTUAL_SPOKEN_DATE.fullmatch(normalized)
+    if spoken is not None:
+        day = int(spoken.group(1))
+        month = _SPANISH_MONTHS[spoken.group(2)]
+        if day < 1 or day > _MONTH_MAX_DAY[month]:
+            return AgentDecision(intent="factual_memory_unsupported", clarification_question=FACTUAL_SCOPE_TEXT)
+        year_text = spoken.group(3)
+        if year_text is None:
+            return AgentDecision(
+                intent="factual_memory",
+                candidate_tool="memory.business_facts@1",
+                factual_query_type="day_summary",
+                factual_scope="date",
+                factual_month=month,
+                factual_day=day,
+            )
+        return _explicit_date(int(year_text), month, day, include_year=True)
+    if normalized.startswith("que paso el "):
+        return AgentDecision(intent="factual_memory_unsupported", clarification_question=FACTUAL_SCOPE_TEXT)
+    return None
+
+
+def _factual(query_type: str, scope: str) -> AgentDecision:
+    return AgentDecision(
+        intent="factual_memory",
+        candidate_tool="memory.business_facts@1",
+        factual_query_type=query_type,  # type: ignore[arg-type]
+        factual_scope=scope,  # type: ignore[arg-type]
+    )
+
+
+def _explicit_date(year: int, month: int, day: int, *, include_year: bool) -> AgentDecision:
+    from datetime import date
+
+    try:
+        resolved = date(year, month, day)
+    except ValueError:
+        return AgentDecision(intent="factual_memory_unsupported", clarification_question=FACTUAL_SCOPE_TEXT)
+    return AgentDecision(
+        intent="factual_memory",
+        candidate_tool="memory.business_facts@1",
+        factual_query_type="day_summary",
+        factual_scope="date",
+        factual_business_date=resolved.isoformat() if include_year else None,
+        factual_month=month,
+        factual_day=day,
+    )
+
+
 def parse_counted_phrase(normalized: str) -> str | None:
     """Closed cash-count grammar. One numeric slot, no thousands separators, no bare amount."""
     for pattern in _CASH_COUNT_PATTERNS:
@@ -143,6 +283,9 @@ class ScriptedLLMProvider:
                 intent="day_summary",
                 candidate_tool="operational_day.summary@1",
             )
+        factual = _factual_decision(normalized)
+        if factual is not None:
+            return factual
         if normalized in _NEXT_BEST_ACTION_PHRASES:
             return AgentDecision(
                 intent="next_best_action",

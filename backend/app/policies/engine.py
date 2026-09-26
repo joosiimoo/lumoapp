@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+from datetime import date
 from decimal import Decimal
 
 from app.policies import PolicyDecision, PolicyDecisionName, PolicyEngine, PolicyRequest
@@ -21,6 +23,7 @@ SALE_005 = "SALE-005"
 PAY_001 = "PAY-001"
 DAY_001 = "DAY-001"
 NBA_001 = "NBA-001"
+MEM_001 = "MEM-001"
 CLOSE_001 = "CLOSE-001"
 CLOSE_002 = "CLOSE-002"
 CLOSE_003 = "CLOSE-003"
@@ -33,6 +36,7 @@ REGISTERED_SLICE_TOOLS = {
     "sale.commit@1",
     "operational_day.summary@1",
     "operational_day.next_best_action@1",
+    "memory.business_facts@1",
     "closing.submit_cash_count@1",
     "closing.prepare@1",
     "closing.confirm@1",
@@ -73,6 +77,23 @@ SERVER_OWNED_CLOSE_ARGUMENTS = frozenset(
         "cash_count_id",
     }
 )
+_FACTUAL_QUERY_TYPES = frozenset(
+    {
+        "day_summary",
+        "day_events",
+        "sales_summary",
+        "cash_summary",
+        "close_summary",
+        "latest_close",
+        "recent_cash_differences",
+    }
+)
+_FACTUAL_DAY_TYPES = frozenset(
+    {"day_summary", "day_events", "sales_summary", "cash_summary", "close_summary"}
+)
+_FACTUAL_ALLOWED_ARGUMENTS = frozenset({"query_type", "business_date", "recent_days"})
+_DATE_ARGUMENT = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
 NBA_DENIED_ARGUMENTS = frozenset(
     {
         "work_item_id",
@@ -123,6 +144,8 @@ class FoundationPolicyEngine:
                 rule_ids=[NBA_001],
                 reason_code="next_best_action_read",
             )
+        if request.tool_id == "memory.business_facts@1":
+            return _memory_business_facts_decision(request.arguments or {})
         arguments = request.arguments or {}
         if request.tool_id in CLOSING_TOOLS:
             return self._evaluate_closing(request.tool_id, arguments)
@@ -346,6 +369,55 @@ def _is_cash_amount(value: object) -> bool:
     if not isinstance(exponent, int):
         return False
     return amount >= 0 and exponent >= -2
+
+
+def _memory_business_facts_decision(arguments: dict[str, object]) -> PolicyDecision:
+    deny = PolicyDecision(
+        decision=PolicyDecisionName.DENY,
+        rule_ids=[MEM_001],
+        reason_code="factual_memory_arguments_denied",
+    )
+    if set(arguments) - _FACTUAL_ALLOWED_ARGUMENTS:
+        return deny
+    query_type = arguments.get("query_type")
+    if query_type not in _FACTUAL_QUERY_TYPES:
+        return deny
+    business_date = arguments.get("business_date", None)
+    recent_days = arguments.get("recent_days", None)
+    date_present = "business_date" in arguments
+    days_present = "recent_days" in arguments
+    if query_type in _FACTUAL_DAY_TYPES:
+        if not date_present or days_present or not _is_business_date(business_date):
+            return deny
+    elif query_type == "latest_close":
+        if date_present or days_present:
+            return deny
+    elif query_type == "recent_cash_differences":
+        if date_present or not days_present or not _is_recent_days(recent_days):
+            return deny
+    else:
+        return deny
+    return PolicyDecision(
+        decision=PolicyDecisionName.ALLOW,
+        rule_ids=[MEM_001],
+        reason_code="factual_memory_read",
+    )
+
+
+def _is_business_date(value: object) -> bool:
+    if not isinstance(value, str) or _DATE_ARGUMENT.fullmatch(value) is None:
+        return False
+    try:
+        date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _is_recent_days(value: object) -> bool:
+    if isinstance(value, bool) or not isinstance(value, int):
+        return False
+    return 1 <= value <= 30
 
 
 def build_policy_engine() -> PolicyEngine:

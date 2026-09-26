@@ -13,6 +13,8 @@ from tests.test_work_item_migration import _config
 
 HEAD = "0012_source_coverage_event_memory"
 
+pytestmark = pytest.mark.schema_migration
+
 
 @pytest.fixture
 def migrated():

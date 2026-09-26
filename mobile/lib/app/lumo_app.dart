@@ -210,7 +210,7 @@ class _LumoHomeState extends State<LumoHome> {
 
   @override
   Widget build(BuildContext context) {
-    final showComposer = _tab != LumoTab.negocio;
+    final showComposer = _tab != LumoTab.negocio && _tab != LumoTab.memoria;
     return LumoScaffold(
       currentTab: _tab,
       onSelectTab: (tab) => setState(() => _tab = tab),
@@ -234,7 +234,7 @@ class _LumoHomeState extends State<LumoHome> {
             conversationId: _conversationId,
             onSwitchToInicio: () => setState(() => _tab = LumoTab.inicio),
           ),
-        LumoTab.memoria => const MemoriaPage(),
+        LumoTab.memoria => MemoriaPage(apiClient: widget.apiClient),
         LumoTab.negocio => const NegocioPage(),
       },
     );

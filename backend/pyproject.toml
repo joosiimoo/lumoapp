@@ -34,3 +34,6 @@ pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = [
+  "schema_migration: downgrade tests against lumo_migration_test, never the application database",
+]

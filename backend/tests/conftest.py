@@ -15,6 +15,7 @@ from app.domain.shared.ids import new_uuid7
 from app.infrastructure.persistence.engine import create_engine_from_settings, create_session_factory
 from app.infrastructure.persistence.models import BusinessRow, MembershipRow, UserRow
 from app.infrastructure.persistence.rls import set_current_business_id
+from tests.isolation import register_test_tenant
 
 TEST_SECRET = "test-dev-secret-16-chars-minimum"
 DEFAULT_APP_URL = "postgresql+psycopg://lumo_app:lumo_app@localhost:5432/lumo"
@@ -63,6 +64,17 @@ def postgres_available(settings: Settings) -> bool:
         return False
 
 
+@pytest.fixture(autouse=True)
+def _schema_migration_database(request):
+    if request.node.get_closest_marker("schema_migration") is None:
+        yield
+        return
+    from tests.migration_db import use_migration_database
+
+    with use_migration_database():
+        yield
+
+
 @pytest.fixture
 def db_session(settings: Settings) -> Iterator[Session]:
     if not postgres_available(settings):
@@ -81,6 +93,7 @@ def db_session(settings: Settings) -> Iterator[Session]:
 def seed_business(session: Session, *, name: str) -> tuple[UUID, UUID, str]:
     business_id = new_uuid7()
     user_id = new_uuid7()
+    register_test_tenant(business_id)
     set_current_business_id(session, business_id)
     session.add(
         BusinessRow(

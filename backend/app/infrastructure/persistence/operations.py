@@ -4,10 +4,11 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
+from app.domain.operations.factual_memory import DatedBusinessEvent
 from app.domain.operations import (
     OUTCOME_TYPE_DAILY_CLOSE_READY,
     OUTCOME_VERSION,
@@ -681,6 +682,94 @@ class OperationsRepository:
             .order_by(BusinessEventRow.occurred_at.asc(), BusinessEventRow.id.asc())
         ).all()
         return [_to_business_event(row) for row in rows]
+
+    def list_recent_business_events(
+        self,
+        *,
+        tenant: TenantContext,
+        period_start: date,
+        period_end: date,
+        limit: int,
+        before_occurred_at: datetime | None = None,
+        before_id: UUID | None = None,
+    ) -> list[DatedBusinessEvent]:
+        """Timeline page. Business-date window, occurred_at DESC, id DESC. No search."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        filters = [
+            BusinessEventRow.business_id == tenant.business_id,
+            OperationalDayRow.business_date >= period_start,
+            OperationalDayRow.business_date <= period_end,
+        ]
+        if before_occurred_at is not None and before_id is not None:
+            filters.append(
+                or_(
+                    BusinessEventRow.occurred_at < before_occurred_at,
+                    and_(
+                        BusinessEventRow.occurred_at == before_occurred_at,
+                        BusinessEventRow.id < before_id,
+                    ),
+                )
+            )
+        rows = self._session.execute(
+            select(BusinessEventRow, OperationalDayRow.business_date, OperationalDayRow.timezone)
+            .join(
+                OperationalDayRow,
+                and_(
+                    OperationalDayRow.id == BusinessEventRow.operational_day_id,
+                    OperationalDayRow.business_id == BusinessEventRow.business_id,
+                ),
+            )
+            .where(*filters)
+            .order_by(BusinessEventRow.occurred_at.desc(), BusinessEventRow.id.desc())
+            .limit(limit)
+        ).all()
+        return [
+            DatedBusinessEvent(
+                event=_to_business_event(event_row),
+                business_date=business_date,
+                timezone_name=timezone_name,
+            )
+            for event_row, business_date, timezone_name in rows
+        ]
+
+    def get_latest_completed_close(self, *, tenant: TenantContext) -> ClosingSnapshot | None:
+        """One snapshot: business_date DESC, closed_at DESC, id DESC. Read only."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(ClosingSnapshotRow)
+            .where(ClosingSnapshotRow.business_id == tenant.business_id)
+            .order_by(
+                ClosingSnapshotRow.business_date.desc(),
+                ClosingSnapshotRow.closed_at.desc(),
+                ClosingSnapshotRow.id.desc(),
+            )
+            .limit(1)
+        )
+        return _to_snapshot(row) if row is not None else None
+
+    def list_cash_difference_closes(
+        self,
+        *,
+        tenant: TenantContext,
+        period_start: date,
+        period_end: date,
+    ) -> list[ClosingSnapshot]:
+        """Closed short or over snapshots in a business-date window. Not open counts."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        rows = self._session.scalars(
+            select(ClosingSnapshotRow)
+            .where(
+                ClosingSnapshotRow.business_id == tenant.business_id,
+                ClosingSnapshotRow.business_date >= period_start,
+                ClosingSnapshotRow.business_date <= period_end,
+                ClosingSnapshotRow.cash_status.in_(("short", "over")),
+            )
+            .order_by(ClosingSnapshotRow.business_date.desc())
+        ).all()
+        return [_to_snapshot(row) for row in rows]
 
     def _require_outcome(self, tenant: TenantContext, outcome_run_id: UUID) -> OutcomeRunRow:
         row = self._session.scalar(

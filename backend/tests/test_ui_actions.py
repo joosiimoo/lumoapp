@@ -21,9 +21,7 @@ from app.infrastructure.persistence.models import (
     SaleSessionRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
-from app.infrastructure.persistence.seed import ensure_carrota_seed
 from tests.conftest import make_settings, postgres_available
-from tests.sale_cleanup import clear_tenant_sale_mutations
 from tests.test_daily_close_confirmation import _post as _message
 from tests.test_daily_close_preparation import _cash_sale
 
@@ -37,10 +35,9 @@ def _auth(token: str, key: str) -> dict[str, str]:
 
 
 def _seed(db_session):
-    tenant, token = ensure_carrota_seed(db_session, token_secret="test-dev-secret-16-chars-minimum")
-    db_session.commit()
-    clear_tenant_sale_mutations(db_session, tenant.business_id)
-    return tenant, token
+    from tests.isolation import seed_catalog_tenant
+
+    return seed_catalog_tenant(db_session)
 
 
 def _rows(db_session, business_id, model):

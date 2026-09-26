@@ -17,6 +17,8 @@ from tests.conftest import DEFAULT_ADMIN_URL, DEFAULT_APP_URL, TEST_SECRET, post
 from tests.sale_cleanup import discard_work_items, isolate_database_for_0007_downgrade
 
 BACKEND = Path(__file__).resolve().parents[1]
+
+pytestmark = pytest.mark.schema_migration
 STAMP = datetime(2026, 9, 22, 18, 0, tzinfo=UTC)
 
 

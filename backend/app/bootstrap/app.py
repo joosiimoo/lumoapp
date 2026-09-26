@@ -24,6 +24,7 @@ from app.agent.tools import ToolRegistry
 from app.api.middleware import CorrelationMiddleware
 from app.api.routes.health import router as health_router
 from app.api.routes.lumo import router as lumo_router
+from app.api.routes.memory import router as memory_router
 from app.api.routes.operational_days import router as operational_days_router
 from app.api.routes.platform import router as platform_router
 from app.api.schemas.errors import app_error_handler, http_exception_handler, unhandled_error_handler, validation_error_handler
@@ -110,6 +111,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(platform_router)
     app.include_router(lumo_router)
     app.include_router(operational_days_router)
+    app.include_router(memory_router)
 
     if settings.app_env.value == "test":
         from pydantic import BaseModel

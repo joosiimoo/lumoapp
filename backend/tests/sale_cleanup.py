@@ -61,6 +61,19 @@ SALE_OUTBOX_EVENT = "sale.item.added"
 SALE_MESSAGE_OPERATION = "lumo.message.add_sale_item"
 
 
+def _require_migration_database(connection) -> None:
+    from sqlalchemy import text
+
+    from tests.migration_db import MIGRATION_DB_NAME
+
+    name = connection.execute(text("SELECT current_database()")).scalar_one()
+    if name != MIGRATION_DB_NAME:
+        raise RuntimeError(
+            f"refusing global operational purge on {name}; "
+            f"schema downgrade tests must use {MIGRATION_DB_NAME}"
+        )
+
+
 def _purge_rls_table(connection, table: str) -> None:
     from sqlalchemy import text
 
@@ -73,9 +86,11 @@ def _purge_rls_table(connection, table: str) -> None:
 
 
 def discard_work_items(engine) -> None:
-    """Test isolation. Product downgrade still aborts while any WorkItem exists."""
+    """Empty operational tables on the schema-migration database only."""
     from sqlalchemy import text
 
+    with engine.connect() as connection:
+        _require_migration_database(connection)
     with engine.begin() as connection:
         _purge_rls_table(connection, "operations.business_events")
         _purge_rls_table(connection, "operations.source_coverage_records")
@@ -93,13 +108,15 @@ def discard_work_items(engine) -> None:
 
 
 def isolate_database_for_0007_downgrade(engine) -> None:
-    """Test isolation only. Product downgrade must still refuse a real close.
+    """Empty close rows on the schema-migration database so a downgrade can run.
 
-    Deletes snapshots and reopens days so a later Alembic downgrade of this
-    disposable database is not blocked by rows a previous test committed.
+    Product downgrade must still refuse a real close. This helper never opens
+    the application database.
     """
     from sqlalchemy import text
 
+    with engine.connect() as connection:
+        _require_migration_database(connection)
     with engine.begin() as connection:
         _purge_rls_table(connection, "operations.business_events")
         _purge_rls_table(connection, "operations.source_coverage_records")
@@ -172,6 +189,9 @@ def isolate_database_for_0007_downgrade(engine) -> None:
 
 
 def clear_tenant_sale_mutations(session: Session, business_id) -> None:
+    from tests.isolation import require_test_tenant
+
+    require_test_tenant(business_id)
     set_current_business_id(session, business_id)
     session.execute(PaymentRow.__table__.delete().where(PaymentRow.business_id == business_id))
     session.execute(SaleItemRow.__table__.delete().where(SaleItemRow.business_id == business_id))

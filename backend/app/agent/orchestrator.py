@@ -38,6 +38,7 @@ from app.application.workflows.get_daily_close_preparation import (
     preparation_ui_data,
     request_close_text,
 )
+from app.application.queries.get_factual_memory import FactualMemoryService, factual_reply_text
 from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
 from app.application.workflows.record_cash_count import RecordCashCount
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
@@ -52,6 +53,8 @@ _CLOSED_INTENTS = frozenset(
         "totalize_sale",
         "commit_sale",
         "day_summary",
+        "factual_memory",
+        "factual_memory_unsupported",
         "next_best_action",
         "record_cash_count",
         "close_preparation",
@@ -64,6 +67,7 @@ _CLOSED_TOOLS = frozenset(
         "sale.totalize@1",
         "sale.commit@1",
         "operational_day.summary@1",
+        "memory.business_facts@1",
         "operational_day.next_best_action@1",
         "closing.submit_cash_count@1",
         "closing.prepare@1",
@@ -89,6 +93,7 @@ class FoundationOrchestrator:
     totalize: TotalizeSaleSession | None = None
     commit: CommitSaleSession | None = None
     day_summary: GetOperationalDaySummary | None = None
+    factual_memory: FactualMemoryService | None = None
     next_best_action: GetNextBestAction | None = None
     record_cash_count: RecordCashCount | None = None
     close_preparation: GetDailyClosePreparation | None = None
@@ -154,6 +159,14 @@ class FoundationOrchestrator:
 
         if decision.intent == "day_summary" or decision.candidate_tool == "operational_day.summary@1":
             return self._handle_day_summary(decision, context, tenant)
+
+        if decision.intent == "factual_memory_unsupported":
+            from app.agent.providers.scripted import FACTUAL_SCOPE_TEXT
+
+            return AgentResponse(text=decision.clarification_question or FACTUAL_SCOPE_TEXT, ui=[])
+
+        if decision.intent == "factual_memory" or decision.candidate_tool == "memory.business_facts@1":
+            return self._handle_factual_memory(decision, context, tenant)
 
         if decision.intent == "next_best_action" or decision.candidate_tool == "operational_day.next_best_action@1":
             return self._handle_next_best_action(decision, context, tenant, conversation_id)
@@ -435,6 +448,55 @@ class FoundationOrchestrator:
             )
             ui = [self.ui_composer.compose(contract)]
         return AgentResponse(text=result["text"], ui=ui)
+
+    def _handle_factual_memory(
+        self,
+        decision: AgentDecision,
+        context: dict[str, Any],
+        tenant: TenantContext | None,
+    ) -> AgentResponse:
+        from datetime import date
+
+        from app.agent.providers.scripted import FACTUAL_SCOPE_TEXT
+        from app.domain.operations.factual_memory import FactualMemoryQuery, FactualQueryType
+
+        if self.factual_memory is None or tenant is None or decision.factual_query_type is None:
+            return AgentResponse(text="That action is not available.", ui=[])
+        explicit = None
+        if decision.factual_business_date:
+            explicit = date.fromisoformat(decision.factual_business_date)
+        arguments = self.factual_memory.tool_arguments(
+            tenant=tenant,
+            now=context.get("now"),
+            query_type=FactualQueryType(decision.factual_query_type),
+            scope=decision.factual_scope or "",
+            explicit_date=explicit,
+            month=decision.factual_month,
+            day=decision.factual_day,
+            recent_days=decision.factual_recent_days,
+        )
+        if arguments is None:
+            return AgentResponse(text=FACTUAL_SCOPE_TEXT, ui=[])
+        tool_id = "memory.business_facts@1"
+        registered = self.tools.is_registered(tool_id)
+        policy = self.policies.evaluate(
+            PolicyRequest(
+                action="execute_tool",
+                tool_id=tool_id,
+                tool_registered=registered,
+                from_llm=True,
+                arguments=arguments,
+            )
+        )
+        if not registered or policy.decision.value == "deny":
+            return AgentResponse(text="That action is not available.", ui=[])
+        query = FactualMemoryQuery(
+            query_type=FactualQueryType(arguments["query_type"]),
+            business_date=date.fromisoformat(arguments["business_date"]) if "business_date" in arguments else None,
+            recent_days=arguments.get("recent_days"),
+        )
+        result = self.factual_memory.execute(tenant=tenant, query=query, now=context.get("now"))
+        return AgentResponse(text=factual_reply_text(result), ui=[])
 
     def _handle_next_best_action(
         self,

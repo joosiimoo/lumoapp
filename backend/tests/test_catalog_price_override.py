@@ -13,8 +13,9 @@ from app.domain.shared.ids import new_uuid7
 from app.domain.shared.money import Money
 from app.infrastructure.persistence.models import AuditEventRow, IdempotencyRecordRow, OutboxEventRow, ProductRow, SaleItemRow
 from app.infrastructure.persistence.rls import set_current_business_id
-from app.infrastructure.persistence.seed import GALLETA_A_NAME, TOMATE_NAME, TOMATE_PRODUCT_ID, ZANAHORIA_NAME
-from tests.test_conversational_sale import _post, _sales_for, _seed_carrota
+from app.infrastructure.persistence.seed import GALLETA_A_NAME, TOMATE_NAME, ZANAHORIA_NAME
+from tests.isolation import catalog_product_id
+from tests.test_conversational_sale import _post, _sales_for, _seed_catalog
 from tests.test_daily_close_confirmation import _confirm, _ready
 from tests.test_noncatalog_sale import _products, _workflow
 
@@ -27,7 +28,7 @@ def _set_price(db_session, business_id, product_id, amount: str) -> None:
 
 
 def test_override_question_reason_and_normal_paths(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     normal = _post(client, token, "900gr zanahoria", "ov-z", "conv-ov")
     assert normal.json()["ui"][0]["data"]["line_total"]["amount"] == "22.50"
     assert "catalog_unit_price" not in normal.json()["ui"][0]["data"]
@@ -66,7 +67,7 @@ def test_override_question_reason_and_normal_paths(client: TestClient, db_sessio
     assert conflict.status_code == 409
     set_current_business_id(db_session, tenant.business_id)
     db_session.expire_all()
-    product = db_session.get(ProductRow, TOMATE_PRODUCT_ID)
+    product = db_session.get(ProductRow, catalog_product_id(db_session, tenant.business_id, TOMATE_NAME))
     assert product.current_price == Decimal("20.00")
     line = db_session.scalars(
         select(SaleItemRow).where(SaleItemRow.id == card["data"]["sale_item_id"])
@@ -102,7 +103,7 @@ def test_override_question_reason_and_normal_paths(client: TestClient, db_sessio
 
 
 def test_lower_price_unit_package_cancel_and_replacement(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     lower = _post(client, token, "3 kg zanahoria a 11", "ov-low", "conv-low")
     assert "¿Por qué lo vendiste a $11.00?" in lower.json()["text"]
     saved = _post(client, token, "precio de cierre", "ov-low-why", "conv-low")
@@ -179,11 +180,12 @@ def test_lower_price_unit_package_cancel_and_replacement(client: TestClient, db_
 
 
 def test_price_change_restarts_and_equal_recheck_is_normal(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
+    tomate_id = catalog_product_id(db_session, tenant.business_id, TOMATE_NAME)
     try:
         asked = _post(client, token, "900gr tomate a 30", "ov-race", "conv-race")
         assert asked.json()["ui"] == []
-        _set_price(db_session, tenant.business_id, TOMATE_PRODUCT_ID, "22.00")
+        _set_price(db_session, tenant.business_id, tomate_id, "22.00")
         restarted = _post(client, token, "precio especial para cliente", "ov-race-why", "conv-race")
         assert restarted.json()["ui"] == []
         assert restarted.json()["text"] == "Tomate ahora está registrado a $22.00 por kg. ¿Por qué lo vendiste a $30.00?"
@@ -191,7 +193,7 @@ def test_price_change_restarts_and_equal_recheck_is_normal(client: TestClient, d
         assert items == []
         set_current_business_id(db_session, tenant.business_id)
         assert db_session.scalars(select(IdempotencyRecordRow).where(IdempotencyRecordRow.key == "ov-race-why")).all() == []
-        _set_price(db_session, tenant.business_id, TOMATE_PRODUCT_ID, "30.00")
+        _set_price(db_session, tenant.business_id, tomate_id, "30.00")
         equal = _post(client, token, "precio especial para cliente", "ov-race-eq", "conv-race")
         assert equal.json()["text"] == "Agregué 0.900 kg de Tomate · $27.00"
         assert "catalog_unit_price" not in equal.json()["ui"][0]["data"]
@@ -203,11 +205,11 @@ def test_price_change_restarts_and_equal_recheck_is_normal(client: TestClient, d
         assert line.price_override_reason is None
         assert line.line_total == Decimal("27.00")
     finally:
-        _set_price(db_session, tenant.business_id, TOMATE_PRODUCT_ID, "20.00")
+        _set_price(db_session, tenant.business_id, tomate_id, "20.00")
 
 
 def test_model_only_price_does_not_override_and_direct_call_locks(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     workflow = _workflow(db_session)
     context_tenant, _token = tenant, token
     ignored = workflow.execute(
@@ -234,7 +236,7 @@ def test_model_only_price_does_not_override_and_direct_call_locks(client: TestCl
         tenant=context_tenant,
         arguments={
             "source_type": "catalog",
-            "product_id": str(TOMATE_PRODUCT_ID),
+            "product_id": str(catalog_product_id(db_session, tenant.business_id, TOMATE_NAME)),
             "quantity": "900",
             "unit": "gram",
             "price_override": {"unit_price": {"amount": "30.00", "currency": "MXN"}, "reason": ""},
@@ -249,7 +251,7 @@ def test_model_only_price_does_not_override_and_direct_call_locks(client: TestCl
         tenant=context_tenant,
         arguments={
             "source_type": "catalog",
-            "product_id": str(TOMATE_PRODUCT_ID),
+            "product_id": str(catalog_product_id(db_session, tenant.business_id, TOMATE_NAME)),
             "quantity": "900",
             "unit": "gram",
             "price_override": {
@@ -266,11 +268,14 @@ def test_model_only_price_does_not_override_and_direct_call_locks(client: TestCl
     assert direct.payload["unit_price"]["amount"] == "30.00"
     assert direct.payload["line_total"]["amount"] == "27.00"
     set_current_business_id(db_session, tenant.business_id)
-    assert db_session.get(ProductRow, TOMATE_PRODUCT_ID).current_price == Decimal("20.00")
+    assert (
+        db_session.get(ProductRow, catalog_product_id(db_session, tenant.business_id, TOMATE_NAME)).current_price
+        == Decimal("20.00")
+    )
 
 
 def test_in_transaction_catalog_read_sets_snapshot_price_and_total(db_session) -> None:
-    tenant, _token = _seed_carrota(db_session)
+    tenant, _token = _seed_catalog(db_session)
     workflow = _workflow(db_session)
     catalog = workflow._catalog
     original = catalog.get
@@ -301,7 +306,7 @@ def test_in_transaction_catalog_read_sets_snapshot_price_and_total(db_session) -
 
 
 def test_mixed_total_payment_and_closed_day(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     _post(client, token, "900gr zanahoria", "mix-z", "conv-mix-ov")
     _post(client, token, "900gr tomate a 30", "mix-ask", "conv-mix-ov")
     tomato = _post(client, token, "precio especial para cliente", "mix-why", "conv-mix-ov")

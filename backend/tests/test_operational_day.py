@@ -20,11 +20,9 @@ from app.infrastructure.persistence.models import (
     SaleSessionRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
-from app.infrastructure.persistence.seed import ensure_carrota_seed
 from app.policies import PolicyRequest
 from app.policies.engine import DAY_001, FoundationPolicyEngine
 from tests.conftest import seed_business
-from tests.sale_cleanup import clear_tenant_sale_mutations
 
 
 def _auth(token: str, **extra: str) -> dict[str, str]:
@@ -40,10 +38,9 @@ def _post(client: TestClient, token: str, message: str, key: str, conversation_i
 
 
 def _seed(db_session):
-    tenant, token = ensure_carrota_seed(db_session, token_secret="test-dev-secret-16-chars-minimum")
-    db_session.commit()
-    clear_tenant_sale_mutations(db_session, tenant.business_id)
-    return tenant, token
+    from tests.isolation import seed_catalog_tenant
+
+    return seed_catalog_tenant(db_session)
 
 
 def _ready(client: TestClient, token: str, conversation_id: str, prefix: str, utterance: str) -> None:

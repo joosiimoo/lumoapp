@@ -17,6 +17,8 @@ from tests.sale_cleanup import discard_work_items
 
 BACKEND = Path(__file__).resolve().parents[1]
 
+pytestmark = pytest.mark.schema_migration
+
 
 def _config() -> Config:
     os.environ.setdefault("APP_ENV", "test")

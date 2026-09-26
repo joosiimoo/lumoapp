@@ -29,12 +29,7 @@ from app.infrastructure.persistence.models import (
     SaleSessionRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
-from app.infrastructure.persistence.seed import (
-    GALLETA_A_NAME,
-    TOMATE_NAME,
-    ZANAHORIA_NAME,
-    ensure_carrota_seed,
-)
+from app.infrastructure.persistence.seed import GALLETA_A_NAME, TOMATE_NAME, ZANAHORIA_NAME
 from tests.conftest import make_settings, postgres_available, seed_business
 from tests.sale_cleanup import (
     SALE_AUDIT_ACTIONS,
@@ -68,11 +63,10 @@ def _sales_for(db_session, business_id):
     return sessions, items
 
 
-def _seed_carrota(db_session):
-    tenant, token = ensure_carrota_seed(db_session, token_secret="test-dev-secret-16-chars-minimum")
-    db_session.commit()
-    clear_tenant_sale_mutations(db_session, tenant.business_id)
-    return tenant, token
+def _seed_catalog(db_session):
+    from tests.isolation import seed_catalog_tenant
+
+    return seed_catalog_tenant(db_session)
 
 
 def test_registered_tools_include_commit_and_start_never_confirmed() -> None:
@@ -99,7 +93,7 @@ def test_registered_tools_include_commit_and_start_never_confirmed() -> None:
 
 
 def test_golden_path_900gr_zanahoria(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-golden"
     response = _post(client, token, "900gr zanahoria", "golden-1", conversation_id)
     assert response.status_code == 200, response.text
@@ -128,7 +122,7 @@ def test_golden_path_900gr_zanahoria(client: TestClient, db_session) -> None:
 
 
 def test_message_idempotent_replay(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-replay"
     first = _post(client, token, "900gr zanahoria", "replay-sale", conversation_id)
     replay = _post(client, token, "900gr zanahoria", "replay-sale", conversation_id)
@@ -142,7 +136,7 @@ def test_message_idempotent_replay(client: TestClient, db_session) -> None:
 
 
 def test_new_session_rolled_back_with_failed_add_item(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     response = _post(
         client,
         token,
@@ -168,7 +162,7 @@ def test_new_session_rolled_back_with_failed_add_item(client: TestClient, db_ses
 
 
 def test_reused_session_unchanged_after_failed_add_item(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-reuse-fail"
     first = _post(client, token, "900gr zanahoria", "reuse-1", conversation_id)
     assert first.status_code == 200
@@ -191,7 +185,7 @@ def test_reused_session_unchanged_after_failed_add_item(client: TestClient, db_s
 
 
 def test_missing_unit_and_unknown_product_do_not_persist(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     missing = _post(client, token, "900 zanahoria", "no-unit", "conv-no-unit")
     unknown = _post(client, token, "900gr papa", "unknown", "conv-unknown")
     assert missing.status_code == 200
@@ -204,14 +198,13 @@ def test_missing_unit_and_unknown_product_do_not_persist(client: TestClient, db_
 
 
 def test_model_hinted_total_is_ignored(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     response = _post(client, token, "900gr zanahoria", "hint-99", "conv-hint")
     assert response.json()["ui"][0]["data"]["line_total"]["amount"] == "22.50"
 
 
-def test_cross_tenant_cannot_use_carrota_catalog(client: TestClient, db_session) -> None:
-    ensure_carrota_seed(db_session, token_secret="test-dev-secret-16-chars-minimum")
-    db_session.commit()
+def test_cross_tenant_cannot_use_another_catalog(client: TestClient, db_session) -> None:
+    _owner, _token_a = _seed_catalog(db_session)
     _other_id, _user, token_b = seed_business(db_session, name="Other")
     response = _post(client, token_b, "900gr zanahoria", "other-1", "conv-other")
     assert response.status_code == 200
@@ -266,7 +259,7 @@ def test_ambiguous_product_does_not_persist(client: TestClient, db_session) -> N
 
 
 def test_two_turn_missing_unit_then_gr_completes_add(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-clarify"
     first = _post(client, token, "900 zanahoria", "clarify-1", conversation_id)
     assert first.status_code == 200
@@ -289,7 +282,7 @@ def test_two_turn_missing_unit_then_gr_completes_add(client: TestClient, db_sess
 
 
 def test_unit_only_without_pending_does_not_persist(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     response = _post(client, token, "gr", "orphan-unit", "conv-orphan-unit")
     assert response.status_code == 200
     assert response.json()["ui"] == []
@@ -299,7 +292,7 @@ def test_unit_only_without_pending_does_not_persist(client: TestClient, db_sessi
 
 
 def test_same_conversation_id_reuses_one_session(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-same"
     first = _post(client, token, "900gr zanahoria", "same-1", conversation_id)
     second = _post(client, token, "900gr zanahoria", "same-2", conversation_id)
@@ -317,7 +310,7 @@ def test_same_conversation_id_reuses_one_session(client: TestClient, db_session)
 
 
 def test_different_conversation_ids_create_different_sessions(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     first = _post(client, token, "900gr zanahoria", "diff-1", "conv-a")
     second = _post(client, token, "900gr zanahoria", "diff-2", "conv-b")
     assert first.status_code == 200
@@ -334,7 +327,7 @@ def test_different_conversation_ids_create_different_sessions(client: TestClient
 
 
 def test_message_without_conversation_id_does_not_reuse_named_session(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     named = _post(client, token, "900gr zanahoria", "named-1", "conv-named")
     assert named.status_code == 200
     named_session = named.json()["ui"][0]["data"]["sale_session_id"]
@@ -353,7 +346,7 @@ def test_message_without_conversation_id_does_not_reuse_named_session(client: Te
 
 
 def test_committed_sale_integrity_rows_reference_live_ids(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     response = _post(client, token, "900gr zanahoria", "integrity-live", "conv-integrity")
     assert response.status_code == 200
     payload = response.json()["ui"][0]["data"]
@@ -386,7 +379,7 @@ def test_committed_sale_integrity_rows_reference_live_ids(client: TestClient, db
 
 
 def test_sale_cleanup_does_not_leave_orphan_integrity(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     response = _post(client, token, "900gr zanahoria", "cleanup-1", "conv-cleanup")
     assert response.status_code == 200
     clear_tenant_sale_mutations(db_session, tenant.business_id)
@@ -426,7 +419,7 @@ def test_sale_cleanup_does_not_leave_orphan_integrity(client: TestClient, db_ses
 
 
 def test_piecemeal_sales_delete_is_detected_and_official_cleanup_heals(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     response = _post(client, token, "900gr zanahoria", "live-clarify-2-shape", "conv-orphan-shape")
     assert response.status_code == 200
     set_current_business_id(db_session, tenant.business_id)
@@ -473,7 +466,7 @@ def _totalize_audits(db_session, business_id):
 
 
 def test_seed_resolves_representative_catalog(db_session) -> None:
-    tenant, _token = _seed_carrota(db_session)
+    tenant, _token = _seed_catalog(db_session)
     catalog = CatalogRepository(db_session)
     tomate = catalog.resolve(tenant=tenant, query="tomate")
     galleta = catalog.resolve(tenant=tenant, query="galleta a")
@@ -529,7 +522,7 @@ def test_active_index_preserves_coalesce_and_widens_status(db_session) -> None:
 
 
 def test_multi_item_then_galleta_a(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-multi"
     first = _post(client, token, "900gr zanahoria", "multi-1", conversation_id)
     second = _post(client, token, "500gr tomate", "multi-2", conversation_id)
@@ -553,7 +546,7 @@ def test_multi_item_then_galleta_a(client: TestClient, db_session) -> None:
 
 
 def test_kilogram_missing_unit_inside_active_sale(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-tomate-clarify"
     first = _post(client, token, "900gr zanahoria", "tc-1", conversation_id)
     missing = _post(client, token, "500 tomate", "tc-2", conversation_id)
@@ -578,7 +571,7 @@ def test_kilogram_missing_unit_inside_active_sale(client: TestClient, db_session
 
 
 def test_count_product_without_unit_completes_and_kilogram_still_asks(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     galleta = _post(client, token, "2 galletas A", "unit-galleta", "conv-unit-galleta")
     assert galleta.status_code == 200, galleta.text
     assert galleta.json()["ui"][0]["data"]["line_total"]["amount"] == "24.00"
@@ -591,7 +584,7 @@ def test_count_product_without_unit_completes_and_kilogram_still_asks(client: Te
 
 
 def test_totalize_transition_replay_and_different_key_read_back(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-totalize"
     _post(client, token, "900gr zanahoria", "tot-1", conversation_id)
     _post(client, token, "500gr tomate", "tot-2", conversation_id)
@@ -634,7 +627,7 @@ def test_totalize_transition_replay_and_different_key_read_back(client: TestClie
 
 
 def test_empty_totalize_does_not_mutate(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     response = _post(client, token, "totalizar", "empty-tot", "conv-empty-tot")
     assert response.status_code == 200
     assert response.json()["ui"] == []
@@ -646,7 +639,7 @@ def test_empty_totalize_does_not_mutate(client: TestClient, db_session) -> None:
 
 
 def test_add_after_ready_rejected_and_new_conversation_isolated(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-ready"
     _post(client, token, "900gr zanahoria", "ready-1", conversation_id)
     totalize = _post(client, token, "totalizar", "ready-tot", conversation_id)
@@ -670,7 +663,7 @@ def test_add_after_ready_rejected_and_new_conversation_isolated(client: TestClie
 
 
 def test_unknown_papa_does_not_damage_open_sale(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-papa"
     first = _post(client, token, "900gr zanahoria", "papa-1", conversation_id)
     unknown = _post(client, token, "900gr papa", "papa-2", conversation_id)
@@ -685,7 +678,7 @@ def test_unknown_papa_does_not_damage_open_sale(client: TestClient, db_session) 
 
 
 def test_totalize_forced_failure_rolls_back_integrity(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-fail-tot"
     _post(client, token, "900gr zanahoria", "fail-tot-1", conversation_id)
     failed = _post(
@@ -712,7 +705,7 @@ def test_totalize_forced_failure_rolls_back_integrity(client: TestClient, db_ses
 
 
 def test_cross_business_cannot_see_carrota_sale(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     _post(client, token, "900gr zanahoria", "rls-sale", "conv-rls-sale")
     business_b, _user_b, token_b = seed_business(db_session, name="OtherSale")
     hidden = _post(client, token_b, "900gr zanahoria", "rls-other", "conv-rls-other")
@@ -726,7 +719,7 @@ def test_cross_business_cannot_see_carrota_sale(client: TestClient, db_session) 
 
 
 def test_concurrent_add_item_vs_totalize(app, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-race"
     with TestClient(app, raise_server_exceptions=False) as setup:
         seeded = _post(setup, token, "900gr zanahoria", "race-setup", conversation_id)
@@ -867,7 +860,7 @@ def _assert_confirmed_card(card, *, method: str, session_id: str | None = None) 
     ],
 )
 def test_cash_card_transfer_completion(client: TestClient, db_session, message: str, method: str) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = f"conv-pay-{method}"
     totalize = _three_item_ready(client, token, conversation_id, method)
     session_id = totalize.json()["ui"][0]["data"]["sale_session_id"]
@@ -895,7 +888,7 @@ def test_cash_card_transfer_completion(client: TestClient, db_session, message: 
 
 
 def test_payment_before_totalize_and_with_no_sale(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     open_sale = _post(client, token, "900gr zanahoria", "open-1", "conv-open-pay")
     assert open_sale.status_code == 200
     early = _post(client, token, "efectivo", "open-pay", "conv-open-pay")
@@ -919,7 +912,7 @@ def test_payment_before_totalize_and_with_no_sale(client: TestClient, db_session
 
 
 def test_unknown_method_and_pagar_clarify_without_mutation(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     _three_item_ready(client, token, "conv-unknown-pay", "unk")
     for message, key in (("cheque", "cheque-1"), ("pagar", "pagar-1")):
         response = _post(client, token, message, key, "conv-unknown-pay")
@@ -938,7 +931,7 @@ def test_unknown_method_and_pagar_clarify_without_mutation(client: TestClient, d
 
 
 def test_commit_same_key_replay_and_different_key_read_back(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-commit-idemp"
     totalize = _three_item_ready(client, token, conversation_id, "idemp")
     session_id = totalize.json()["ui"][0]["data"]["sale_session_id"]
@@ -986,7 +979,7 @@ def test_add_against_confirmed_rejected_and_next_sale_creates_new_session(
     from app.domain.shared.tenant import TenantContext
     from app.infrastructure.persistence.catalog_sales import SalesRepository
 
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-next-sale"
     totalize = _three_item_ready(client, token, conversation_id, "next")
     session_id = totalize.json()["ui"][0]["data"]["sale_session_id"]
@@ -1041,7 +1034,7 @@ def sessions_id_uuid(value: str):
 
 
 def test_concurrent_commit_vs_commit(app, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-race-commit"
     with TestClient(app, raise_server_exceptions=False) as setup:
         _three_item_ready(setup, token, conversation_id, "rc")
@@ -1074,7 +1067,7 @@ def test_concurrent_commit_vs_commit(app, db_session) -> None:
 
 
 def test_concurrent_commit_vs_add_item_case_a_or_b(app, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-race-add-commit"
     with TestClient(app, raise_server_exceptions=False) as setup:
         first = _post(setup, token, "900gr zanahoria", "rac-1", conversation_id)
@@ -1125,7 +1118,7 @@ def test_concurrent_commit_vs_add_item_case_a_or_b(app, db_session) -> None:
 
 
 def test_case_a_add_after_ready_does_not_start_next_sale(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-case-a"
     _post(client, token, "900gr zanahoria", "ca-1", conversation_id)
     totalize = _post(client, token, "totalizar", "ca-tot", conversation_id)
@@ -1153,7 +1146,7 @@ def test_payment_tenant_mismatch_and_rls(client: TestClient, db_session) -> None
     from app.domain.shared.tenant import TenantContext
     from app.infrastructure.persistence.catalog_sales import SalesRepository
 
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-tenant-pay"
     _three_item_ready(client, token, conversation_id, "ten")
     sessions, _items = _sales_for(db_session, tenant.business_id)
@@ -1204,7 +1197,7 @@ def test_payment_tenant_mismatch_and_rls(client: TestClient, db_session) -> None
 
 
 def test_commit_forced_failure_rolls_back_integrity(client: TestClient, db_session) -> None:
-    tenant, token = _seed_carrota(db_session)
+    tenant, token = _seed_catalog(db_session)
     conversation_id = "conv-fail-commit"
     _three_item_ready(client, token, conversation_id, "failc")
     failed = _post(
