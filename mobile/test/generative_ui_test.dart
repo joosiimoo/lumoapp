@@ -14,6 +14,13 @@ import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/widgets/lumo_card.dart';
 import 'package:lumo/lumo/widgets/lumo_chips.dart';
 
+Future<void> tapLabel(WidgetTester tester, String label) async {
+  final finder = find.text(label);
+  await tester.ensureVisible(finder);
+  await tester.pump();
+  await tester.tap(finder);
+}
+
 Map<String, dynamic> _goldenContract({
   String lineTotal = '22.50',
   int sessionItemCount = 1,
@@ -1020,7 +1027,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('totalizar'), findsOneWidget);
     await tester.ensureVisible(find.text('Efectivo'));
-    await tester.tap(find.text('Efectivo'));
+    await tapLabel(tester, 'Efectivo');
     await tester.pumpAndSettle();
     expect(find.text('totalizar'), findsOneWidget);
     expect(find.text('Efectivo'), findsOneWidget);
@@ -1073,12 +1080,12 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.send);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Efectivo'));
-    await tester.tap(find.text('Efectivo'));
+    await tapLabel(tester, 'Efectivo');
     await tester.pump();
     expect(find.text('No pude registrar eso. Intenta de nuevo.'), findsOneWidget);
     expect(find.text('Efectivo'), findsOneWidget);
     await tester.ensureVisible(find.text('Efectivo'));
-    await tester.tap(find.text('Efectivo'));
+    await tapLabel(tester, 'Efectivo');
     await tester.pump();
     expect(attempts, 2);
     expect(keys, ['server-key', 'server-key']);
@@ -1128,7 +1135,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.send);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Efectivo'));
-    await tester.tap(find.text('Efectivo'));
+    await tapLabel(tester, 'Efectivo');
     await tester.pumpAndSettle();
     expect(find.text('Esta acción ya no aplica a la venta en curso.'), findsOneWidget);
     expect(find.text('Venta registrada'), findsNothing);
@@ -1198,9 +1205,9 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.send);
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('Efectivo'));
-    await tester.tap(find.text('Efectivo'));
+    await tapLabel(tester, 'Efectivo');
     await tester.pump();
-    await tester.tap(find.text('Efectivo'));
+    await tapLabel(tester, 'Efectivo');
     await tester.pump();
     expect(posts, 1);
     release.complete(_json({

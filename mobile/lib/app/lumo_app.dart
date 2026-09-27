@@ -4,6 +4,7 @@ import 'package:lumo/api/lumo_api_client.dart';
 import 'package:lumo/core/env/app_config.dart';
 import 'package:lumo/core/session/session_store.dart';
 import 'package:lumo/features/hoy/hoy_page.dart';
+import 'package:lumo/features/inicio/business_stream.dart';
 import 'package:lumo/features/inicio/inicio_page.dart';
 import 'package:lumo/features/memoria/memoria_page.dart';
 import 'package:lumo/features/negocio/negocio_page.dart';
@@ -85,6 +86,7 @@ class LumoHome extends StatefulWidget {
 class _LumoHomeState extends State<LumoHome> {
   LumoTab _tab = LumoTab.inicio;
   final _composer = TextEditingController();
+  final _composerFocus = FocusNode();
   final List<InicioTurn> _inicio = [];
   bool _sending = false;
   String? _pendingOperation;
@@ -94,12 +96,15 @@ class _LumoHomeState extends State<LumoHome> {
   final Set<String> _settledCards = {};
   String? _busyCardKey;
   String? _busyActionKey;
+  BusinessStream? _stream;
+  bool _streamFailed = false;
 
   @override
   void initState() {
     super.initState();
     _conversationId = const Uuid().v4();
     _loadBusiness();
+    _loadStream();
   }
 
   Future<void> _loadBusiness() async {
@@ -116,8 +121,35 @@ class _LumoHomeState extends State<LumoHome> {
     } catch (_) {}
   }
 
+  Future<void> _loadStream() async {
+    try {
+      final body = await widget.apiClient.getBusinessStreamToday();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _stream = BusinessStream.fromJson(body);
+        _streamFailed = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _stream = null;
+        _streamFailed = true;
+      });
+    }
+  }
+
+  void _showInicio() {
+    setState(() => _tab = LumoTab.inicio);
+    _loadStream();
+  }
+
   @override
   void dispose() {
+    _composerFocus.dispose();
     _composer.dispose();
     super.dispose();
   }
@@ -149,6 +181,7 @@ class _LumoHomeState extends State<LumoHome> {
         _busyCardKey = null;
         _busyActionKey = null;
       });
+      await _loadStream();
     } catch (_) {
       if (!mounted) {
         return;
@@ -196,6 +229,7 @@ class _LumoHomeState extends State<LumoHome> {
         _sending = false;
         _pendingOperation = null;
       });
+      await _loadStream();
     } catch (_) {
       if (!mounted) {
         return;
@@ -208,15 +242,55 @@ class _LumoHomeState extends State<LumoHome> {
     }
   }
 
+  Future<void> _sendPhrase(String text) async {
+    if (_tab != LumoTab.inicio || _sending || text.trim().isEmpty) {
+      return;
+    }
+    final operation = 'lumo.message.send.${DateTime.now().microsecondsSinceEpoch}';
+    setState(() {
+      _inicio.add(InicioTurn.user(text));
+      _sending = true;
+    });
+    try {
+      final response = await widget.apiClient.postMessage(
+        text,
+        operation: operation,
+        conversationId: _conversationId,
+        confirmationToken: _confirmationToken,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _inicio.add(InicioTurn.assistant(response.text, response.ui));
+        _confirmationToken = nextConfirmationToken(response.ui, _confirmationToken);
+        _sending = false;
+      });
+      await _loadStream();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _sending = false);
+      LumoToast.show(context, 'No pude registrar eso. Intenta de nuevo.');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final showComposer = _tab != LumoTab.negocio && _tab != LumoTab.memoria;
     return LumoScaffold(
       currentTab: _tab,
-      onSelectTab: (tab) => setState(() => _tab = tab),
+      onSelectTab: (tab) {
+        setState(() => _tab = tab);
+        if (tab == LumoTab.inicio) {
+          _loadStream();
+        }
+      },
       footer: showComposer
           ? LumoComposer(
               controller: _composer,
+              focusNode: _composerFocus,
               onSend: _onSend,
             )
           : null,
@@ -228,11 +302,16 @@ class _LumoHomeState extends State<LumoHome> {
             disabledCardKeys: _settledCards,
             busyCardKey: _busyCardKey,
             busyActionKey: _busyActionKey,
+            stream: _stream,
+            streamFailed: _streamFailed,
+            onRetryStream: _loadStream,
+            onRecordCashCount: () => _composerFocus.requestFocus(),
+            onRequestClose: _sendPhrase,
           ),
         LumoTab.hoy => HoyPage(
             apiClient: widget.apiClient,
             conversationId: _conversationId,
-            onSwitchToInicio: () => setState(() => _tab = LumoTab.inicio),
+            onSwitchToInicio: _showInicio,
           ),
         LumoTab.memoria => MemoriaPage(apiClient: widget.apiClient),
         LumoTab.negocio => const NegocioPage(),

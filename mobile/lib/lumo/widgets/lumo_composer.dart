@@ -7,10 +7,12 @@ class LumoComposer extends StatefulWidget {
     super.key,
     required this.controller,
     required this.onSend,
+    this.focusNode,
   });
 
   final TextEditingController controller;
   final VoidCallback onSend;
+  final FocusNode? focusNode;
 
   @override
   State<LumoComposer> createState() => _LumoComposerState();
@@ -64,6 +66,7 @@ class _LumoComposerState extends State<LumoComposer> {
             Expanded(
               child: TextField(
                 controller: widget.controller,
+                focusNode: widget.focusNode,
                 style: LumoTypography.input,
                 textInputAction: TextInputAction.send,
                 onSubmitted: (_) {

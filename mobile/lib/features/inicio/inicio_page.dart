@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:lumo/features/inicio/business_stream.dart';
+import 'package:lumo/features/inicio/business_stream_panel.dart';
 import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/tokens.dart';
 import 'package:lumo/lumo/typography.dart';
@@ -32,6 +34,11 @@ class InicioPage extends StatelessWidget {
     this.disabledCardKeys = const {},
     this.busyCardKey,
     this.busyActionKey,
+    this.stream,
+    this.streamFailed = false,
+    this.onRetryStream,
+    this.onRecordCashCount,
+    this.onRequestClose,
   });
 
   final List<InicioTurn> messages;
@@ -40,6 +47,11 @@ class InicioPage extends StatelessWidget {
   final Set<String> disabledCardKeys;
   final String? busyCardKey;
   final String? busyActionKey;
+  final BusinessStream? stream;
+  final bool streamFailed;
+  final VoidCallback? onRetryStream;
+  final VoidCallback? onRecordCashCount;
+  final void Function(String message)? onRequestClose;
 
   @override
   Widget build(BuildContext context) {
@@ -64,6 +76,16 @@ class InicioPage extends StatelessWidget {
           child: Text('Buenos días', style: LumoTypography.displayGreeting.copyWith(color: Colors.white)),
         ),
         const SizedBox(height: 16),
+        if (streamFailed || stream != null) ...[
+          BusinessStreamPanel(
+            stream: stream,
+            failed: streamFailed,
+            onRetry: onRetryStream ?? () {},
+            onRecordCashCount: onRecordCashCount ?? () {},
+            onRequestClose: onRequestClose ?? (_) {},
+          ),
+          const SizedBox(height: 16),
+        ],
         if (messages.isEmpty)
           Text(
             'Dile a Lumo qué vendiste. Prueba con 900gr zanahoria.',

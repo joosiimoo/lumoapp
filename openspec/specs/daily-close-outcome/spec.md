@@ -100,7 +100,7 @@ Successful `closing.confirm@1` MUST, in the same transaction, insert the Closing
 - **THEN** the inserted OutcomeRun MUST be `completed`, that resolved WorkItem MUST reference it, and the link MUST NOT write `work_item.created` or a second `work_item.resolved`
 
 ### Requirement: Outcome writes join the parent transaction only
-Outcome sync MUST run only inside successful `sale.commit@1`, a new current CashCount insert, and successful `closing.confirm@1`, in the order `daily-close-outcome` design records. `closing.prepare@1`, `operational_day.summary@1`, daily sales export, the Next Best Action GET, `operational_day.next_best_action@1`, an equal-amount cash-count read-back, a clarify, a stale confirmation, an idempotent replay, and an already-closed read-back MUST NOT insert or update an OutcomeRun. A failure before commit MUST leave no new OutcomeRun and no outcome audit from that attempt. Export column names, file bytes, and close phrases MUST stay unchanged.
+Outcome sync MUST run only inside successful `sale.commit@1`, a new current CashCount insert, and successful `closing.confirm@1`, in the order `daily-close-outcome` design records. `closing.prepare@1`, `operational_day.summary@1`, daily sales export, the Next Best Action GET, `GET /api/v1/business-stream/today`, `operational_day.next_best_action@1`, an equal-amount cash-count read-back, a clarify, a stale confirmation, an idempotent replay, and an already-closed read-back MUST NOT insert or update an OutcomeRun. A failure before commit MUST leave no new OutcomeRun and no outcome audit from that attempt. Export column names, file bytes, and close phrases MUST stay unchanged.
 
 #### Scenario: Preparation does not write the outcome
 - **WHEN** the actor posts `preparar el cierre` for an open day that already has an OutcomeRun
@@ -113,6 +113,10 @@ Outcome sync MUST run only inside successful `sale.commit@1`, a new current Cash
 #### Scenario: A rolled-back commit leaves no outcome
 - **WHEN** the first commit of the day fails before commit after preparing an OutcomeRun insert
 - **THEN** that OutcomeRun MUST NOT remain
+
+#### Scenario: Business Stream does not write the outcome
+- **WHEN** `GET /api/v1/business-stream/today` runs for an open day that already has an OutcomeRun
+- **THEN** that OutcomeRun MUST be unchanged and no outcome audit MUST be written
 
 ### Requirement: Today-only initializer and no historical invention
 Migration `0011` MUST NOT insert an OutcomeRun. The existing deploy command MUST, for each business's open OperationalDay dated today, ensure the OutcomeRun from that day's facts and set `outcome_run_id` on that day's WorkItems that are still null. An initializer insert for a day with no current CashCount MUST be `in_progress` with `ready_at` null. An initializer insert for a day that already has a current CashCount MUST be `ready` with `ready_at` equal to the insertion instant. It MUST skip closed days and older open days. It MUST NOT be an HTTP route and MUST NOT grant `BYPASSRLS`. An insert MUST audit `outcome_run.created` with a null actor, `route_or_tool` `outcome_run.bootstrap`, and `origin=rollout_bootstrap`. A second run MUST NOT insert another row and MUST NOT write audit when the stored status and reason already match. Already closed days MUST NOT gain a retroactive OutcomeRun.
@@ -130,11 +134,15 @@ Migration `0011` MUST NOT insert an OutcomeRun. The existing deploy command MUST
 - **THEN** no second OutcomeRun MUST exist and no additional `outcome_run.created` audit MUST be written
 
 ### Requirement: No merchant outcome API
-This slice MUST NOT add `GET /api/v1/operational-days/current/outcome` or any other merchant OutcomeRun read or mutation route.
+The system MUST NOT add `GET /api/v1/operational-days/current/outcome` or any other merchant OutcomeRun resource route. `GET /api/v1/business-stream/today` MAY read today's OutcomeRun id and MUST NOT return the run, its `reason_code`, or its evidence. That GET MUST NOT insert or update an OutcomeRun.
 
 #### Scenario: Outcome route is absent
 - **WHEN** the API route table is inspected
 - **THEN** it MUST NOT contain an outcome collection or current-outcome route
+
+#### Scenario: Business Stream is not an outcome resource
+- **WHEN** `GET /api/v1/business-stream/today` returns for a day that has an OutcomeRun
+- **THEN** the body MUST NOT contain `reason_code` or outcome evidence, and the OutcomeRun row MUST be unchanged
 
 ### Requirement: A completed outcome is not full source coverage
 `daily_close_ready@1` with `status=completed` MUST mean the Daily Close responsibility for operations represented in Lumo was completed. It MUST NOT mean that all real-world business operations were captured. Outcome evidence MUST keep the keys `daily-close-outcome` already requires and MUST NOT gain a source-coverage id, a coverage summary, a completeness percentage, or merchant prose. Completing the OutcomeRun MUST NOT by itself insert or update a coverage row; coverage writes stay on the hooks in `source-coverage`. `OutcomeEngine.evaluate` MUST NOT insert a coverage row or a business event.

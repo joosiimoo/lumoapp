@@ -30,6 +30,10 @@ class LumoApiClient {
     return _send('GET', path);
   }
 
+  Future<Map<String, dynamic>> getBusinessStreamToday() {
+    return get('/api/v1/business-stream/today');
+  }
+
   Future<Map<String, dynamic>> getMemoryEvents({int? limit, String? before}) {
     final params = <String, String>{};
     if (limit != null) {
