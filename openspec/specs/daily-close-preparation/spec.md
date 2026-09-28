@@ -1,9 +1,7 @@
 ## Purpose
 
 Server-derived expected cash, signed cash difference, cash status, and the read tool `closing.prepare@1`. Preparation of an open day never closes it. A closed day is read from its `ClosingSnapshot` as `daily_close_confirmed@1`.
-
 ## Requirements
-
 ### Requirement: Expected cash is recorded cash payments of the day
 `expected_cash` MUST be computed in the backend as the `Decimal` sum of `sales.payments.amount` where `status=recorded` and `method=cash`, for the `SaleSession`s of that `OperationalDay` whose status is `confirmed`. It MUST be quantized to two decimal places, MUST be `0.00` when there are no cash sales, and MUST use the business currency. Card and transfer payments MUST NOT change it. `open` and `ready_to_charge` sessions MUST be excluded. `expected_cash` MUST be produced by the same repository aggregation that computes `cash_total` for `operational_day.summary@1`, and the two values MUST be equal for the same day. Build A MUST NOT include an opening float, cash expenses, withdrawals, deposits, refunds, voids, tips, or rounding adjustments in the formula, because no authoritative Build A requirement defines them. The client, the interpreter, and the model MUST NOT supply or recompute `expected_cash`.
 
@@ -50,11 +48,11 @@ Server-derived expected cash, signed cash difference, cash status, and the read 
 - **THEN** `cash_status` MUST be one of the four allowed values and MUST NOT be `ready_to_close`, `closed`, `accepted`, or `blocked`
 
 ### Requirement: Tool closing.prepare@1 is a read
-`ToolRegistry` MUST register `closing.prepare@1` as a read tool. Input MUST be an empty object and MUST NOT accept an amount, a difference, a status, an `operational_day_id`, or a business date. Permission MUST be `closing.submit_cash_count`. Policy MUST be `CLOSE-002`. Side effect MUST be `read`. Idempotency MUST NOT be required, and the message path MUST NOT insert an idempotency record for it. Despite the Architecture §10.1 name, this tool MUST NOT insert or update `operations.operational_days`, `operations.cash_counts`, `operations.closing_snapshots`, `sales.sale_sessions`, `sales.sale_items`, `sales.payments`, `audit.audit_events`, `platform.outbox_events`, or `platform.idempotency_records`. It MUST NOT change `OperationalDay.status`, evaluate outcome gates, create a `ClosingSnapshot`, create WorkItems, mark a day ready to close, or confirm a close. It MUST NOT issue a confirmation token. When the day is `open` or absent, output MUST be the live close-preparation payload with `confirmation_token` null. When the day is `closed`, output MUST be the persisted `ClosingSnapshot` and the composer MUST emit `daily_close_confirmed@1` instead of `daily_close_preparation@1`. That closed read MUST NOT recompute totals from current sales. A `closed` day with no snapshot MUST fail the read and MUST NOT fall back to a live aggregate. `closing.reopen@1` MUST remain unregistered.
+`ToolRegistry` MUST register `closing.prepare@1` as a read tool. Input MUST be an empty object and MUST NOT accept an amount, a difference, a status, an `operational_day_id`, or a business date. Permission MUST be `closing.submit_cash_count`. Policy MUST be `CLOSE-002`. Side effect MUST be `read`. Idempotency MUST NOT be required, and the message path MUST NOT insert an idempotency record for it. Despite the Architecture §10.1 name, this tool MUST NOT insert or update `operations.operational_days`, `operations.cash_counts`, `operations.closing_snapshots`, `operations.work_absorption_records`, `operations.outcome_costs`, `sales.sale_sessions`, `sales.sale_items`, `sales.payments`, `audit.audit_events`, `platform.outbox_events`, or `platform.idempotency_records`. It MUST NOT change `OperationalDay.status`, evaluate outcome gates, create a `ClosingSnapshot`, create WorkItems, mark a day ready to close, confirm a close, or write work-absorption or outcome-cost instrumentation. It MUST NOT issue a confirmation token. When the day is `open` or absent, output MUST be the live close-preparation payload with `confirmation_token` null. When the day is `closed`, output MUST be the persisted `ClosingSnapshot` and the composer MUST emit `daily_close_confirmed@1` instead of `daily_close_preparation@1`. That closed read MUST NOT recompute totals from current sales. A `closed` day with no snapshot MUST fail the read and MUST NOT fall back to a live aggregate. `closing.reopen@1` MUST remain unregistered.
 
 #### Scenario: Preparation read writes nothing
 - **WHEN** `closing.prepare@1` runs for a tenant that has a confirmed cash sale and a recorded count on an open day
-- **THEN** it MUST return the live preparation payload and MUST NOT insert or update any operational day, cash count, snapshot, sale, payment, audit, outbox, or idempotency row
+- **THEN** it MUST return the live preparation payload and MUST NOT insert or update any operational day, cash count, snapshot, sale, payment, absorption row, cost row, audit, outbox, or idempotency row
 
 #### Scenario: Repeat read is stable
 - **WHEN** the actor requests close preparation twice with no cash sale and no count in between
@@ -126,3 +124,4 @@ A successful insert of a new current `CashCount` MUST, in that same transaction,
 #### Scenario: Preparation does not write coverage or memory
 - **WHEN** the actor posts `preparar el cierre`
 - **THEN** `closing.prepare@1` MUST NOT insert or update a coverage row or a business event
+

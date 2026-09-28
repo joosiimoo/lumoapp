@@ -18,12 +18,14 @@ from app.infrastructure.persistence.models import (
     ClosingSnapshotRow,
     IdempotencyRecordRow,
     OperationalDayRow,
+    OutcomeCostRow,
     OutcomeRunRow,
     OutboxEventRow,
     PaymentRow,
     SaleItemRow,
     SaleSessionRow,
     SourceCoverageRecordRow,
+    WorkAbsorptionRecordRow,
     WorkItemRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
@@ -40,6 +42,8 @@ SALE_AUDIT_ACTIONS = (
     "work_item.resolved",
     "outcome_run.created",
     "outcome_run.status_changed",
+    "work_absorption.created",
+    "outcome_cost.created",
 )
 SALE_OUTBOX_EVENTS = (
     "sale.item.added",
@@ -94,6 +98,8 @@ def discard_work_items(engine) -> None:
     with engine.begin() as connection:
         _purge_rls_table(connection, "operations.business_events")
         _purge_rls_table(connection, "operations.source_coverage_records")
+        _purge_rls_table(connection, "operations.work_absorption_records")
+        _purge_rls_table(connection, "operations.outcome_costs")
         if connection.execute(text("SELECT to_regclass('operations.work_items')")).scalar() is not None:
             connection.execute(text("ALTER TABLE operations.work_items DISABLE ROW LEVEL SECURITY"))
             connection.execute(text("DELETE FROM operations.work_items"))
@@ -170,6 +176,8 @@ def isolate_database_for_0007_downgrade(engine) -> None:
             connection.execute(text("DELETE FROM operations.work_items"))
             connection.execute(text("ALTER TABLE operations.work_items ENABLE ROW LEVEL SECURITY"))
             connection.execute(text("ALTER TABLE operations.work_items FORCE ROW LEVEL SECURITY"))
+        _purge_rls_table(connection, "operations.work_absorption_records")
+        _purge_rls_table(connection, "operations.outcome_costs")
         if connection.execute(text("SELECT to_regclass('operations.outcome_runs')")).scalar() is not None:
             connection.execute(text("ALTER TABLE operations.outcome_runs DISABLE ROW LEVEL SECURITY"))
             connection.execute(text("DELETE FROM operations.outcome_runs"))
@@ -196,6 +204,10 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(PaymentRow.__table__.delete().where(PaymentRow.business_id == business_id))
     session.execute(SaleItemRow.__table__.delete().where(SaleItemRow.business_id == business_id))
     session.execute(SaleSessionRow.__table__.delete().where(SaleSessionRow.business_id == business_id))
+    session.execute(
+        WorkAbsorptionRecordRow.__table__.delete().where(WorkAbsorptionRecordRow.business_id == business_id)
+    )
+    session.execute(OutcomeCostRow.__table__.delete().where(OutcomeCostRow.business_id == business_id))
     session.execute(WorkItemRow.__table__.delete().where(WorkItemRow.business_id == business_id))
     session.execute(OutcomeRunRow.__table__.delete().where(OutcomeRunRow.business_id == business_id))
     session.execute(ClosingSnapshotRow.__table__.delete().where(ClosingSnapshotRow.business_id == business_id))
@@ -407,4 +419,30 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
     for identity, count in identity_counts.items():
         if count > 1:
             orphans.append(f"outcome:day={identity[0]}:rows={count}")
+    outcome_ids = {str(r.id) for r in outcomes}
+    absorptions = session.scalars(
+        select(WorkAbsorptionRecordRow).where(WorkAbsorptionRecordRow.business_id == business_id)
+    ).all()
+    absorption_keys: dict[tuple[str, str], int] = {}
+    for row in absorptions:
+        key = (str(row.outcome_run_id), row.task_type)
+        absorption_keys[key] = absorption_keys.get(key, 0) + 1
+        if str(row.outcome_run_id) not in outcome_ids:
+            orphans.append(f"work_absorption:{row.id}:missing_outcome={row.outcome_run_id}")
+        elif row.business_id != business_id:
+            orphans.append(f"work_absorption:{row.id}:cross_business")
+    for key, count in absorption_keys.items():
+        if count > 1:
+            orphans.append(f"work_absorption:duplicate={key}:rows={count}")
+    costs = session.scalars(
+        select(OutcomeCostRow).where(OutcomeCostRow.business_id == business_id)
+    ).all()
+    cost_per_outcome: dict[str, int] = {}
+    for row in costs:
+        cost_per_outcome[str(row.outcome_run_id)] = cost_per_outcome.get(str(row.outcome_run_id), 0) + 1
+        if str(row.outcome_run_id) not in outcome_ids:
+            orphans.append(f"outcome_cost:{row.id}:missing_outcome={row.outcome_run_id}")
+    for outcome_id, count in cost_per_outcome.items():
+        if count > 1:
+            orphans.append(f"outcome_cost:duplicate_outcome={outcome_id}:rows={count}")
     return orphans

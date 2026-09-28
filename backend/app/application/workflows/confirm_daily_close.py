@@ -13,6 +13,7 @@ from app.application.closing_confirmation_token import (
 )
 from app.application.ports import AuditService, IdempotencyService, IdentityPort, Outbox
 from app.application.workflows.record_source_memory import record_daily_close
+from app.application.workflows.sync_daily_close_instrumentation import maintain_daily_close_instrumentation
 from app.application.workflows.sync_daily_close_outcome import sync_daily_close_outcome
 from app.application.workflows.sync_daily_close_work_items import sync_daily_close_work_items
 from app.application.workflows.get_daily_close_preparation import (
@@ -230,6 +231,33 @@ class ConfirmDailyClose:
             route_or_tool="closing.confirm@1",
             closing=True,
         )
+        pending = sync_daily_close_outcome(
+            identities=self._identities,
+            operations=self._operations,
+            audit=self._audit,
+            tenant=tenant,
+            now=instant,
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            route_or_tool="closing.confirm@1",
+            closing=True,
+            complete_outcome=False,
+        )
+        if pending is None:
+            raise ValidationAppError("daily close requires an outcome run before instrumentation")
+        maintain_daily_close_instrumentation(
+            operations=self._operations,
+            audit=self._audit,
+            tenant=tenant,
+            outcome_run=pending,
+            now=instant,
+            correlation_id=correlation_id,
+            route_or_tool="closing.confirm@1",
+            idempotency_key=idempotency_key,
+            finalize_close=True,
+            cash_count_id=count.id,
+            closing_snapshot_id=snapshot.id,
+        )
         completed = sync_daily_close_outcome(
             identities=self._identities,
             operations=self._operations,
@@ -240,6 +268,7 @@ class ConfirmDailyClose:
             idempotency_key=idempotency_key,
             route_or_tool="closing.confirm@1",
             closing=True,
+            complete_outcome=True,
         )
         if completed is None:
             raise ValidationAppError("daily close requires a completed outcome run")

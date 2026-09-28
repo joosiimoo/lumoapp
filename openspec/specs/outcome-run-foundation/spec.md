@@ -3,7 +3,6 @@
 ## Purpose
 
 Durable `daily_close_ready` version `1` OutcomeRun for one business and one OperationalDay. Persisted status is `in_progress`, `ready`, or `completed`. `not_ready` is an OutcomeEngine verdict only.
-
 ## Requirements
 ### Requirement: Daily Close outcome is one durable row
 The system MUST persist `daily_close_ready` version `1` in `operations.outcome_runs`. A row MUST store `id`, `business_id`, `operational_day_id`, `outcome_type`, `outcome_version`, `status`, `owner_type`, `reason_code`, `evidence`, `created_at`, and `updated_at`. `ready_at`, `completed_at`, and `closing_snapshot_id` MUST be nullable. `outcome_type` MUST be `daily_close_ready`. `outcome_version` MUST be `1`. `owner_type` MUST be `business`. The row MUST NOT store `owner_id`, `failed_at`, a cost summary, a source-coverage id, sale lines, or model prose. Status MUST be only `in_progress`, `ready`, or `completed`. Reason codes MUST be only `awaiting_cash_count`, `ready_balanced`, `ready_cash_short`, `ready_cash_over`, and `closed_confirmed`. `blocked`, `failed`, `cancelled`, and `not_ready` MUST NOT be stored. `not_ready` is an `OutcomeEngine` evaluation verdict for an unknown definition id. It MUST NOT be an `OutcomeRun.status`, a reason code, or a value allowed by the `operations.outcome_runs` status check.
@@ -57,3 +56,15 @@ Inserting an OutcomeRun MUST write one audit action `outcome_run.created` in the
 #### Scenario: No outcome event is enqueued
 - **WHEN** an OutcomeRun is created or completed
 - **THEN** no outbox row whose type names the OutcomeRun MUST exist
+
+### Requirement: OutcomeRun remains the economic unit without embedded cost
+`operations.outcome_runs` MUST continue to store no `cost_summary`, token counts, infrastructure amounts, or work-absorption fields. Cost MUST live only on `operations.outcome_costs`. Work absorption MUST live only on `operations.work_absorption_records`. Completing an OutcomeRun MUST finalize related absorption and cost rows in the same parent transaction before `status` becomes `completed`. After `status=completed`, absorption and cost rows for that run MUST NOT be inserted or updated. Database triggers MUST enforce both `INSERT` and `UPDATE` rejection. Repair paths MUST NOT leave an OutcomeRun `completed` until instrumentation for that close exists in the same transaction.
+
+#### Scenario: Completed run keeps a slim outcome row
+- **WHEN** a Daily Close OutcomeRun is `completed`
+- **THEN** its columns MUST match the pre-instrumentation contract and cost MUST be readable only from `operations.outcome_costs`
+
+#### Scenario: Merchant outcome evidence is unchanged
+- **WHEN** `closing.confirm@1` completes an OutcomeRun
+- **THEN** outcome `evidence` MUST NOT gain absorption percentages, cost fields, or token counts
+

@@ -107,7 +107,7 @@ def _session(connection, business_id: UUID) -> UUID:
 
 
 def test_upgrade_backfills_catalog_and_enforces_checks(migrated) -> None:
-    assert _revision(migrated) == "0012_source_coverage_event_memory"
+    assert _revision(migrated) == "0013_work_absorption_outcome_cost"
     with migrated.begin() as connection:
         roles = {
             row.rolname: row.rolbypassrls
@@ -239,7 +239,7 @@ def test_downgrade_refuses_free_concept_and_accepts_catalog_only(migrated) -> No
     discard_work_items(engine)
     with pytest.raises(Exception, match="free-concept"):
         command.downgrade(_config(), "0007_daily_close_confirmation")
-    assert _revision(engine) == "0012_source_coverage_event_memory"
+    assert _revision(engine) == "0013_work_absorption_outcome_cost"
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE sales.sale_items DISABLE ROW LEVEL SECURITY"))
         kept = connection.execute(text("SELECT count(*) FROM sales.sale_items WHERE source_type = 'free_concept'")).scalar_one()
@@ -251,7 +251,7 @@ def test_downgrade_refuses_free_concept_and_accepts_catalog_only(migrated) -> No
     command.downgrade(_config(), "0007_daily_close_confirmation")
     assert _revision(engine) == "0007_daily_close_confirmation"
     command.upgrade(_config(), "head")
-    assert _revision(engine) == "0012_source_coverage_event_memory"
+    assert _revision(engine) == "0013_work_absorption_outcome_cost"
 
 
 def _revision(engine) -> str:

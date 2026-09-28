@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import and_, func, or_, select, update
@@ -37,18 +38,30 @@ from app.domain.operations import (
     WorkItemType,
 )
 from app.domain.sales import PaymentStatus, SaleSessionStatus
+from app.domain.operations.outcome_cost import OutcomeCost
 from app.domain.shared.errors import TenantScopeViolationError, ValidationAppError
+from app.domain.shared.ids import new_uuid7
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
+from app.domain.operations.outcome_cost import ComponentStatus, CostCompleteness, new_build_a_outcome_cost
+from app.domain.operations.work_absorption import (
+    AutomationLevel,
+    ExecutionMode,
+    TaskType,
+    WorkAbsorptionRecord,
+    baseline_payload,
+)
 from app.infrastructure.persistence.models import (
     BusinessEventRow,
     CashCountRow,
     ClosingSnapshotRow,
     OperationalDayRow,
+    OutcomeCostRow,
     OutcomeRunRow,
     PaymentRow,
     SaleSessionRow,
     SourceCoverageRecordRow,
+    WorkAbsorptionRecordRow,
     WorkItemRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
@@ -564,6 +577,162 @@ class OperationsRepository:
         self._session.flush()
         return _to_outcome(row)
 
+    def upsert_work_absorption_record(
+        self,
+        *,
+        tenant: TenantContext,
+        outcome_run_id: UUID,
+        task_type: str,
+        work_item_id: UUID | None,
+        evidence_ids: list[dict[str, str]],
+        now: datetime,
+    ) -> tuple[bool, WorkAbsorptionRecord]:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        task = TaskType(task_type)
+        payload = baseline_payload(task)
+        stored = self._session.scalar(
+            select(WorkAbsorptionRecordRow).where(
+                WorkAbsorptionRecordRow.business_id == tenant.business_id,
+                WorkAbsorptionRecordRow.outcome_run_id == outcome_run_id,
+                WorkAbsorptionRecordRow.task_type == task_type,
+            )
+        )
+        if stored is not None:
+            stored.work_item_id = work_item_id
+            stored.evidence_ids = evidence_ids
+            stored.updated_at = now
+            self._session.flush()
+            return False, _to_work_absorption(stored)
+        row = WorkAbsorptionRecordRow(
+            id=new_uuid7(),
+            business_id=tenant.business_id,
+            outcome_run_id=outcome_run_id,
+            work_item_id=work_item_id,
+            task_type=task_type,
+            previous_execution_mode=payload["previous_execution_mode"],
+            current_execution_mode=payload["current_execution_mode"],
+            human_steps_before=payload["human_steps_before"],
+            human_steps_after=payload["human_steps_after"],
+            estimated_minutes_saved=payload["estimated_minutes_saved"],
+            business_intervention_seconds=payload["business_intervention_seconds"],
+            internal_intervention_seconds=payload["internal_intervention_seconds"],
+            automation_level=payload["automation_level"],
+            evidence_ids=evidence_ids,
+            baseline_version=payload["baseline_version"],
+            created_at=now,
+            updated_at=now,
+        )
+        self._session.add(row)
+        self._session.flush()
+        return True, _to_work_absorption(row)
+
+    def list_work_absorption_for_run(
+        self,
+        *,
+        tenant: TenantContext,
+        outcome_run_id: UUID,
+    ) -> list[WorkAbsorptionRecord]:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        rows = self._session.scalars(
+            select(WorkAbsorptionRecordRow)
+            .where(
+                WorkAbsorptionRecordRow.business_id == tenant.business_id,
+                WorkAbsorptionRecordRow.outcome_run_id == outcome_run_id,
+            )
+            .order_by(WorkAbsorptionRecordRow.task_type.asc())
+        ).all()
+        return [_to_work_absorption(row) for row in rows]
+
+    def get_outcome_cost_for_run(
+        self,
+        *,
+        tenant: TenantContext,
+        outcome_run_id: UUID,
+    ) -> OutcomeCost | None:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(OutcomeCostRow).where(
+                OutcomeCostRow.business_id == tenant.business_id,
+                OutcomeCostRow.outcome_run_id == outcome_run_id,
+            )
+        )
+        return _to_outcome_cost(row) if row is not None else None
+
+    def ensure_outcome_cost_for_run(
+        self,
+        *,
+        tenant: TenantContext,
+        outcome_run_id: UUID,
+        now: datetime,
+        audit: Any,
+        correlation_id: str,
+        route_or_tool: str,
+        idempotency_key: str | None = None,
+        retry_count: int = 0,
+    ) -> tuple[bool, OutcomeCost]:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        existing = self._session.scalar(
+            select(OutcomeCostRow).where(
+                OutcomeCostRow.business_id == tenant.business_id,
+                OutcomeCostRow.outcome_run_id == outcome_run_id,
+            )
+        )
+        if existing is not None:
+            return False, _to_outcome_cost(existing)
+        cost_id = new_uuid7()
+        domain = new_build_a_outcome_cost(
+            id=cost_id,
+            business_id=tenant.business_id,
+            outcome_run_id=outcome_run_id,
+            created_at=now,
+            updated_at=now,
+            retry_count=retry_count,
+        )
+        row = OutcomeCostRow(
+            id=domain.id,
+            business_id=tenant.business_id,
+            outcome_run_id=outcome_run_id,
+            currency=domain.currency,
+            model_call_count=domain.model_call_count,
+            model_call_count_status=domain.model_call_count_status.value,
+            prompt_tokens=domain.prompt_tokens,
+            completion_tokens=domain.completion_tokens,
+            model_token_status=domain.model_token_status.value,
+            model_cost_amount=domain.model_cost_amount,
+            model_cost_status=domain.model_cost_status.value,
+            infrastructure_cost_amount=domain.infrastructure_cost_amount,
+            infrastructure_cost_status=domain.infrastructure_cost_status.value,
+            retry_count=domain.retry_count,
+            retry_count_status=domain.retry_count_status.value,
+            business_intervention_seconds=domain.business_intervention_seconds,
+            internal_intervention_seconds=domain.internal_intervention_seconds,
+            estimated_total_cost_amount=domain.estimated_total_cost_amount,
+            cost_completeness=domain.cost_completeness.value,
+            created_at=now,
+            updated_at=now,
+        )
+        self._session.add(row)
+        self._session.flush()
+        stored = _to_outcome_cost(row)
+        audit.record(
+            tenant=tenant,
+            action="outcome_cost.created",
+            route_or_tool=route_or_tool,
+            result="created",
+            correlation_id=correlation_id,
+            idempotency_key=idempotency_key,
+            after_payload={
+                "outcome_cost_id": str(stored.id),
+                "outcome_run_id": str(stored.outcome_run_id),
+                "cost_completeness": stored.cost_completeness.value,
+            },
+        )
+        return True, stored
+
     def link_null_work_items(
         self,
         *,
@@ -855,6 +1024,54 @@ def _to_work_item(row: WorkItemRow) -> WorkItem:
         resolved_by_actor_id=row.resolved_by_actor_id,
         resolution_code=code,
         outcome_run_id=row.outcome_run_id,
+    )
+
+
+def _to_work_absorption(row: WorkAbsorptionRecordRow) -> WorkAbsorptionRecord:
+    return WorkAbsorptionRecord(
+        id=row.id,
+        business_id=row.business_id,
+        outcome_run_id=row.outcome_run_id,
+        work_item_id=row.work_item_id,
+        task_type=TaskType(row.task_type),
+        previous_execution_mode=ExecutionMode(row.previous_execution_mode),
+        current_execution_mode=ExecutionMode(row.current_execution_mode),
+        human_steps_before=row.human_steps_before,
+        human_steps_after=row.human_steps_after,
+        estimated_minutes_saved=row.estimated_minutes_saved,
+        business_intervention_seconds=row.business_intervention_seconds,
+        internal_intervention_seconds=row.internal_intervention_seconds,
+        automation_level=AutomationLevel(row.automation_level),
+        evidence_ids=list(row.evidence_ids),
+        baseline_version=row.baseline_version,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+def _to_outcome_cost(row: OutcomeCostRow) -> OutcomeCost:
+    return OutcomeCost(
+        id=row.id,
+        business_id=row.business_id,
+        outcome_run_id=row.outcome_run_id,
+        currency=row.currency,
+        model_call_count=row.model_call_count,
+        model_call_count_status=ComponentStatus(row.model_call_count_status),
+        prompt_tokens=row.prompt_tokens,
+        completion_tokens=row.completion_tokens,
+        model_token_status=ComponentStatus(row.model_token_status),
+        model_cost_amount=row.model_cost_amount,
+        model_cost_status=ComponentStatus(row.model_cost_status),
+        infrastructure_cost_amount=row.infrastructure_cost_amount,
+        infrastructure_cost_status=ComponentStatus(row.infrastructure_cost_status),
+        retry_count=row.retry_count,
+        retry_count_status=ComponentStatus(row.retry_count_status),
+        business_intervention_seconds=row.business_intervention_seconds,
+        internal_intervention_seconds=row.internal_intervention_seconds,
+        estimated_total_cost_amount=row.estimated_total_cost_amount,
+        cost_completeness=CostCompleteness(row.cost_completeness),
+        created_at=row.created_at,
+        updated_at=row.updated_at,
     )
 
 

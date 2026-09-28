@@ -3,7 +3,6 @@
 ## Purpose
 
 `daily_close_ready@1` for one business and one OperationalDay. The first confirmed sale creates the row. A current cash count makes it ready, including short and over. Close completes it against the ClosingSnapshot.
-
 ## Requirements
 ### Requirement: daily_close_ready@1 is the Daily Close contract
 The system MUST register OutcomeDefinition `daily_close_ready@1` and no other outcome definition. The definition MUST record version `1`, owner `business`, trigger `first_confirmed_sale`, output artifact `ClosingSnapshot`, the pure gate evaluator, and states `in_progress`, `ready`, and `completed`. Scope MUST be one business and one OperationalDay. Inputs MUST be that OperationalDay, its confirmed sales and payments, and its current CashCount. The limitation MUST be that only operations registered in Lumo are represented. `daily_sales_operations_ready@1` MUST remain unregistered. `ToolRegistry` MUST NOT register `daily_close_ready.execute@1` or any generic outcome-execution tool. Evaluating the definition MUST NOT insert or update an OutcomeRun. The LLM MUST NOT choose the status.
@@ -100,23 +99,27 @@ Successful `closing.confirm@1` MUST, in the same transaction, insert the Closing
 - **THEN** the inserted OutcomeRun MUST be `completed`, that resolved WorkItem MUST reference it, and the link MUST NOT write `work_item.created` or a second `work_item.resolved`
 
 ### Requirement: Outcome writes join the parent transaction only
-Outcome sync MUST run only inside successful `sale.commit@1`, a new current CashCount insert, and successful `closing.confirm@1`, in the order `daily-close-outcome` design records. `closing.prepare@1`, `operational_day.summary@1`, daily sales export, the Next Best Action GET, `GET /api/v1/business-stream/today`, `operational_day.next_best_action@1`, an equal-amount cash-count read-back, a clarify, a stale confirmation, an idempotent replay, and an already-closed read-back MUST NOT insert or update an OutcomeRun. A failure before commit MUST leave no new OutcomeRun and no outcome audit from that attempt. Export column names, file bytes, and close phrases MUST stay unchanged.
+Outcome sync MUST run only inside successful `sale.commit@1`, a new current CashCount insert, and successful `closing.confirm@1`, in the order `daily-close-outcome` design records. The same transactions MUST upsert `WorkAbsorptionRecord` rows and maintain `OutcomeCost` as `work-absorption` and `outcome-cost` require. `closing.prepare@1`, `operational_day.summary@1`, daily sales export, the Next Best Action GET, `GET /api/v1/business-stream/today`, `operational_day.next_best_action@1`, an equal-amount cash-count read-back, a clarify, a stale confirmation, an idempotent replay, and an already-closed read-back MUST NOT insert or update an OutcomeRun, a WorkAbsorptionRecord, or an OutcomeCost. A failure before commit MUST leave no new OutcomeRun, absorption row, cost row, or outcome audit from that attempt. Export column names, file bytes, close phrases, close gates, reason codes, and merchant-visible close behavior MUST stay unchanged.
 
 #### Scenario: Preparation does not write the outcome
 - **WHEN** the actor posts `preparar el cierre` for an open day that already has an OutcomeRun
-- **THEN** that OutcomeRun MUST be unchanged and no outcome audit MUST be written
+- **THEN** that OutcomeRun MUST be unchanged, no outcome audit MUST be written, and absorption and cost row counts MUST be unchanged
 
 #### Scenario: Export does not write the outcome
 - **WHEN** a tenant downloads the daily sales export
-- **THEN** OutcomeRun, audit, outbox, and idempotency row counts MUST be unchanged by that download
+- **THEN** OutcomeRun, WorkAbsorptionRecord, OutcomeCost, audit, outbox, and idempotency row counts MUST be unchanged by that download
 
 #### Scenario: A rolled-back commit leaves no outcome
 - **WHEN** the first commit of the day fails before commit after preparing an OutcomeRun insert
-- **THEN** that OutcomeRun MUST NOT remain
+- **THEN** that OutcomeRun MUST NOT remain and no absorption or cost row from that attempt MUST remain
 
 #### Scenario: Business Stream does not write the outcome
 - **WHEN** `GET /api/v1/business-stream/today` runs for an open day that already has an OutcomeRun
-- **THEN** that OutcomeRun MUST be unchanged and no outcome audit MUST be written
+- **THEN** that OutcomeRun MUST be unchanged, no outcome audit MUST be written, and absorption and cost row counts MUST be unchanged
+
+#### Scenario: Close instrumentation does not change gates
+- **WHEN** a short or over day is closed with `closing.confirm@1`
+- **THEN** ClosingSnapshot, WorkItem resolution, and OutcomeRun completion semantics MUST match the pre-instrumentation contract while six absorption rows and one OutcomeCost row exist
 
 ### Requirement: Today-only initializer and no historical invention
 Migration `0011` MUST NOT insert an OutcomeRun. The existing deploy command MUST, for each business's open OperationalDay dated today, ensure the OutcomeRun from that day's facts and set `outcome_run_id` on that day's WorkItems that are still null. An initializer insert for a day with no current CashCount MUST be `in_progress` with `ready_at` null. An initializer insert for a day that already has a current CashCount MUST be `ready` with `ready_at` equal to the insertion instant. It MUST skip closed days and older open days. It MUST NOT be an HTTP route and MUST NOT grant `BYPASSRLS`. An insert MUST audit `outcome_run.created` with a null actor, `route_or_tool` `outcome_run.bootstrap`, and `origin=rollout_bootstrap`. A second run MUST NOT insert another row and MUST NOT write audit when the stored status and reason already match. Already closed days MUST NOT gain a retroactive OutcomeRun.
@@ -154,3 +157,18 @@ The system MUST NOT add `GET /api/v1/operational-days/current/outcome` or any ot
 #### Scenario: Evaluation does not write coverage or memory
 - **WHEN** a caller evaluates `daily_close_ready@1` with confirmed state
 - **THEN** the engine MUST NOT insert or update a coverage row or a business event
+
+### Requirement: Instrumentation is written before OutcomeRun completion
+Any transaction that creates or repairs an OutcomeRun and writes work-absorption or outcome-cost rows MUST insert or upsert all required instrumentation while the OutcomeRun `status` is `in_progress` or `ready`, then transition the OutcomeRun to `completed` in that same transaction. A repair that previously inserted an OutcomeRun born `completed` MUST instead use a non-completed state until instrumentation is present, then set `completed` before commit. The database MUST reject `INSERT` or `UPDATE` on absorption or cost rows when the owning OutcomeRun is already `completed`.
+
+#### Scenario: Repair close orders instrumentation before completed
+- **WHEN** `closing.confirm@1` repairs a missing OutcomeRun for a day that is closing
+- **THEN** absorption and cost rows MUST exist before the OutcomeRun row becomes `completed`, and no instrumentation insert MAY succeed after the run is `completed`
+
+### Requirement: Daily Close instrumentation observes existing behavior
+Instrumentation for `daily_close_ready@1` MUST NOT add merchant steps, WorkItem types, OutcomeRun statuses, reason codes, or close gates solely to improve metrics. It MUST record how the existing flow produced the outcome. E26 product intent applies: six formerly manual administrative tasks, two eliminated as merchant work, two prepared by Lumo, two executed with confirmation, with minutes derived from the versioned baseline. The implemented mapping MUST use the six `task_type` values in `work-absorption`, not one row per sale or message. If pilot reporting needs "avoided cost," that MUST use internal baseline minutes only and MUST NOT be exposed as a merchant savings claim in Build A.
+
+#### Scenario: No new close gate for metrics
+- **WHEN** the API route table and Daily Close tools are inspected after instrumentation
+- **THEN** no new merchant route, tool, or WorkItem type MUST exist solely for work absorption or outcome cost
+

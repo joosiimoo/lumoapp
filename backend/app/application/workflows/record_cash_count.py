@@ -237,6 +237,7 @@ class RecordCashCount:
             correlation_id=correlation_id,
             idempotency_key=idempotency_key,
             route_or_tool="closing.submit_cash_count@1",
+            current_cash_count_id=count.id,
         )
         record_cash_count(
             operations=self._operations,

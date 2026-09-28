@@ -24,8 +24,10 @@ from app.domain.shared.ids import new_uuid7
 from app.infrastructure.persistence.models import (
     AuditEventRow,
     OperationalDayRow,
+    OutcomeCostRow,
     OutcomeRunRow,
     OutboxEventRow,
+    WorkAbsorptionRecordRow,
     WorkItemRow,
 )
 from app.infrastructure.persistence.rls import set_current_business_id
@@ -309,7 +311,9 @@ def test_skipped_initializer_close_repairs_and_links_resolved_work(client: TestC
     assert len(_audits(db_session, tenant.business_id, "work_item.created")) == created_before
     assert len(_audits(db_session, tenant.business_id, "work_item.resolved")) == resolved_before + 1
     created = _audits(db_session, tenant.business_id, "outcome_run.created")
-    repair = next(row for row in created if row.after_payload["status"] == "completed")
+    assert any(row.after_payload["status"] == "ready" for row in created)
+    changed = _audits(db_session, tenant.business_id, "outcome_run.status_changed")
+    repair = next(row for row in changed if row.after_payload["status"] == "completed")
     assert repair.after_payload["closing_snapshot_id"] == str(run.closing_snapshot_id)
     assert _open_items(db_session, tenant.business_id) == []
 
@@ -497,5 +501,9 @@ def _forget_outcome(db_session, business_id) -> None:
         .where(WorkItemRow.business_id == business_id)
         .values(outcome_run_id=None)
     )
+    db_session.execute(
+        WorkAbsorptionRecordRow.__table__.delete().where(WorkAbsorptionRecordRow.business_id == business_id)
+    )
+    db_session.execute(OutcomeCostRow.__table__.delete().where(OutcomeCostRow.business_id == business_id))
     db_session.execute(OutcomeRunRow.__table__.delete().where(OutcomeRunRow.business_id == business_id))
     db_session.commit()

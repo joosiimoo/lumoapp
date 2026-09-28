@@ -484,6 +484,80 @@ class OutcomeRunRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     closing_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
 
 
+class WorkAbsorptionRecordRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "work_absorption_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id",
+            "outcome_run_id",
+            "task_type",
+            name="uq_work_absorption_records_task",
+        ),
+        Index("ix_work_absorption_records_business_id", "business_id"),
+        Index("ix_work_absorption_records_outcome_run_id", "outcome_run_id"),
+        ForeignKeyConstraint(
+            ["outcome_run_id", "business_id"],
+            ["operations.outcome_runs.id", "operations.outcome_runs.business_id"],
+            name="fk_work_absorption_outcome_run",
+        ),
+        ForeignKeyConstraint(
+            ["work_item_id", "business_id"],
+            ["operations.work_items.id", "operations.work_items.business_id"],
+            name="fk_work_absorption_work_item",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    outcome_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    work_item_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    task_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    previous_execution_mode: Mapped[str] = mapped_column(String(64), nullable=False)
+    current_execution_mode: Mapped[str] = mapped_column(String(64), nullable=False)
+    human_steps_before: Mapped[int] = mapped_column(Integer, nullable=False)
+    human_steps_after: Mapped[int] = mapped_column(Integer, nullable=False)
+    estimated_minutes_saved: Mapped[int] = mapped_column(Integer, nullable=False)
+    business_intervention_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    internal_intervention_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    automation_level: Mapped[str] = mapped_column(String(16), nullable=False)
+    evidence_ids: Mapped[list] = mapped_column(JSONB, nullable=False)
+    baseline_version: Mapped[str] = mapped_column(String(128), nullable=False)
+
+
+class OutcomeCostRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "outcome_costs"
+    __table_args__ = (
+        UniqueConstraint("business_id", "outcome_run_id", name="uq_outcome_costs_identity"),
+        Index("ix_outcome_costs_business_id", "business_id"),
+        Index("ix_outcome_costs_outcome_run_id", "outcome_run_id"),
+        ForeignKeyConstraint(
+            ["outcome_run_id", "business_id"],
+            ["operations.outcome_runs.id", "operations.outcome_runs.business_id"],
+            name="fk_outcome_costs_outcome_run",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    outcome_run_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    model_call_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model_call_count_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model_token_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    model_cost_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    model_cost_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    infrastructure_cost_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    infrastructure_cost_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    retry_count_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    business_intervention_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    internal_intervention_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    estimated_total_cost_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    cost_completeness: Mapped[str] = mapped_column(String(16), nullable=False)
+
+
 class SourceCoverageRecordRow(UUIDPrimaryKeyMixin, Base):
     __tablename__ = "source_coverage_records"
     __table_args__ = (

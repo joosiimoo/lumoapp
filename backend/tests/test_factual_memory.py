@@ -320,11 +320,18 @@ def test_closed_day_snapshot_latest_and_differences(client: TestClient, db_sessi
     assert "22.50" in close_text
     assert "Faltante" in close_text
     service = _service(db_session)
-    today = business_date_for(utcnow(), "America/Mexico_City")
+    from app.infrastructure.persistence.rls import set_current_business_id
+
+    set_current_business_id(db_session, tenant.business_id)
+    day_row = db_session.scalars(
+        select(OperationalDayRow).where(OperationalDayRow.business_id == tenant.business_id)
+    ).one()
+    today = day_row.business_date
+    query_now = utcnow()
     closed_summary = service.execute(
         tenant=tenant,
         query=FactualMemoryQuery(query_type=FactualQueryType.CLOSE_SUMMARY, business_date=today),
-        now=_NOW,
+        now=query_now,
     )
     assert closed_summary.facts is not None
     assert closed_summary.facts.gross_sales_total == "22.50"
@@ -335,13 +342,13 @@ def test_closed_day_snapshot_latest_and_differences(client: TestClient, db_sessi
     second = service.execute(
         tenant=tenant,
         query=FactualMemoryQuery(query_type=FactualQueryType.CLOSE_SUMMARY, business_date=today),
-        now=_NOW,
+        now=query_now,
     ).to_dict()
     assert first == second
     day_summary = service.execute(
         tenant=tenant,
         query=FactualMemoryQuery(query_type=FactualQueryType.DAY_SUMMARY, business_date=today),
-        now=_NOW,
+        now=query_now,
     )
     assert day_summary.facts is not None
     assert day_summary.facts.close_status == "completed"
@@ -354,7 +361,7 @@ def test_closed_day_snapshot_latest_and_differences(client: TestClient, db_sessi
     sales = service.execute(
         tenant=tenant,
         query=FactualMemoryQuery(query_type=FactualQueryType.SALES_SUMMARY, business_date=today),
-        now=_NOW,
+        now=query_now,
     )
     assert sales.facts is not None
     assert sales.facts.sale_count == 1
@@ -362,14 +369,14 @@ def test_closed_day_snapshot_latest_and_differences(client: TestClient, db_sessi
     latest = service.execute(
         tenant=tenant,
         query=FactualMemoryQuery(query_type=FactualQueryType.LATEST_CLOSE),
-        now=_NOW,
+        now=query_now,
     )
     assert latest.facts is not None
     assert latest.business_date == today
     recent = service.execute(
         tenant=tenant,
         query=FactualMemoryQuery(query_type=FactualQueryType.RECENT_CASH_DIFFERENCES, recent_days=7),
-        now=_NOW,
+        now=query_now,
     )
     assert recent.source_coverage is None
     assert recent.facts is not None
@@ -382,7 +389,7 @@ def test_closed_day_snapshot_latest_and_differences(client: TestClient, db_sessi
     ).execute(
         tenant=TenantContext(business_id=other_business, actor_id=_other_user),
         query=FactualMemoryQuery(query_type=FactualQueryType.LATEST_CLOSE),
-        now=_NOW,
+        now=query_now,
     )
     assert hidden.empty_reason is not None
     assert hidden.empty_reason.value == "no_completed_close"

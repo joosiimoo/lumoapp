@@ -3,9 +3,11 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from uuid import UUID
 
 from app.application.ports import AuditService, IdentityPort
 from app.application.workflows.sync_daily_close_work_items import sync_daily_close_work_items
+from app.application.workflows.sync_daily_close_instrumentation import maintain_daily_close_instrumentation
 from app.domain.operations import (
     OUTCOME_TYPE_DAILY_CLOSE_READY,
     OUTCOME_VERSION,
@@ -21,6 +23,7 @@ from app.domain.operations import (
     derive_daily_close_outcome,
     outcome_evidence,
 )
+from app.domain.operations.daily_close_outcome import OutcomeVerdict, _REASON_FOR_CASH
 from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
@@ -41,6 +44,7 @@ def maintain_open_daily_close(
     origin: str | None = None,
     omit_actor: bool = False,
     outcome_route_or_tool: str | None = None,
+    current_cash_count_id: UUID | None = None,
 ) -> int:
     """Ensure today's open-day OutcomeRun, then sync and link WorkItems.
 
@@ -80,6 +84,21 @@ def maintain_open_daily_close(
             operational_day_id=run.operational_day_id,
             outcome_run_id=run.id,
         )
+        count_id = current_cash_count_id
+        if count_id is None:
+            count = operations.get_current_cash_count(tenant=tenant, operational_day_id=run.operational_day_id)
+            count_id = count.id if count is not None else None
+        maintain_daily_close_instrumentation(
+            operations=operations,
+            audit=audit,
+            tenant=tenant,
+            outcome_run=run,
+            now=_utc(now),
+            correlation_id=correlation_id,
+            route_or_tool=outcome_route_or_tool or route_or_tool,
+            idempotency_key=idempotency_key,
+            cash_count_id=count_id,
+        )
     return inserted
 
 
@@ -96,6 +115,7 @@ def sync_daily_close_outcome(
     origin: str | None = None,
     omit_actor: bool = False,
     closing: bool = False,
+    complete_outcome: bool = True,
 ) -> OutcomeRun | None:
     """Recompute the Daily Close OutcomeRun inside the caller's transaction.
 
@@ -132,6 +152,12 @@ def sync_daily_close_outcome(
     )
     if verdict is None:
         return None
+    verdict = _apply_completion_gate(
+        verdict=verdict,
+        closing=closing,
+        complete_outcome=complete_outcome,
+        cash_status=cash_status,
+    )
     evidence = outcome_evidence(
         currency=business.currency,
         sale_count=totals.sale_count,
@@ -154,7 +180,9 @@ def sync_daily_close_outcome(
     if existing is None:
         ready_at = instant if verdict.status is not OutcomeRunStatus.IN_PROGRESS else None
         completed_at = instant if verdict.status is OutcomeRunStatus.COMPLETED else None
-        snapshot_id = snapshot.id if verdict.status is OutcomeRunStatus.COMPLETED and snapshot is not None else None
+        snapshot_id = (
+            snapshot.id if verdict.status is OutcomeRunStatus.COMPLETED and snapshot is not None else None
+        )
         created = OutcomeRun(
             id=new_uuid7(),
             business_id=tenant.business_id,
@@ -303,6 +331,23 @@ def _identity_payload(outcome: OutcomeRun) -> dict[str, Any]:
         "owner_type": outcome.owner_type,
         "evidence": dict(outcome.evidence),
     }
+
+
+def _apply_completion_gate(
+    *,
+    verdict: OutcomeVerdict,
+    closing: bool,
+    complete_outcome: bool,
+    cash_status: CashStatus | None,
+) -> OutcomeVerdict:
+    if not closing or complete_outcome or verdict.status is not OutcomeRunStatus.COMPLETED:
+        return verdict
+    if cash_status is None or cash_status is CashStatus.NOT_COUNTED:
+        raise ValidationAppError("deferred close completion requires a counted cash status")
+    reason = _REASON_FOR_CASH.get(cash_status)
+    if reason is None:
+        raise ValidationAppError("deferred close completion requires a ready cash status")
+    return OutcomeVerdict(OutcomeRunStatus.READY, reason)
 
 
 def _utc(value: datetime | None) -> datetime:

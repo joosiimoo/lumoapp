@@ -250,6 +250,18 @@ class _SpyOperations:
         self.calls.append("link_work_items")
         return 0
 
+    def list_work_items(self, **_kwargs):
+        self.calls.append("list_work_items")
+        return self.work_items
+
+    def ensure_outcome_cost_for_run(self, **_kwargs):
+        self.calls.append("ensure_outcome_cost")
+        return False, None
+
+    def upsert_work_absorption_record(self, **_kwargs):
+        self.calls.append("upsert_work_absorption")
+        return False, None
+
     def lock_day_for_update(self, **_kwargs):
         self.calls.append("lock")
         return self.day
