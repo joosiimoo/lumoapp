@@ -18,6 +18,8 @@ def migrated():
         pytest.skip("PostgreSQL is not available")
     engine = create_engine(settings.sqlalchemy_admin_url)
     command.upgrade(_config(), "head")
+    discard_work_items(engine)
+    command.downgrade(_config(), "0013_work_absorption_outcome_cost")
     try:
         yield engine
     finally:

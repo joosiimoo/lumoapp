@@ -624,6 +624,115 @@ class BusinessEventRow(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class PilotProgramEnrollmentRow(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "pilot_program_enrollments"
+    __table_args__ = (
+        Index("ix_pilot_program_enrollments_business_id", "business_id"),
+        CheckConstraint(
+            "pilot_ended_on IS NULL OR pilot_ended_on >= pilot_started_on",
+            name="ck_pilot_program_enrollments_dates",
+        ),
+        ForeignKeyConstraint(
+            ["business_id"],
+            ["identity.businesses.id"],
+            name="fk_pilot_program_enrollments_business",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    cohort_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    pilot_started_on: Mapped[date] = mapped_column(Date, nullable=False)
+    pilot_ended_on: Mapped[date | None] = mapped_column(Date, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class PilotPerceptionResponseRow(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "pilot_perception_responses"
+    __table_args__ = (
+        Index("ix_pilot_perception_responses_business_id", "business_id"),
+        UniqueConstraint(
+            "business_id",
+            "capture_id",
+            "question_code",
+            name="uq_pilot_perception_responses_capture_question",
+        ),
+        CheckConstraint(
+            "question_code IN ("
+            "'close_organizer', 'information_delivery', 'product_category', 'workflow_ownership'"
+            ")",
+            name="ck_pilot_perception_question_code",
+        ),
+        CheckConstraint(
+            "capture_source IN ('internal_interview', 'internal_import')",
+            name="ck_pilot_perception_capture_source",
+        ),
+        CheckConstraint(
+            "note IS NULL OR length(note) <= 500",
+            name="ck_pilot_perception_note_length",
+        ),
+        ForeignKeyConstraint(
+            ["business_id"],
+            ["identity.businesses.id"],
+            name="fk_pilot_perception_responses_business",
+        ),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    capture_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    cohort_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    question_set_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    question_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    capture_source: Mapped[str] = mapped_column(String(32), nullable=False)
+
+
+class StageGateAssessmentRow(UUIDPrimaryKeyMixin, Base):
+    __tablename__ = "stage_gate_assessments"
+    __table_args__ = (
+        Index("ix_stage_gate_assessments_business_id", "business_id"),
+        CheckConstraint("scope_type IN ('business', 'cohort')", name="ck_stage_gate_assessments_scope"),
+        CheckConstraint("build_identifier = 'mvp_build_a'", name="ck_stage_gate_assessments_build"),
+        CheckConstraint(
+            "evidence_window_end >= evidence_window_start",
+            name="ck_stage_gate_assessments_window",
+        ),
+        CheckConstraint(
+            "(scope_type = 'business' AND business_id IS NOT NULL) OR "
+            "(scope_type = 'cohort' AND business_id IS NULL)",
+            name="ck_stage_gate_assessments_scope_business",
+        ),
+        CheckConstraint(
+            "overall_status IN ('ready', 'not_ready', 'insufficient_evidence')",
+            name="ck_stage_gate_assessments_overall",
+        ),
+        CheckConstraint("jsonb_typeof(criterion_results) = 'array'", name="ck_stage_gate_assessments_results"),
+        CheckConstraint(
+            "jsonb_typeof(included_outcome_run_refs) = 'array'",
+            name="ck_stage_gate_assessments_refs",
+        ),
+        {"schema": "operations"},
+    )
+
+    scope_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    business_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    cohort_code: Mapped[str] = mapped_column(String(64), nullable=False)
+    build_identifier: Mapped[str] = mapped_column(String(64), nullable=False)
+    policy_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    evidence_window_start: Mapped[date] = mapped_column(Date, nullable=False)
+    evidence_window_end: Mapped[date] = mapped_column(Date, nullable=False)
+    evidence_cutoff_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    overall_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    criterion_results: Mapped[list] = mapped_column(JSONB, nullable=False)
+    included_outcome_run_refs: Mapped[list] = mapped_column(JSONB, nullable=False)
+    included_business_ids: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    finalized_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
 class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "sale_sessions"
     __table_args__ = (

@@ -22,9 +22,12 @@ from app.infrastructure.persistence.models import (
     OutcomeRunRow,
     OutboxEventRow,
     PaymentRow,
+    PilotPerceptionResponseRow,
+    PilotProgramEnrollmentRow,
     SaleItemRow,
     SaleSessionRow,
     SourceCoverageRecordRow,
+    StageGateAssessmentRow,
     WorkAbsorptionRecordRow,
     WorkItemRow,
 )
@@ -63,6 +66,44 @@ SALE_MESSAGE_OPERATIONS = (
 )
 SALE_OUTBOX_EVENT = "sale.item.added"
 SALE_MESSAGE_OPERATION = "lumo.message.add_sale_item"
+EXPORT_FIXTURE_SESSION_IDS = (
+    "11111111-1111-4111-8111-111111111111",
+    "00000000-0000-4000-8000-000000000001",
+    "00000000-0000-4000-8000-000000000002",
+)
+
+
+def purge_stale_export_fixture_sessions() -> None:
+    """Remove fixed-id export fixture sessions left by a prior failed run."""
+    from sqlalchemy import create_engine, text
+
+    from app.bootstrap.settings import Settings
+    from tests.conftest import settings_kwargs
+
+    engine = create_engine(Settings.model_validate(settings_kwargs()).sqlalchemy_admin_url)
+    try:
+        with engine.begin() as connection:
+            for table in ("sales.payments", "sales.sale_items", "sales.sale_sessions"):
+                if connection.execute(text("SELECT to_regclass(:name)"), {"name": table}).scalar() is None:
+                    return
+                connection.execute(text(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY"))
+            connection.execute(
+                text("DELETE FROM sales.payments WHERE sale_session_id = ANY(:ids)"),
+                {"ids": list(EXPORT_FIXTURE_SESSION_IDS)},
+            )
+            connection.execute(
+                text("DELETE FROM sales.sale_items WHERE sale_session_id = ANY(:ids)"),
+                {"ids": list(EXPORT_FIXTURE_SESSION_IDS)},
+            )
+            connection.execute(
+                text("DELETE FROM sales.sale_sessions WHERE id = ANY(:ids)"),
+                {"ids": list(EXPORT_FIXTURE_SESSION_IDS)},
+            )
+            for table in ("sales.sale_sessions", "sales.sale_items", "sales.payments"):
+                connection.execute(text(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY"))
+                connection.execute(text(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY"))
+    finally:
+        engine.dispose()
 
 
 def _require_migration_database(connection) -> None:
@@ -98,6 +139,25 @@ def discard_work_items(engine) -> None:
     with engine.begin() as connection:
         _purge_rls_table(connection, "operations.business_events")
         _purge_rls_table(connection, "operations.source_coverage_records")
+        _purge_rls_table(connection, "operations.stage_gate_assessments")
+        if (
+            connection.execute(text("SELECT to_regclass('operations.pilot_perception_responses')")).scalar()
+            is not None
+        ):
+            connection.execute(
+                text(
+                    "ALTER TABLE operations.pilot_perception_responses "
+                    "DISABLE TRIGGER pilot_perception_responses_append_only"
+                )
+            )
+            _purge_rls_table(connection, "operations.pilot_perception_responses")
+            connection.execute(
+                text(
+                    "ALTER TABLE operations.pilot_perception_responses "
+                    "ENABLE TRIGGER pilot_perception_responses_append_only"
+                )
+            )
+        _purge_rls_table(connection, "operations.pilot_program_enrollments")
         _purge_rls_table(connection, "operations.work_absorption_records")
         _purge_rls_table(connection, "operations.outcome_costs")
         if connection.execute(text("SELECT to_regclass('operations.work_items')")).scalar() is not None:
@@ -176,6 +236,9 @@ def isolate_database_for_0007_downgrade(engine) -> None:
             connection.execute(text("DELETE FROM operations.work_items"))
             connection.execute(text("ALTER TABLE operations.work_items ENABLE ROW LEVEL SECURITY"))
             connection.execute(text("ALTER TABLE operations.work_items FORCE ROW LEVEL SECURITY"))
+        _purge_rls_table(connection, "operations.stage_gate_assessments")
+        _purge_rls_table(connection, "operations.pilot_perception_responses")
+        _purge_rls_table(connection, "operations.pilot_program_enrollments")
         _purge_rls_table(connection, "operations.work_absorption_records")
         _purge_rls_table(connection, "operations.outcome_costs")
         if connection.execute(text("SELECT to_regclass('operations.outcome_runs')")).scalar() is not None:
@@ -201,6 +264,14 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
 
     require_test_tenant(business_id)
     set_current_business_id(session, business_id)
+    session.execute(
+        StageGateAssessmentRow.__table__.delete().where(StageGateAssessmentRow.business_id == business_id)
+    )
+    session.execute(
+        PilotProgramEnrollmentRow.__table__.delete().where(
+            PilotProgramEnrollmentRow.business_id == business_id
+        )
+    )
     session.execute(PaymentRow.__table__.delete().where(PaymentRow.business_id == business_id))
     session.execute(SaleItemRow.__table__.delete().where(SaleItemRow.business_id == business_id))
     session.execute(SaleSessionRow.__table__.delete().where(SaleSessionRow.business_id == business_id))
@@ -445,4 +516,37 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
     for outcome_id, count in cost_per_outcome.items():
         if count > 1:
             orphans.append(f"outcome_cost:duplicate_outcome={outcome_id}:rows={count}")
+    perceptions = session.scalars(
+        select(PilotPerceptionResponseRow).where(PilotPerceptionResponseRow.business_id == business_id)
+    ).all()
+    capture_questions: dict[str, set[str]] = {}
+    for row in perceptions:
+        if row.business_id != business_id:
+            orphans.append(f"pilot_perception:{row.id}:cross_business")
+        capture_questions.setdefault(str(row.capture_id), set()).add(row.question_code)
+    enrollments = session.scalars(
+        select(PilotProgramEnrollmentRow).where(PilotProgramEnrollmentRow.business_id == business_id)
+    ).all()
+    for enrollment in enrollments:
+        if enrollment.business_id != business_id:
+            orphans.append(f"pilot_enrollment:{enrollment.id}:cross_business")
+        if enrollment.pilot_ended_on is not None and enrollment.pilot_ended_on < enrollment.pilot_started_on:
+            orphans.append(f"pilot_enrollment:{enrollment.id}:invalid_dates")
+    assessments = session.scalars(
+        select(StageGateAssessmentRow).where(StageGateAssessmentRow.business_id == business_id)
+    ).all()
+    for assessment in assessments:
+        if assessment.scope_type == "cohort" or assessment.business_id is None:
+            orphans.append(f"stage_gate_assessment:{assessment.id}:cohort_visible_to_merchant")
+        if assessment.scope_type == "business" and assessment.business_id != business_id:
+            orphans.append(f"stage_gate_assessment:{assessment.id}:cross_business")
+        if not isinstance(assessment.criterion_results, list):
+            orphans.append(f"stage_gate_assessment:{assessment.id}:criterion_results_shape")
+        if not isinstance(assessment.included_outcome_run_refs, list):
+            orphans.append(f"stage_gate_assessment:{assessment.id}:included_refs_shape")
+        for ref in assessment.included_outcome_run_refs or []:
+            if not isinstance(ref, dict):
+                orphans.append(f"stage_gate_assessment:{assessment.id}:malformed_ref")
+            elif not {"business_id", "outcome_run_id"}.issubset(ref.keys()):
+                orphans.append(f"stage_gate_assessment:{assessment.id}:malformed_ref")
     return orphans

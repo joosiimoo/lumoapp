@@ -55,7 +55,7 @@ from app.infrastructure.persistence.models import (
 from app.infrastructure.persistence.rls import set_current_business_id
 from app.infrastructure.persistence.sales_export import SalesExportRepository
 from tests.conftest import seed_business
-from tests.sale_cleanup import clear_tenant_sale_mutations
+from tests.sale_cleanup import clear_tenant_sale_mutations, purge_stale_export_fixture_sessions
 
 ZONE = ZoneInfo("America/Mexico_City")
 SID_MIXED = UUID("11111111-1111-4111-8111-111111111111")
@@ -184,6 +184,7 @@ def test_export_is_not_a_tool_or_ui_action() -> None:
 
 
 def test_open_day_csv_and_xlsx_match_persisted_sales(client: TestClient, db_session) -> None:
+    purge_stale_export_fixture_sessions()
     business_id, user_id, token = seed_business(db_session, name="Ñandú & Hijos")
     try:
         business_date = datetime.now(UTC).astimezone(ZONE).date()

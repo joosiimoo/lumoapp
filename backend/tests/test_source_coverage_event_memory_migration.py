@@ -11,7 +11,7 @@ from tests.conftest import postgres_available, settings_kwargs
 from tests.sale_cleanup import discard_work_items
 from tests.test_work_item_migration import _config
 
-HEAD = "0013_work_absorption_outcome_cost"
+HEAD = "0014_pilot_stage_gate_instrumentation"
 
 pytestmark = pytest.mark.schema_migration
 
