@@ -31,8 +31,8 @@ class LumoPrimaryButton extends StatelessWidget {
         child: InkWell(
           onTap: enabled ? onPressed : null,
           borderRadius: BorderRadius.circular(LumoRadius.pill),
-          splashColor: Colors.transparent,
-          highlightColor: Colors.transparent,
+          splashColor: enabled ? LumoColors.primaryForeground.withValues(alpha: 0.12) : Colors.transparent,
+          highlightColor: enabled ? LumoColors.primaryForeground.withValues(alpha: 0.08) : Colors.transparent,
           child: Center(
             child: Text(
               label,

@@ -8,6 +8,12 @@ class SessionResponse(BaseModel):
 
     actor: dict
     business: dict
+    onboarding_status: str
+    currency: str | None = None
+    timezone: str | None = None
+    enabled_payment_methods: list[str] | None = None
+    next_required_field: str | None = None
+    ui: list[dict] = Field(default_factory=list)
 
 
 class CreateNoteRequest(BaseModel):

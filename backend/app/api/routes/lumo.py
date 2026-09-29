@@ -17,7 +17,8 @@ from app.application.workflows.get_daily_close_preparation import GetDailyCloseP
 from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
 from app.application.workflows.record_cash_count import RecordCashCount
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
-from app.domain.shared.errors import ForbiddenError, ValidationAppError
+from app.domain.identity.onboarding import sales_allowed
+from app.domain.shared.errors import ForbiddenError, OnboardingIncompleteError, ValidationAppError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.audit import SqlAlchemyAuditService
@@ -28,6 +29,17 @@ from app.infrastructure.persistence.outbox import SqlAlchemyOutbox
 from app.infrastructure.persistence.repositories import IdentityRepository
 
 router = APIRouter()
+
+
+def _require_completed_onboarding(session: Session, tenant: TenantContext) -> None:
+    """Sale and closing chat stay closed until onboarding is completed.
+
+    Onboarding itself uses POST /api/v1/onboarding/apply and
+    GET /api/v1/onboarding/status. Those routes accept an in-progress tenant.
+    """
+    business = IdentityRepository(session).get_business(tenant)
+    if not sales_allowed(onboarding_status=business.onboarding_status):
+        raise OnboardingIncompleteError("onboarding is not completed")
 
 
 class LumoMessageRequest(BaseModel):
@@ -84,6 +96,7 @@ def post_lumo_message(
 ) -> dict:
     if not idempotency_key:
         raise ValidationAppError("Idempotency-Key is required")
+    _require_completed_onboarding(session, tenant)
     orchestrator = _orchestrator(request, session)
     settings = request.app.state.settings
     fail_after_write = (
@@ -124,6 +137,7 @@ def post_lumo_action(
         raise ValidationAppError("Idempotency-Key is required")
     if idempotency_key != payload.idempotency_key:
         raise ValidationAppError("Idempotency-Key must match idempotency_key")
+    _require_completed_onboarding(session, tenant)
     orchestrator = _orchestrator(request, session)
     settings = request.app.state.settings
     fail_after_write = (
@@ -167,6 +181,7 @@ def _orchestrator(request: Request, session: Session) -> FoundationOrchestrator:
     )
     totalize = TotalizeSaleSession(
         sales=sales,
+        identities=identities,
         audit=audit,
         idempotency=idempotency,
         outbox=outbox,

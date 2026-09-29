@@ -472,3 +472,67 @@ def register_daily_close_confirmed_ui(registry: GenerativeUIRegistry) -> None:
 
 def register_next_best_action_ui(registry: GenerativeUIRegistry) -> None:
     registry.register(NEXT_BEST_ACTION_UI)
+
+
+ONBOARDING_APPLY = ToolRegistration(
+    tool_id="onboarding.apply",
+    version=1,
+    input_schema={
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "currency": {"enum": ["MXN"]},
+            "timezone": {
+                "enum": [
+                    "America/Mexico_City",
+                    "America/Cancun",
+                    "America/Tijuana",
+                    "America/Hermosillo",
+                    "America/Mazatlan",
+                    "America/Chihuahua",
+                    "America/Merida",
+                    "America/Monterrey",
+                    "America/Bahia_Banderas",
+                ]
+            },
+            "payment_methods": {
+                "type": "array",
+                "items": {"enum": ["cash", "card", "transfer"]},
+                "minItems": 1,
+            },
+            "start_using_lumo": {"type": "boolean"},
+        },
+    },
+    output_schema={
+        "type": "object",
+        "required": ["business_id", "onboarding_status", "next_required_field"],
+    },
+    permission="onboarding.apply",
+    policy_id="ONB-001",
+    requires_idempotency=True,
+    side_effect="write",
+)
+
+ONBOARDING_CHOICE = GenerativeUIRegistration(
+    component="onboarding_choice",
+    version=1,
+    data_schema={"type": "object", "required": ["field", "options"]},
+)
+
+ONBOARDING_CONFIRMATION = GenerativeUIRegistration(
+    component="onboarding_confirmation",
+    version=1,
+    data_schema={
+        "type": "object",
+        "required": ["name", "currency", "timezone", "enabled_payment_methods"],
+    },
+)
+
+
+def register_onboarding_tools(registry: ToolRegistry) -> None:
+    registry.register(ONBOARDING_APPLY)
+
+
+def register_onboarding_ui(registry: GenerativeUIRegistry) -> None:
+    registry.register(ONBOARDING_CHOICE)
+    registry.register(ONBOARDING_CONFIRMATION)

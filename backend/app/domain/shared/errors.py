@@ -96,3 +96,15 @@ class PaymentMethodUnknownError(AppError):
     code = "PAYMENT_METHOD_UNKNOWN"
     http_status = 422
     retryable = False
+
+
+class OnboardingIncompleteError(AppError):
+    code = "ONBOARDING_INCOMPLETE"
+    http_status = 409
+    retryable = False
+
+
+class PaymentMethodNotEnabledError(AppError):
+    code = "PAYMENT_METHOD_NOT_ENABLED"
+    http_status = 422
+    retryable = False

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:lumo/api/api_error.dart';
 import 'package:lumo/api/lumo_api_client.dart';
+import 'package:lumo/features/inicio/business_stream.dart';
 import 'package:lumo/lumo/tokens.dart';
 import 'package:lumo/lumo/typography.dart';
 import 'package:lumo/lumo/widgets/lumo_buttons.dart';
@@ -54,14 +55,20 @@ class HoyPage extends StatefulWidget {
     super.key,
     required this.apiClient,
     this.shareExport,
-    this.conversationId,
-    this.onSwitchToInicio,
+    this.businessName,
+    this.stream,
+    this.streamFailed = false,
+    this.onRecordCashCount,
+    this.onReviewClose,
   });
 
   final LumoApiClient apiClient;
   final Future<void> Function(SalesExportFile file)? shareExport;
-  final String? conversationId;
-  final VoidCallback? onSwitchToInicio;
+  final String? businessName;
+  final BusinessStream? stream;
+  final bool streamFailed;
+  final VoidCallback? onRecordCashCount;
+  final VoidCallback? onReviewClose;
 
   @override
   State<HoyPage> createState() => _HoyPageState();
@@ -70,41 +77,6 @@ class HoyPage extends StatefulWidget {
 class _HoyPageState extends State<HoyPage> {
   String? _notice;
   bool _busy = false;
-  Map<String, dynamic>? _next;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadNext();
-  }
-
-  Future<void> _loadNext() async {
-    try {
-      final body = await widget.apiClient.getCurrentNextBestAction();
-      if (!mounted) {
-        return;
-      }
-      setState(() => _next = body);
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() => _next = null);
-    }
-  }
-
-  Future<void> _requestClose() async {
-    final conversationId = widget.conversationId;
-    if (conversationId == null || conversationId.isEmpty) {
-      return;
-    }
-    widget.onSwitchToInicio?.call();
-    await widget.apiClient.postMessage(
-      'cerrar el día',
-      operation: 'hoy.close.${DateTime.now().microsecondsSinceEpoch}',
-      conversationId: conversationId,
-    );
-  }
 
   Future<void> _download(String format) async {
     if (_busy) {
@@ -141,7 +113,12 @@ class _HoyPageState extends State<HoyPage> {
 
   @override
   Widget build(BuildContext context) {
+    final name = widget.businessName?.trim() ?? '';
+    final title = name.isEmpty ? 'Así va hoy' : 'Así va $name hoy';
+    final stream = widget.stream;
+    final summary = stream?.factualSummary;
     return ListView(
+      key: const Key('hoy-scroll'),
       padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
       children: [
         Row(
@@ -152,32 +129,37 @@ class _HoyPageState extends State<HoyPage> {
           ],
         ),
         const SizedBox(height: 12),
-        Text('Jornada', style: LumoTypography.titleSerifMd),
+        Text(title, style: LumoTypography.titleSerifMd),
         const SizedBox(height: 16),
-        if (_showsNext) ...[
+        if (widget.streamFailed)
           LumoCard(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Próximo paso', style: LumoTypography.eyebrow),
-                const SizedBox(height: 8),
-                Text(_title, style: LumoTypography.cardTitle),
-                const SizedBox(height: 8),
-                Text(_reason, style: LumoTypography.body),
-                if (_pendingCount == 1) ...[
-                  const SizedBox(height: 8),
-                  Text('1 pendiente', style: LumoTypography.caption),
-                ],
-                if (_offersClose) ...[
-                  const SizedBox(height: 16),
-                  LumoSecondaryButton(
-                    label: 'Cerrar el día',
-                    onPressed: _requestClose,
-                  ),
-                ],
+            child: Text(streamUnavailableResponsibility, style: LumoTypography.body),
+          )
+        else if (stream != null) ...[
+          if (summary != null) ...[
+            _section(
+              'Ventas',
+              [
+                saleCountLabel(summary.saleCount),
+                formatStreamAmount(summary.grossSalesTotal.amount),
               ],
             ),
-          ),
+            const SizedBox(height: 12),
+            _section(
+              'Pagos',
+              [
+                'Efectivo ${formatStreamAmount(summary.cashTotal.amount)}',
+                'Tarjeta ${formatStreamAmount(summary.cardTotal.amount)}',
+                'Transferencia ${formatStreamAmount(summary.transferTotal.amount)}',
+              ],
+            ),
+            const SizedBox(height: 12),
+          ],
+          _section('Cierre', _closingLines(stream)),
+          if (stream.coverageSentence != null) ...[
+            const SizedBox(height: 12),
+            Text(stream.coverageSentence!, style: LumoTypography.body),
+          ],
           const SizedBox(height: 16),
         ],
         LumoCard(
@@ -206,36 +188,73 @@ class _HoyPageState extends State<HoyPage> {
     );
   }
 
-  bool get _showsNext => _action != null;
-
-  Map<String, dynamic>? get _action {
-    final value = _next?['next_best_action'];
-    if (value is Map<String, dynamic>) {
-      return value;
+  List<String> _closingLines(BusinessStream stream) {
+    final summary = stream.factualSummary;
+    final lines = <String>[_operatorLabel(stream)];
+    if (summary != null) {
+      final cash = cashStatusLabel(summary.cashStatus);
+      if (cash != lines.first) {
+        lines.add(cash);
+      }
+      lines.add('Esperado ${formatStreamAmount(summary.drawerExpected.amount)}');
+      final counted = summary.countedCash;
+      if (counted != null) {
+        lines.add('Contado ${formatStreamAmount(counted.amount)}');
+      }
+      final difference = summary.cashDifference;
+      if (difference != null) {
+        lines.add('Diferencia ${formatStreamAmount(difference.amount)}');
+      }
     }
-    if (value is Map) {
-      return Map<String, dynamic>.from(value);
-    }
-    return null;
+    return lines;
   }
 
-  String get _title => '${_action?['title'] ?? ''}';
-
-  String get _reason => '${_action?['reason'] ?? ''}';
-
-  int get _pendingCount {
-    final value = _next?['pending_count'];
-    if (value is int) {
-      return value;
-    }
-    return 0;
+  String _operatorLabel(BusinessStream stream) {
+    final summary = stream.factualSummary;
+    return switch (stream.operatorState) {
+      'closed' => 'Día cerrado',
+      'cash_count_required' => 'Falta contar efectivo',
+      'ready_to_close' => summary == null ? stream.responsibility : cashStatusLabel(summary.cashStatus),
+      'cash_difference' => summary == null ? stream.responsibility : cashStatusLabel(summary.cashStatus),
+      'no_active_day' || 'organizing' || 'unavailable' => stream.responsibility,
+      _ => stream.responsibility,
+    };
   }
 
-  bool get _offersClose {
-    final actions = _action?['actions'];
-    if (actions is! List) {
-      return false;
+  Widget _section(String title, List<String> lines) {
+    final action = title == 'Cierre' ? widget.stream?.primaryAction : null;
+    return LumoCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: LumoTypography.eyebrow),
+          const SizedBox(height: 8),
+          for (final line in lines) ...[
+            Text(line, style: LumoTypography.body),
+            const SizedBox(height: 4),
+          ],
+          if (action != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: LumoPrimaryButton(
+                label: action.label,
+                onPressed: () => _invoke(action),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  void _invoke(StreamPrimaryAction action) {
+    if (action.kind == 'record_cash_count' && action.invocation == 'composer') {
+      widget.onRecordCashCount?.call();
+      return;
     }
-    return actions.any((item) => item is Map && item['action_id'] == 'closing.request@1');
+    if (action.kind == 'request_close' && action.invocation == 'review_surface') {
+      widget.onReviewClose?.call();
+    }
   }
 }

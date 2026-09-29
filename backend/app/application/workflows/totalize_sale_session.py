@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
-from app.application.ports import AuditService, IdempotencyService, Outbox, SalesPort
+from app.application.ports import AuditService, IdempotencyService, IdentityPort, Outbox, SalesPort
+from app.domain.identity.onboarding import sales_allowed
+from app.domain.shared.errors import OnboardingIncompleteError
 from app.domain.sales import (
     SaleItem,
     SaleSession,
@@ -68,11 +70,13 @@ class TotalizeSaleSession:
         self,
         *,
         sales: SalesPort,
+        identities: IdentityPort,
         audit: AuditService,
         idempotency: IdempotencyService,
         outbox: Outbox,
     ) -> None:
         self._sales = sales
+        self._identities = identities
         self._audit = audit
         self._idempotency = idempotency
         self._outbox = outbox
@@ -89,6 +93,9 @@ class TotalizeSaleSession:
         fail_after_write: bool = False,
         raw_message: str = "",
     ) -> TotalizeWorkflowResult:
+        business = self._identities.get_business(tenant)
+        if not sales_allowed(onboarding_status=business.onboarding_status):
+            raise OnboardingIncompleteError("onboarding is not completed")
         request_hash = sha256(f"{raw_message}|{conversation_id or ''}|totalize".encode()).hexdigest()
         replay = self._idempotency.peek(
             tenant=tenant,

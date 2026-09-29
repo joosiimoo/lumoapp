@@ -38,7 +38,7 @@ class InicioPage extends StatelessWidget {
     this.streamFailed = false,
     this.onRetryStream,
     this.onRecordCashCount,
-    this.onRequestClose,
+    this.onReviewClose,
   });
 
   final List<InicioTurn> messages;
@@ -51,7 +51,7 @@ class InicioPage extends StatelessWidget {
   final bool streamFailed;
   final VoidCallback? onRetryStream;
   final VoidCallback? onRecordCashCount;
-  final void Function(String message)? onRequestClose;
+  final VoidCallback? onReviewClose;
 
   @override
   Widget build(BuildContext context) {
@@ -59,47 +59,64 @@ class InicioPage extends StatelessWidget {
     final eyebrow = businessName == null || businessName!.trim().isEmpty
         ? 'LUMO'
         : 'LUMO · ${businessName!.trim()}'.toUpperCase();
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            const LumoMark(size: LumoSizes.markSm),
-            const SizedBox(width: 8),
-            Text(eyebrow, style: LumoTypography.eyebrow),
-          ],
-        ),
-        const SizedBox(height: 12),
-        ShaderMask(
-          blendMode: BlendMode.srcIn,
-          shaderCallback: (bounds) => LumoGradients.lumoTextGradient.createShader(bounds),
-          child: Text('Buenos días', style: LumoTypography.displayGreeting.copyWith(color: Colors.white)),
-        ),
-        const SizedBox(height: 16),
-        if (streamFailed || stream != null) ...[
-          BusinessStreamPanel(
-            stream: stream,
-            failed: streamFailed,
-            onRetry: onRetryStream ?? () {},
-            onRecordCashCount: onRecordCashCount ?? () {},
-            onRequestClose: onRequestClose ?? (_) {},
+        Padding(
+          padding: const EdgeInsets.fromLTRB(20, 24, 20, 0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const LumoMark(size: LumoSizes.markSm),
+                  const SizedBox(width: 8),
+                  Text(eyebrow, style: LumoTypography.eyebrow),
+                ],
+              ),
+              const SizedBox(height: 12),
+              ShaderMask(
+                blendMode: BlendMode.srcIn,
+                shaderCallback: (bounds) => LumoGradients.lumoTextGradient.createShader(bounds),
+                child: Text('Buenos días', style: LumoTypography.displayGreeting.copyWith(color: Colors.white)),
+              ),
+              if (streamFailed || stream != null) ...[
+                const SizedBox(height: 16),
+                BusinessStreamPanel(
+                  stream: stream,
+                  failed: streamFailed,
+                  onRetry: onRetryStream ?? () {},
+                  onRecordCashCount: onRecordCashCount ?? () {},
+                  onReviewClose: onReviewClose ?? () {},
+                ),
+              ],
+            ],
           ),
-          const SizedBox(height: 16),
-        ],
-        if (messages.isEmpty)
-          Text(
-            'Dile a Lumo qué vendiste. Prueba con 900gr zanahoria.',
-            style: LumoTypography.body,
+        ),
+        Expanded(
+          child: ListView(
+            key: const Key('inicio-transcript'),
+            cacheExtent: 100000,
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
+            children: [
+              if (messages.isEmpty)
+                Text(
+                  'Dile a Lumo qué vendiste. Prueba con 900gr zanahoria.',
+                  style: LumoTypography.body,
+                ),
+              for (final turn in messages) ...[
+                if (turn.fromUser)
+                  LumoUserMessage(text: turn.text)
+                else if (turn.ui.isEmpty)
+                  LumoMessage(text: turn.text)
+                else
+                  _assistantCard(renderer, turn),
+                const SizedBox(height: LumoSpacing.streamGap),
+              ],
+            ],
           ),
-        for (final turn in messages) ...[
-          if (turn.fromUser)
-            LumoUserMessage(text: turn.text)
-          else if (turn.ui.isEmpty)
-            LumoMessage(text: turn.text)
-          else
-            _assistantCard(renderer, turn),
-          const SizedBox(height: LumoSpacing.streamGap),
-        ],
+        ),
       ],
     );
   }

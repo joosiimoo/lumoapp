@@ -32,7 +32,7 @@ def test_0014_creates_tables_without_backfill(migrated) -> None:
     discard_work_items(migrated)
     with migrated.connect() as connection:
         version = connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        assert version == "0014_pilot_stage_gate_instrumentation"
+        assert version == "0015_onboarding_minimum_configuration"
         assert connection.execute(text("SELECT to_regclass('operations.pilot_program_enrollments')")).scalar()
         assert connection.execute(text("SELECT to_regclass('operations.stage_gate_assessments')")).scalar()
         assert connection.execute(text("SELECT count(*) FROM operations.stage_gate_assessments")).scalar_one() == 0

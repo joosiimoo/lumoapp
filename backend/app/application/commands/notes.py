@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from app.application.ports import AuditService, IdempotencyService, Outbox
+from app.domain.identity.onboarding import confirmation_contract, next_required_field
 from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.repositories import FoundationNoteRepository, IdentityRepository
@@ -18,6 +19,26 @@ class SessionQuery:
         self._identities.require_membership(tenant)
         business = self._identities.get_business(tenant)
         actor = self._identities.get_actor(tenant)
+        methods = (
+            list(business.enabled_payment_methods) if business.enabled_payment_methods is not None else None
+        )
+        nxt = next_required_field(
+            has_business=True,
+            currency=business.currency,
+            timezone=business.timezone,
+            enabled_payment_methods=methods,
+            onboarding_status=business.onboarding_status,
+        )
+        ui = []
+        if nxt == "ready_to_complete" and methods and business.currency and business.timezone:
+            ui = [
+                confirmation_contract(
+                    name=business.name,
+                    currency=business.currency,
+                    timezone=business.timezone,
+                    enabled_payment_methods=methods,
+                )
+            ]
         return {
             "actor": {"id": str(actor.id), "name": actor.name},
             "business": {
@@ -26,7 +47,15 @@ class SessionQuery:
                 "currency": business.currency,
                 "timezone": business.timezone,
                 "locale": business.locale,
+                "onboarding_status": business.onboarding_status,
+                "enabled_payment_methods": methods,
             },
+            "onboarding_status": business.onboarding_status,
+            "currency": business.currency,
+            "timezone": business.timezone,
+            "enabled_payment_methods": methods,
+            "next_required_field": nxt,
+            "ui": ui,
         }
 
 

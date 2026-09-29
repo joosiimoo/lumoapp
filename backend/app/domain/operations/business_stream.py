@@ -134,7 +134,7 @@ def primary_action(
         return {
             "kind": "request_close",
             "label": "Revisar cierre",
-            "invocation": "message",
+            "invocation": "review_surface",
             "message": REQUEST_CLOSE_MESSAGE,
             "action_id": None,
             "work_item_id": _id(work_item_id),

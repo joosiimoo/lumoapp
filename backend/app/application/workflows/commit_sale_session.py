@@ -26,7 +26,8 @@ from app.domain.sales import (
     classify_commit,
     sum_session_total,
 )
-from app.domain.shared.errors import ValidationAppError
+from app.domain.identity.onboarding import payment_method_allowed, sales_allowed
+from app.domain.shared.errors import PaymentMethodNotEnabledError, ValidationAppError, OnboardingIncompleteError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
 from app.policies import PolicyDecision, PolicyRequest
@@ -290,6 +291,17 @@ class CommitSaleSession:
         ui_action_id: str | None,
     ) -> CommitWorkflowResult:
         business = self._identities.get_business(tenant)
+        if not sales_allowed(onboarding_status=business.onboarding_status):
+            raise OnboardingIncompleteError("onboarding is not completed")
+        if payment_method not in {"cash", "card", "transfer"}:
+            raise ValidationAppError("payment method is unknown")
+        if not payment_method_allowed(
+            enabled_payment_methods=list(business.enabled_payment_methods)
+            if business.enabled_payment_methods is not None
+            else None,
+            method=payment_method,
+        ):
+            raise PaymentMethodNotEnabledError("payment method is not enabled")
         instant = _utc_instant(confirmed_at)
         try:
             business_date = business_date_for(instant, business.timezone)

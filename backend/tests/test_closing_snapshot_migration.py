@@ -166,7 +166,7 @@ def test_upgrade_from_0006_keeps_open_days_and_adds_snapshots(admin_engine) -> N
         business_id = _insert_business(connection)
         day_id = _insert_day(connection, business_id)
     command.upgrade(_config(), "head")
-    assert _revision(admin_engine) == "0014_pilot_stage_gate_instrumentation"
+    assert _revision(admin_engine) == "0015_onboarding_minimum_configuration"
     with admin_engine.begin() as connection:
         _tenant(connection, business_id)
         status = connection.execute(
@@ -214,7 +214,7 @@ def test_downgrade_refuses_when_a_confirmed_close_exists(admin_engine) -> None:
     discard_work_items(admin_engine)
     with pytest.raises(Exception, match="cannot downgrade 0007 while a confirmed close exists"):
         command.downgrade(_config(), "0006_cash_count")
-    assert _revision(admin_engine) == "0014_pilot_stage_gate_instrumentation"
+    assert _revision(admin_engine) == "0015_onboarding_minimum_configuration"
     with admin_engine.begin() as connection:
         _tenant(connection, business_id)
         status = connection.execute(

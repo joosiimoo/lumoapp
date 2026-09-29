@@ -147,6 +147,27 @@ class LumoApiClient {
     return get('/api/v1/session');
   }
 
+  Future<Map<String, dynamic>> getOnboardingStatus() {
+    return get('/api/v1/onboarding/status');
+  }
+
+  Future<Map<String, dynamic>> applyOnboarding(
+    Map<String, dynamic> body, {
+    required String idempotencyKey,
+  }) async {
+    final decoded = await post(
+      '/api/v1/onboarding/apply',
+      body: body,
+      operation: 'onboarding.apply.$idempotencyKey',
+      idempotencyKey: idempotencyKey,
+    );
+    final token = decoded['access_token'];
+    if (token is String && token.isNotEmpty) {
+      session.accessToken = token;
+    }
+    return decoded;
+  }
+
   Future<Map<String, dynamic>> getCurrentNextBestAction() {
     return get('/api/v1/operational-days/current/next-best-action');
   }

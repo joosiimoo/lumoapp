@@ -19,7 +19,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.persistence.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, utcnow
@@ -30,10 +30,23 @@ class BusinessRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = {"schema": "identity"}
 
     name: Mapped[str] = mapped_column(String(200), nullable=False)
-    currency: Mapped[str] = mapped_column(String(3), nullable=False)
-    timezone: Mapped[str] = mapped_column(String(64), nullable=False)
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    timezone: Mapped[str | None] = mapped_column(String(64), nullable=True)
     locale: Mapped[str] = mapped_column(String(16), nullable=False, default="es-MX")
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    onboarding_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="completed", server_default=text("'completed'")
+    )
+    enabled_payment_methods: Mapped[list[str] | None] = mapped_column(ARRAY(Text), nullable=True)
+
+
+class ActorBusinessLinkRow(Base):
+    __tablename__ = "actor_business_links"
+    __table_args__ = {"schema": "identity"}
+
+    actor_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True)
+    business_id: Mapped[UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
 
 class UserRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):

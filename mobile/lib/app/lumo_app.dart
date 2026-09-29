@@ -5,10 +5,12 @@ import 'package:lumo/core/env/app_config.dart';
 import 'package:lumo/core/session/session_store.dart';
 import 'package:lumo/features/hoy/hoy_page.dart';
 import 'package:lumo/features/inicio/business_stream.dart';
+import 'package:lumo/features/inicio/close_review_sheet.dart';
 import 'package:lumo/features/inicio/inicio_page.dart';
 import 'package:lumo/features/memoria/memoria_page.dart';
 import 'package:lumo/features/negocio/negocio_page.dart';
 import 'package:lumo/features/onboarding/onboarding_page.dart';
+import 'package:lumo/features/onboarding/startup.dart';
 import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/tokens.dart';
 import 'package:lumo/lumo/widgets/lumo_composer.dart';
@@ -98,27 +100,131 @@ class _LumoHomeState extends State<LumoHome> {
   String? _busyActionKey;
   BusinessStream? _stream;
   bool _streamFailed = false;
+  bool _onboarding = false;
+  String _onboardingPrompt = '¿Cómo se llama tu negocio?';
+  String? _nextField;
+  List<GenerativeUiContract> _onboardingCards = const [];
+  bool _cashCountComposerActive = false;
 
   @override
   void initState() {
     super.initState();
     _conversationId = const Uuid().v4();
+    _composerFocus.addListener(_onComposerFocusChange);
     _loadBusiness();
-    _loadStream();
+  }
+
+  void _onComposerFocusChange() {
+    if (!_composerFocus.hasFocus && _cashCountComposerActive && mounted) {
+      setState(() => _cashCountComposerActive = false);
+    }
+  }
+
+  void _beginCashCountEntry() {
+    if (_tab != LumoTab.inicio) {
+      setState(() => _tab = LumoTab.inicio);
+    }
+    setState(() => _cashCountComposerActive = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        _composerFocus.requestFocus();
+      }
+    });
   }
 
   Future<void> _loadBusiness() async {
     if (widget.apiClient.session.accessToken == null) {
+      await _loadStream();
       return;
     }
     try {
       final body = await widget.apiClient.getSession();
-      final business = body['business'];
-      if (!mounted || business is! Map) {
+      if (!mounted) {
         return;
       }
-      setState(() => _businessName = '${business['name'] ?? ''}');
+      if (destinationForSession(body) == StartupDestination.onboarding) {
+        _showOnboarding(body);
+        return;
+      }
+      final business = body['business'];
+      if (business is Map && mounted) {
+        setState(() {
+          _onboarding = false;
+          _businessName = '${business['name'] ?? ''}';
+        });
+      }
     } catch (_) {}
+    if (mounted && !_onboarding) {
+      await _loadStream();
+    }
+  }
+
+  void _showOnboarding(Map<String, dynamic> body) {
+    final next = body['next_required_field'] as String?;
+    final card = confirmationCardFromState(body);
+    setState(() {
+      _onboarding = true;
+      _stream = null;
+      _nextField = next;
+      _onboardingCards = card == null ? const [] : [card];
+      _onboardingPrompt = next == 'ready_to_complete'
+          ? 'Revisa tu negocio antes de empezar.'
+          : '¿Cómo se llama tu negocio?';
+    });
+  }
+
+  Future<void> _onOnboardingSend(String text) async {
+    final body = onboardingApplyBody(text, _nextField);
+    if (body == null) {
+      return;
+    }
+    try {
+      final response = await widget.apiClient.applyOnboarding(
+        body,
+        idempotencyKey: 'onboarding-${DateTime.now().microsecondsSinceEpoch}',
+      );
+      if (!mounted) {
+        return;
+      }
+      if (response['onboarding_status'] == 'completed') {
+        setState(() => _onboarding = false);
+        await _loadStream();
+        return;
+      }
+      _showOnboarding(response);
+    } catch (_) {
+      if (mounted) {
+        LumoToast.show(context, 'No pude registrar eso. Intenta de nuevo.');
+      }
+    }
+  }
+
+  Future<void> _onStartUsingLumo() async {
+    try {
+      final response = await widget.apiClient.applyOnboarding(
+        {'start_using_lumo': true},
+        idempotencyKey: 'start_using_lumo',
+      );
+      if (!mounted) {
+        return;
+      }
+      if (response['onboarding_status'] == 'completed') {
+        final businessName = response['name'];
+        setState(() {
+          _onboarding = false;
+          _onboardingCards = const [];
+          _nextField = null;
+          if (businessName is String) {
+            _businessName = businessName;
+          }
+        });
+        await _loadStream();
+      }
+    } catch (_) {
+      if (mounted) {
+        LumoToast.show(context, 'No pude registrar eso. Intenta de nuevo.');
+      }
+    }
   }
 
   Future<void> _loadStream() async {
@@ -142,13 +248,93 @@ class _LumoHomeState extends State<LumoHome> {
     }
   }
 
-  void _showInicio() {
-    setState(() => _tab = LumoTab.inicio);
-    _loadStream();
+  bool _showsOperationalState(LumoTab tab) {
+    return tab == LumoTab.inicio || tab == LumoTab.hoy;
+  }
+
+  Future<void> _openCloseReview() async {
+    if (_sending) {
+      return;
+    }
+    final current = _stream;
+    final action = current?.primaryAction;
+    final message = action?.message;
+    if (current == null ||
+        action == null ||
+        action.kind != 'request_close' ||
+        action.invocation != 'review_surface' ||
+        message == null ||
+        message.isEmpty) {
+      return;
+    }
+    setState(() => _sending = true);
+    try {
+      final response = await widget.apiClient.postMessage(
+        message,
+        operation: 'lumo.review.${DateTime.now().microsecondsSinceEpoch}',
+        conversationId: _conversationId,
+      );
+      if (!mounted) {
+        return;
+      }
+      final review = CloseReviewRequest.fromUi(response.ui);
+      setState(() => _sending = false);
+      if (review == null) {
+        LumoToast.show(context, 'No pude preparar el cierre.');
+        return;
+      }
+      final facts = CloseReviewFacts.fromServer(stream: current, preparation: review.preparation);
+      if (!mounted) {
+        return;
+      }
+      await showModalBottomSheet<void>(
+        context: context,
+        useRootNavigator: true,
+        isScrollControlled: true,
+        backgroundColor: LumoColors.background,
+        builder: (sheetContext) {
+          return CloseReviewSheet(
+            facts: facts,
+            onConfirm: () => _confirmClose(review.action),
+          );
+        },
+      );
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _sending = false);
+      LumoToast.show(context, 'No pude preparar el cierre.');
+    }
+  }
+
+  Future<String?> _confirmClose(GenerativeUiAction action) async {
+    try {
+      final response = await widget.apiClient.postAction(
+        actionId: action.actionId,
+        optionId: action.optionId,
+        contextToken: action.contextToken,
+        conversationId: _conversationId,
+        idempotencyKey: action.idempotencyKey,
+      );
+      if (!mounted) {
+        return 'No pude registrar eso. Intenta de nuevo.';
+      }
+      _confirmationToken = null;
+      await _loadStream();
+      if (_stream?.operatorState == 'closed') {
+        return null;
+      }
+      final text = response.text.trim();
+      return text.isEmpty ? 'No pude registrar eso. Intenta de nuevo.' : text;
+    } catch (_) {
+      return 'No pude registrar eso. Intenta de nuevo.';
+    }
   }
 
   @override
   void dispose() {
+    _composerFocus.removeListener(_onComposerFocusChange);
     _composerFocus.dispose();
     _composer.dispose();
     super.dispose();
@@ -211,6 +397,7 @@ class _LumoHomeState extends State<LumoHome> {
       if (last == null || !last.fromUser || last.text != text) {
         _inicio.add(InicioTurn.user(text));
       }
+      _cashCountComposerActive = false;
       _sending = true;
     });
     try {
@@ -242,48 +429,22 @@ class _LumoHomeState extends State<LumoHome> {
     }
   }
 
-  Future<void> _sendPhrase(String text) async {
-    if (_tab != LumoTab.inicio || _sending || text.trim().isEmpty) {
-      return;
-    }
-    final operation = 'lumo.message.send.${DateTime.now().microsecondsSinceEpoch}';
-    setState(() {
-      _inicio.add(InicioTurn.user(text));
-      _sending = true;
-    });
-    try {
-      final response = await widget.apiClient.postMessage(
-        text,
-        operation: operation,
-        conversationId: _conversationId,
-        confirmationToken: _confirmationToken,
-      );
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _inicio.add(InicioTurn.assistant(response.text, response.ui));
-        _confirmationToken = nextConfirmationToken(response.ui, _confirmationToken);
-        _sending = false;
-      });
-      await _loadStream();
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() => _sending = false);
-      LumoToast.show(context, 'No pude registrar eso. Intenta de nuevo.');
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
+    if (_onboarding) {
+      return OnboardingPage(
+        prompt: _onboardingPrompt,
+        cards: _onboardingCards,
+        onSend: _onOnboardingSend,
+        onStartUsingLumo: _onStartUsingLumo,
+      );
+    }
     final showComposer = _tab != LumoTab.negocio && _tab != LumoTab.memoria;
     return LumoScaffold(
       currentTab: _tab,
       onSelectTab: (tab) {
         setState(() => _tab = tab);
-        if (tab == LumoTab.inicio) {
+        if (_showsOperationalState(tab)) {
           _loadStream();
         }
       },
@@ -291,6 +452,7 @@ class _LumoHomeState extends State<LumoHome> {
           ? LumoComposer(
               controller: _composer,
               focusNode: _composerFocus,
+              emphasized: _cashCountComposerActive,
               onSend: _onSend,
             )
           : null,
@@ -305,13 +467,16 @@ class _LumoHomeState extends State<LumoHome> {
             stream: _stream,
             streamFailed: _streamFailed,
             onRetryStream: _loadStream,
-            onRecordCashCount: () => _composerFocus.requestFocus(),
-            onRequestClose: _sendPhrase,
+            onRecordCashCount: _beginCashCountEntry,
+            onReviewClose: _openCloseReview,
           ),
         LumoTab.hoy => HoyPage(
             apiClient: widget.apiClient,
-            conversationId: _conversationId,
-            onSwitchToInicio: _showInicio,
+            businessName: _businessName,
+            stream: _stream,
+            streamFailed: _streamFailed,
+            onRecordCashCount: _beginCashCountEntry,
+            onReviewClose: _openCloseReview,
           ),
         LumoTab.memoria => MemoriaPage(apiClient: widget.apiClient),
         LumoTab.negocio => const NegocioPage(),

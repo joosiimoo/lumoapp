@@ -6,6 +6,15 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 
+def set_current_actor_id(session: Session, actor_id: UUID) -> None:
+    if not session.in_transaction():
+        session.begin()
+    session.execute(
+        text("SELECT set_config('app.current_actor_id', :actor_id, true)"),
+        {"actor_id": str(actor_id)},
+    )
+
+
 def set_current_business_id(session: Session, business_id: UUID) -> None:
     if not session.in_transaction():
         session.begin()

@@ -1029,7 +1029,7 @@ void main() {
     await tester.ensureVisible(find.text('Efectivo'));
     await tapLabel(tester, 'Efectivo');
     await tester.pumpAndSettle();
-    expect(find.text('totalizar'), findsOneWidget);
+    expect(find.text('totalizar', skipOffstage: false), findsOneWidget);
     expect(find.text('Efectivo'), findsOneWidget);
     expect(find.text('Venta registrada'), findsOneWidget);
     final action = bodies.last;
@@ -1137,10 +1137,10 @@ void main() {
     await tester.ensureVisible(find.text('Efectivo'));
     await tapLabel(tester, 'Efectivo');
     await tester.pumpAndSettle();
-    expect(find.text('Esta acción ya no aplica a la venta en curso.'), findsOneWidget);
+    expect(find.text('Esta acción ya no aplica a la venta en curso.', skipOffstage: false), findsOneWidget);
     expect(find.text('Venta registrada'), findsNothing);
-    expect(find.text('Lista para cobrar'), findsOneWidget);
-    expect(find.text('totalizar'), findsOneWidget);
+    expect(find.text('Lista para cobrar', skipOffstage: false), findsOneWidget);
+    expect(find.text('totalizar', skipOffstage: false), findsOneWidget);
   });
 
   testWidgets('request-close prose stays visible beside the card', (tester) async {
@@ -1253,7 +1253,8 @@ void main() {
     ));
     expect(find.text(title), findsOneWidget);
     expect(find.text(reason), findsOneWidget);
-    expect(find.text('Cerrar el día'), findsOneWidget);
+    expect(find.text('Revisar cierre'), findsOneWidget);
+    expect(find.text('Cerrar el día'), findsNothing);
     expect(find.text('80.00 − 94.00'), findsNothing);
     expect(find.text(contract.fallbackText), findsNothing);
 

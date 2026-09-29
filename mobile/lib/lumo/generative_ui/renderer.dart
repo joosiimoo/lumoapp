@@ -5,6 +5,7 @@ import 'package:lumo/lumo/widgets/lumo_card.dart';
 import 'package:lumo/lumo/widgets/lumo_chips.dart';
 import 'package:lumo/lumo/widgets/lumo_mark.dart';
 import 'package:lumo/lumo/widgets/lumo_messages.dart';
+import 'package:lumo/features/onboarding/onboarding_page.dart';
 import 'package:lumo/shared/money_display.dart';
 
 class GenerativeUiAction {
@@ -70,7 +71,7 @@ const uiActionLabels = <String, String>{
   'sale.pay.cash@1': 'Efectivo',
   'sale.pay.card@1': 'Tarjeta',
   'sale.pay.transfer@1': 'Transferencia',
-  'closing.request@1': 'Cerrar el día',
+  'closing.request@1': 'Revisar cierre',
   'closing.confirm@1': 'Confirmar cierre',
 };
 
@@ -117,6 +118,8 @@ class GenerativeUIRenderer {
     'daily_close_preparation': 1,
     'daily_close_confirmed': 1,
     'next_best_action': 1,
+    'onboarding_choice': 1,
+    'onboarding_confirmation': 1,
   };
 
   GenerativeUiRenderResult render(GenerativeUiContract contract) {
@@ -153,6 +156,12 @@ class GenerativeUIRenderer {
     }
     if (contract.component == 'next_best_action') {
       return NextBestActionView(contract: contract, chrome: chrome);
+    }
+    if (contract.component == 'onboarding_choice') {
+      return OnboardingChoiceView(contract: contract);
+    }
+    if (contract.component == 'onboarding_confirmation') {
+      return OnboardingConfirmationView(contract: contract, chrome: chrome);
     }
     return SaleItemAddedView(contract: contract, chrome: chrome);
   }

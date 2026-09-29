@@ -10,6 +10,7 @@ import 'package:lumo/api/lumo_api_client.dart';
 import 'package:lumo/core/env/app_config.dart';
 import 'package:lumo/core/session/session_store.dart';
 import 'package:lumo/features/hoy/hoy_page.dart';
+import 'package:lumo/features/inicio/business_stream.dart';
 import 'package:share_plus/share_plus.dart';
 
 void main() {
@@ -188,69 +189,64 @@ void main() {
     }
   });
 
-  testWidgets('Hoy shows the server next step and posts cerrar el día', (tester) async {
+  testWidgets('Hoy keeps exports under the daily summary and does not call next-best-action', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(420, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
     final requests = <http.Request>[];
-    var switched = false;
     final httpClient = MockClient((request) async {
       requests.add(request);
-      if (request.url.path.endsWith('next-best-action')) {
-        return http.Response(
-          jsonEncode({
-            'operational_day_id': 'day-1',
-            'day_status': 'open',
-            'pending_count': 1,
-            'next_best_action': {
-              'type': 'cash_difference_review',
-              'title': 'Hay un faltante de \$14.00. Revisa la diferencia antes de confirmar el cierre.',
-              'reason': 'El conteo es \$80.00 y las ventas registradas en Lumo esperan \$94.00 en efectivo.',
-              'actions': [
-                {'action_id': 'closing.request@1'},
-              ],
-            },
-          }),
-          200,
-          headers: {'content-type': 'application/json'},
-        );
-      }
-      return http.Response(
-        jsonEncode({
-          'message_id': 'm1',
-          'status': 'completed',
-          'text': 'El cierre está preparado',
-          'ui': [],
-          'correlation_id': 'c1',
-        }),
-        200,
-        headers: {'content-type': 'application/json'},
-      );
+      return http.Response('{}', 200, headers: {'content-type': 'application/json'});
     });
     await tester.pumpWidget(
       MaterialApp(
         home: HoyPage(
           apiClient: _client(httpClient),
-          conversationId: 'conv-hoy',
-          onSwitchToInicio: () => switched = true,
+          businessName: 'Carrota',
           shareExport: (_) async {},
+          stream: BusinessStream.fromJson({
+            'business_date': '2026-09-26',
+            'operator_state': 'closed',
+            'close_progress': 'completed',
+            'responsibility': 'Cierre completado',
+            'detail': null,
+            'factual_summary': {
+              'basis': 'closing_snapshot',
+              'sale_count': 2,
+              'gross_sales_total': {'amount': '52.50', 'currency': 'MXN'},
+              'cash_total': {'amount': '22.50', 'currency': 'MXN'},
+              'card_total': {'amount': '30.00', 'currency': 'MXN'},
+              'transfer_total': {'amount': '0.00', 'currency': 'MXN'},
+              'expected_cash': {'amount': '22.50', 'currency': 'MXN'},
+              'counted_cash': {'amount': '22.50', 'currency': 'MXN'},
+              'cash_difference': {'amount': '0.00', 'currency': 'MXN'},
+              'cash_status': 'balanced',
+              'closed_at': '2026-09-26T18:00:00Z',
+            },
+            'attention': null,
+            'primary_action': null,
+            'coverage': {
+              'sentence': 'Este cierre considera las operaciones registradas en Lumo.',
+              'limitation_code': 'only_lumo_registered_operations',
+            },
+            'as_of': '2026-09-26T18:00:00Z',
+          }),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Próximo paso'), findsOneWidget);
-    expect(find.text('1 pendiente'), findsOneWidget);
-    expect(find.text('2 pendientes'), findsNothing);
-    expect(
-      find.text('Hay un faltante de \$14.00. Revisa la diferencia antes de confirmar el cierre.'),
-      findsOneWidget,
-    );
-    await tester.tap(find.text('Cerrar el día'));
-    await tester.pumpAndSettle();
-    expect(switched, isTrue);
-    final posted = requests.where((request) => request.method == 'POST').toList();
-    expect(posted, hasLength(1));
-    expect(posted.single.url.path, '/api/v1/lumo/messages');
-    expect(jsonDecode(posted.single.body)['message'], 'cerrar el día');
-    expect(jsonDecode(posted.single.body)['conversation_id'], 'conv-hoy');
-    expect(requests.any((request) => request.url.path.contains('/actions')), isFalse);
+    expect(find.text('Así va Carrota hoy'), findsOneWidget);
+    expect(find.text('2 ventas'), findsOneWidget);
+    expect(find.text(r'$52.50'), findsOneWidget);
+    expect(find.text('Día cerrado'), findsOneWidget);
+    expect(find.text('Este cierre considera las operaciones registradas en Lumo.'), findsOneWidget);
+    expect(find.text('Cerrar el día'), findsNothing);
+    expect(find.text('Revisar cierre'), findsNothing);
+    expect(find.text('Confirmar cierre'), findsNothing);
+    expect(find.text('Registrar conteo'), findsNothing);
+    final summary = tester.getTopLeft(find.text('Así va Carrota hoy'));
+    final excel = tester.getTopLeft(find.text('Descargar Excel'));
+    expect(excel.dy, greaterThan(summary.dy));
+    expect(requests.where((request) => request.url.path.contains('next-best-action')), isEmpty);
   });
 }
 

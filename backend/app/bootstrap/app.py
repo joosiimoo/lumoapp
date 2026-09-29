@@ -15,6 +15,8 @@ from app.agent.registrations import (
     register_daily_close_preparation_ui,
     register_daily_close_confirmed_ui,
     register_next_best_action_ui,
+    register_onboarding_tools,
+    register_onboarding_ui,
     register_operational_day_summary_ui,
     register_sale_confirmed_ui,
     register_sale_item_added_ui,
@@ -26,6 +28,7 @@ from app.api.routes.business_stream import router as business_stream_router
 from app.api.routes.health import router as health_router
 from app.api.routes.lumo import router as lumo_router
 from app.api.routes.memory import router as memory_router
+from app.api.routes.onboarding import router as onboarding_router
 from app.api.routes.operational_days import router as operational_days_router
 from app.api.routes.platform import router as platform_router
 from app.api.schemas.errors import app_error_handler, http_exception_handler, unhandled_error_handler, validation_error_handler
@@ -56,6 +59,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     tools = ToolRegistry()
     register_conversational_sale_tools(tools)
+    register_onboarding_tools(tools)
     ui_registry = GenerativeUIRegistry()
     register_sale_item_added_ui(ui_registry)
     register_sale_summary_ui(ui_registry)
@@ -64,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_daily_close_preparation_ui(ui_registry)
     register_daily_close_confirmed_ui(ui_registry)
     register_next_best_action_ui(ui_registry)
+    register_onboarding_ui(ui_registry)
     policies = build_policy_engine()
     provider = ScriptedLLMProvider()
     orchestrator = FoundationOrchestrator(
@@ -114,6 +119,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(operational_days_router)
     app.include_router(memory_router)
     app.include_router(business_stream_router)
+    app.include_router(onboarding_router)
 
     if settings.app_env.value == "test":
         from pydantic import BaseModel

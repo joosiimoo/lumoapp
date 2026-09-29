@@ -71,7 +71,12 @@ def _initialize_one(session: Session, *, business_id: UUID, now: datetime | None
 def _list_businesses(engine) -> list[tuple[UUID, str]]:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE identity.businesses DISABLE ROW LEVEL SECURITY"))
-        rows = connection.execute(text("SELECT id, timezone FROM identity.businesses")).all()
+        rows = connection.execute(
+            text(
+                "SELECT id, timezone FROM identity.businesses "
+                "WHERE onboarding_status = 'completed' AND timezone IS NOT NULL"
+            )
+        ).all()
         connection.execute(text("ALTER TABLE identity.businesses ENABLE ROW LEVEL SECURITY"))
         connection.execute(text("ALTER TABLE identity.businesses FORCE ROW LEVEL SECURITY"))
     return [(row.id, row.timezone) for row in rows]

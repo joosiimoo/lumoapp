@@ -42,7 +42,13 @@ from app.domain.sales.concept import (
     normalize_override_reason,
     price_problem_text,
 )
-from app.domain.shared.errors import IdempotencyConflictError, ProductNotFoundError, ValidationAppError
+from app.domain.identity.onboarding import sales_allowed
+from app.domain.shared.errors import (
+    IdempotencyConflictError,
+    OnboardingIncompleteError,
+    ProductNotFoundError,
+    ValidationAppError,
+)
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
@@ -91,6 +97,9 @@ class AddCatalogSaleItem:
         raw_message: str = "",
         pending_unit_price: str | None = None,
     ) -> AddItemWorkflowResult:
+        business = self._identities.get_business(tenant)
+        if not sales_allowed(onboarding_status=business.onboarding_status):
+            raise OnboardingIncompleteError("onboarding is not completed")
         if decision.clarification_question and "unit" in decision.missing_fields and not decision.product_query:
             return AddItemWorkflowResult(kind="clarify", text=decision.clarification_question, payload={})
 

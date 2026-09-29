@@ -8,11 +8,15 @@ class LumoComposer extends StatefulWidget {
     required this.controller,
     required this.onSend,
     this.focusNode,
+    this.emphasized = false,
   });
+
+  static const shellKey = ValueKey('lumo_composer');
 
   final TextEditingController controller;
   final VoidCallback onSend;
   final FocusNode? focusNode;
+  final bool emphasized;
 
   @override
   State<LumoComposer> createState() => _LumoComposerState();
@@ -47,15 +51,26 @@ class _LumoComposerState extends State<LumoComposer> {
     final hasText = widget.controller.text.trim().isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-      child: Container(
-        height: LumoSizes.composerHeight + 8,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        decoration: const BoxDecoration(
-          color: LumoColors.surfaceElevated,
-          borderRadius: BorderRadius.all(Radius.circular(LumoRadius.pill)),
-          boxShadow: LumoShadows.ringLumo,
-        ),
-        child: Row(
+      child: KeyedSubtree(
+        key: LumoComposer.shellKey,
+        child: _buildShell(hasText),
+      ),
+    );
+  }
+
+  Widget _buildShell(bool hasText) {
+    return AnimatedContainer(
+      duration: LumoMotion.duration,
+      curve: LumoMotion.curve,
+      height: LumoSizes.composerHeight + 8,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      decoration: BoxDecoration(
+        color: LumoColors.surfaceElevated,
+        borderRadius: const BorderRadius.all(Radius.circular(LumoRadius.pill)),
+        border: widget.emphasized ? Border.all(color: LumoColors.ring, width: 2) : null,
+        boxShadow: widget.emphasized ? LumoShadows.ringLumo : LumoShadows.small,
+      ),
+      child: Row(
           children: [
             SizedBox(
               width: LumoSizes.composerIconButton,
@@ -105,7 +120,6 @@ class _LumoComposerState extends State<LumoComposer> {
               ),
           ],
         ),
-      ),
     );
   }
 }

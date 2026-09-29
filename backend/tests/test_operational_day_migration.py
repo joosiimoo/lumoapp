@@ -198,7 +198,7 @@ def test_legacy_backfill_from_0004(admin_engine) -> None:
     with admin_engine.begin() as connection:
         seeded = _insert_legacy(connection, timezone_name="America/Mexico_City")
     command.upgrade(_config(), "head")
-    assert _revision(admin_engine) == "0014_pilot_stage_gate_instrumentation"
+    assert _revision(admin_engine) == "0015_onboarding_minimum_configuration"
     business_id = seeded["business_id"]
     with admin_engine.begin() as connection:
         connection.execute(

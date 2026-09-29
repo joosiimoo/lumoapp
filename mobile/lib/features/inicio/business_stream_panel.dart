@@ -4,7 +4,7 @@ import 'package:lumo/lumo/typography.dart';
 import 'package:lumo/lumo/widgets/lumo_buttons.dart';
 import 'package:lumo/lumo/widgets/lumo_card.dart';
 
-/// One operator panel. It displays the server projection and does not rank or sum.
+/// Compact current-state panel. It displays server fields and does not rank or sum.
 class BusinessStreamPanel extends StatelessWidget {
   const BusinessStreamPanel({
     super.key,
@@ -12,14 +12,14 @@ class BusinessStreamPanel extends StatelessWidget {
     required this.failed,
     required this.onRetry,
     required this.onRecordCashCount,
-    required this.onRequestClose,
+    required this.onReviewClose,
   });
 
   final BusinessStream? stream;
   final bool failed;
   final VoidCallback onRetry;
   final VoidCallback onRecordCashCount;
-  final void Function(String message) onRequestClose;
+  final VoidCallback onReviewClose;
 
   @override
   Widget build(BuildContext context) {
@@ -27,6 +27,7 @@ class BusinessStreamPanel extends StatelessWidget {
       return LumoCard(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(streamUnavailableResponsibility, style: LumoTypography.body),
             const SizedBox(height: 12),
@@ -39,44 +40,25 @@ class BusinessStreamPanel extends StatelessWidget {
     if (current == null) {
       return const SizedBox.shrink();
     }
-    final summary = current.factualSummary;
+    final lines = _lines(current);
     final action = current.primaryAction;
     return LumoCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Text(current.responsibility, style: LumoTypography.cardTitle),
-          if (current.detail != null) ...[
-            const SizedBox(height: 8),
-            Text(current.detail!, style: LumoTypography.body),
-          ],
-          if (summary != null) ...[
-            const SizedBox(height: 12),
-            Text(saleCountLabel(summary.saleCount), style: LumoTypography.body),
-            Text('Total ${formatStreamAmount(summary.grossSalesTotal.amount)}', style: LumoTypography.body),
-            Text('Efectivo ${formatStreamAmount(summary.cashTotal.amount)}', style: LumoTypography.body),
-            Text('Tarjeta ${formatStreamAmount(summary.cardTotal.amount)}', style: LumoTypography.body),
-            Text('Transferencia ${formatStreamAmount(summary.transferTotal.amount)}', style: LumoTypography.body),
-            Text(cashStatusLabel(summary.cashStatus), style: LumoTypography.body),
-            Text('Esperado ${formatStreamAmount(summary.drawerExpected.amount)}', style: LumoTypography.body),
-            if (summary.countedCash != null)
-              Text('Contado ${formatStreamAmount(summary.countedCash!.amount)}', style: LumoTypography.body),
-            if (summary.cashDifference != null)
-              Text('Diferencia ${formatStreamAmount(summary.cashDifference!.amount)}', style: LumoTypography.body),
-          ],
-          if (current.attentionWhy != null) ...[
-            const SizedBox(height: 8),
-            Text(current.attentionWhy!, style: LumoTypography.caption),
-          ],
-          if (current.coverageSentence != null) ...[
-            const SizedBox(height: 8),
-            Text(current.coverageSentence!, style: LumoTypography.caption),
+          for (var index = 0; index < lines.length; index++) ...[
+            if (index > 0) const SizedBox(height: 4),
+            Text(lines[index], style: index == 0 ? LumoTypography.cardTitle : LumoTypography.body),
           ],
           if (action != null) ...[
-            const SizedBox(height: 16),
-            LumoPrimaryButton(
-              label: action.label,
-              onPressed: () => _invoke(action),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: LumoPrimaryButton(
+                label: action.label,
+                onPressed: () => _invoke(action),
+              ),
             ),
           ],
         ],
@@ -85,13 +67,54 @@ class BusinessStreamPanel extends StatelessWidget {
   }
 
   void _invoke(StreamPrimaryAction action) {
-    if (action.invocation == 'composer' && action.kind == 'record_cash_count') {
+    if (action.kind == 'record_cash_count' && action.invocation == 'composer') {
       onRecordCashCount();
       return;
     }
-    final message = action.message;
-    if (action.invocation == 'message' && message != null && message.isNotEmpty) {
-      onRequestClose(message);
+    if (action.kind == 'request_close' && action.invocation == 'review_surface') {
+      onReviewClose();
     }
   }
+}
+
+List<String> _lines(BusinessStream stream) {
+  final summary = stream.factualSummary;
+  final state = stream.operatorState;
+  if (state == 'no_active_day') {
+    return [stream.responsibility];
+  }
+  if (state == 'unavailable' || summary == null) {
+    return [stream.responsibility.isEmpty ? streamUnavailableResponsibility : stream.responsibility];
+  }
+  final sales = '${saleCountLabel(summary.saleCount)} · ${formatStreamAmount(summary.grossSalesTotal.amount)}';
+  if (state == 'closed') {
+    return ['Día cerrado', sales];
+  }
+  if (state == 'organizing') {
+    return [sales, ..._tenders(summary)];
+  }
+  final headline = switch (state) {
+    'cash_count_required' => 'Falta contar efectivo',
+    'cash_difference' || 'ready_to_close' => cashStatusLabel(summary.cashStatus),
+    _ => stream.responsibility,
+  };
+  final lines = <String>[headline, sales, ..._tenders(summary)];
+  lines.add('Esperado ${formatStreamAmount(summary.drawerExpected.amount)}');
+  final counted = summary.countedCash;
+  if (counted != null) {
+    lines.add('Contado ${formatStreamAmount(counted.amount)}');
+  }
+  final difference = summary.cashDifference;
+  if (difference != null) {
+    lines.add('Diferencia ${formatStreamAmount(difference.amount)}');
+  }
+  return lines;
+}
+
+List<String> _tenders(StreamFactualSummary summary) {
+  return [
+    'Efectivo ${formatStreamAmount(summary.cashTotal.amount)}',
+    'Tarjeta ${formatStreamAmount(summary.cardTotal.amount)}',
+    'Transferencia ${formatStreamAmount(summary.transferTotal.amount)}',
+  ];
 }
