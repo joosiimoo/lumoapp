@@ -12,33 +12,40 @@ import 'package:lumo/features/memoria/memoria_timeline.dart';
 import 'package:lumo/lumo/widgets/lumo_chips.dart';
 
 void main() {
-  test('placeholder copy is gone and cards stay deterministic', () {
+  test('sale_confirmed compact rendering is deterministic', () {
+    final cash = memoriaFeedItem({
+      'event_type': 'sale_confirmed',
+      'business_date': '2026-09-25',
+      'local_time': '23:30',
+      'facts': {'amount': '22.50', 'payment_method': 'cash'},
+    })!;
+    expect(cash.typeLabel, 'Venta');
+    expect(cash.primary, 'Venta en efectivo por \$22.50');
+    expect(cash.secondary, isNull);
+    expect(cash.localTime, '23:30');
     expect(
-      memoriaCardView({
-        'event_type': 'sale_confirmed',
-        'business_date': '2026-09-25',
-        'local_time': '23:30',
-        'facts': {'amount': '22.50', 'payment_method': 'cash'},
-      })!.lines,
-      ['22.50 · Efectivo'],
-    );
-    expect(
-      memoriaCardView({
+      memoriaFeedItem({
         'event_type': 'sale_confirmed',
         'local_time': '01:00',
         'facts': {'amount': '10.00', 'payment_method': 'card'},
-      })!.lines.single,
-      '10.00 · Tarjeta',
+      })!.primary,
+      'Venta con tarjeta por \$10.00',
     );
     expect(
-      memoriaCardView({
+      memoriaFeedItem({
         'event_type': 'sale_confirmed',
         'local_time': '01:00',
         'facts': {'amount': '8.00', 'payment_method': 'transfer'},
-      })!.lines.single,
-      '8.00 · Transferencia',
+      })!.primary,
+      'Venta por transferencia de \$8.00',
     );
-    final voided = memoriaCardView({
+    expect(memoriaSalePrimary(paymentMethod: 'cash', amount: '195.00'), 'Venta en efectivo por \$195.00');
+    expect(memoriaSalePrimary(paymentMethod: 'card', amount: '195.00'), 'Venta con tarjeta por \$195.00');
+    expect(memoriaSalePrimary(paymentMethod: 'transfer', amount: '120.00'), 'Venta por transferencia de \$120.00');
+  });
+
+  test('sale_voided renders reason and never attaches Anular', () {
+    final voided = memoriaFeedItem({
       'event_type': 'sale_voided',
       'local_time': '12:10',
       'facts': {
@@ -46,10 +53,24 @@ void main() {
         'payment_method': 'cash',
         'void_reason': 'cobro duplicado',
       },
+      'actions': [
+        {
+          'action_id': 'sale.void.request@1',
+          'option_id': null,
+          'context_token': 'should-ignore',
+          'idempotency_key': 'x',
+          'conversation_id': 'conv',
+        },
+      ],
     })!;
-    expect(voided.title, 'Venta anulada');
-    expect(voided.lines, ['22.50 · Efectivo', 'cobro duplicado']);
-    final cash = memoriaCardView({
+    expect(voided.typeLabel, 'Venta anulada');
+    expect(voided.primary, 'Venta en efectivo por \$22.50');
+    expect(voided.secondary, 'Motivo: cobro duplicado');
+    expect(voided.voidRequest, isNull);
+  });
+
+  test('cash_count_recorded renders counted primary and exception status chips only', () {
+    final cash = memoriaFeedItem({
       'event_type': 'cash_count_recorded',
       'local_time': '18:00',
       'facts': {
@@ -59,26 +80,40 @@ void main() {
         'cash_status': 'short',
       },
     })!;
-    expect(cash.title, 'Conteo de efectivo');
-    expect(cash.lines, ['Esperado 22.50', 'Contado 10.00', 'Diferencia -12.50']);
-    expect(cash.chip, 'Faltante');
+    expect(cash.typeLabel, 'Conteo');
+    expect(cash.primary, 'Efectivo contado \$10.00');
+    expect(cash.secondary, 'Esperado \$22.50 · diferencia \$-12.50');
+    expect(cash.statusChip, 'Faltante');
+    final balanced = memoriaFeedItem({
+      'event_type': 'cash_count_recorded',
+      'local_time': '18:00',
+      'facts': {
+        'expected_cash': '1.00',
+        'counted_cash': '1.00',
+        'cash_difference': '0.00',
+        'cash_status': 'balanced',
+      },
+    })!;
+    expect(balanced.primary, 'Efectivo contado \$1.00');
+    expect(balanced.secondary, 'Esperado \$1.00 · diferencia \$0.00');
+    expect(balanced.statusChip, isNull);
     expect(
-      memoriaCardView({
+      memoriaFeedItem({
         'event_type': 'cash_count_recorded',
         'local_time': '18:00',
-        'facts': {'expected_cash': '1.00', 'counted_cash': '1.00', 'cash_difference': '0.00', 'cash_status': 'balanced'},
-      })!.chip,
-      'Cuadrado',
-    );
-    expect(
-      memoriaCardView({
-        'event_type': 'cash_count_recorded',
-        'local_time': '18:00',
-        'facts': {'expected_cash': '1.00', 'counted_cash': '2.00', 'cash_difference': '1.00', 'cash_status': 'over'},
-      })!.chip,
+        'facts': {
+          'expected_cash': '1.00',
+          'counted_cash': '2.00',
+          'cash_difference': '1.00',
+          'cash_status': 'over',
+        },
+      })!.statusChip,
       'Sobrante',
     );
-    final close = memoriaCardView({
+  });
+
+  test('daily_close_completed renders gross total, status, and optional note', () {
+    final close = memoriaFeedItem({
       'event_type': 'daily_close_completed',
       'local_time': '19:00',
       'facts': {
@@ -88,13 +123,64 @@ void main() {
         'cash_status': 'short',
       },
     })!;
-    expect(close.title, 'Cierre completado');
-    expect(close.lines, ['Ventas registradas 22.50', 'Caja Faltante', 'Diferencia -2.50']);
-    expect(close.lines, isNot(contains('Ventas registradas 1')));
-    expect(memoriaCardView({'event_type': 'unknown', 'local_time': '19:00', 'facts': {}}), isNull);
+    expect(close.typeLabel, 'Cierre');
+    expect(close.primary, 'Cierre completado · \$22.50 en ventas');
+    expect(close.secondary, 'Faltante · diferencia \$-2.50');
+    expect(close.note, isNull);
+    expect(close.primary, isNot(contains('1')));
+    final withNote = memoriaFeedItem({
+      'event_type': 'daily_close_completed',
+      'local_time': '19:00',
+      'facts': {
+        'sale_count': 1,
+        'gross_sales_total': '22.50',
+        'cash_difference': '-2.50',
+        'cash_status': 'short',
+        'close_note': 'Faltaron dos billetes',
+      },
+    })!;
+    expect(withNote.note, 'Faltaron dos billetes');
+    expect(withNote.primary, isNot(contains('Faltaron')));
+    expect(withNote.secondary, isNot(contains('Faltaron')));
+    expect(memoriaFeedItem({'event_type': 'unknown', 'local_time': '19:00', 'facts': {}}), isNull);
   });
 
-  test('groups use the server business date across a UTC boundary', () {
+  test('feed items do not duplicate unnecessary facts', () {
+    final sale = memoriaFeedItem({
+      'event_type': 'sale_confirmed',
+      'local_time': '10:00',
+      'facts': {'amount': '12.00', 'payment_method': 'cash'},
+    })!;
+    expect(sale.secondary, isNull);
+    expect(sale.note, isNull);
+    final cash = memoriaFeedItem({
+      'event_type': 'cash_count_recorded',
+      'local_time': '18:00',
+      'facts': {
+        'expected_cash': '12.00',
+        'counted_cash': '12.00',
+        'cash_difference': '0.00',
+        'cash_status': 'balanced',
+      },
+    })!;
+    expect(cash.primary, 'Efectivo contado \$12.00');
+    expect(cash.secondary!.contains('contado'), isFalse);
+    final close = memoriaFeedItem({
+      'event_type': 'daily_close_completed',
+      'local_time': '19:00',
+      'facts': {
+        'sale_count': 3,
+        'gross_sales_total': '36.00',
+        'cash_difference': '0.00',
+        'cash_status': 'balanced',
+      },
+    })!;
+    expect(close.primary, contains('\$36.00'));
+    expect(close.secondary, isNot(contains('\$36.00')));
+    expect(close.secondary, isNot(contains('3')));
+  });
+
+  test('groups use Hoy, Ayer, and calendar labels from server business dates', () {
     final groups = memoriaGroups(
       events: [
         {
@@ -117,6 +203,12 @@ void main() {
           },
         },
         {
+          'event_type': 'sale_confirmed',
+          'business_date': '2026-09-20',
+          'local_time': '12:00',
+          'facts': {'amount': '5.00', 'payment_method': 'card'},
+        },
+        {
           'event_type': 'note',
           'business_date': '2026-09-25',
           'local_time': '23:40',
@@ -126,9 +218,14 @@ void main() {
       businessToday: '2026-09-25',
       businessYesterday: '2026-09-24',
     );
-    expect(groups.map((group) => group.label), ['Hoy', 'Ayer']);
-    expect(groups.first.cards.single.title, 'Venta registrada');
-    expect(groups.last.cards.single.title, 'Cierre completado');
+    expect(groups.map((group) => group.label), [
+      'Hoy',
+      'Ayer',
+      '20 de septiembre de 2026',
+    ]);
+    expect(groups.first.items.single.typeLabel, 'Venta');
+    expect(groups[1].items.single.typeLabel, 'Cierre');
+    expect(groups.last.items.single.typeLabel, 'Venta');
     expect(
       memoriaDateLabel(
         businessDate: '2026-09-20',
@@ -139,23 +236,126 @@ void main() {
     );
   });
 
-  testWidgets('empty Memoria uses the registered copy and one footer', (tester) async {
+  test('newest-first API order is preserved within groups', () {
+    final groups = memoriaGroups(
+      events: [
+        {
+          'event_type': 'sale_confirmed',
+          'business_date': '2026-09-25',
+          'local_time': '12:06',
+          'facts': {'amount': '12.00', 'payment_method': 'cash'},
+        },
+        {
+          'event_type': 'sale_confirmed',
+          'business_date': '2026-09-25',
+          'local_time': '10:00',
+          'facts': {'amount': '8.00', 'payment_method': 'card'},
+        },
+      ],
+      businessToday: '2026-09-25',
+      businessYesterday: '2026-09-24',
+    );
+    expect(groups.single.items.map((item) => item.localTime), ['12:06', '10:00']);
+  });
+
+  testWidgets('empty Memoria uses lightweight copy and no footer', (tester) async {
     await tester.pumpWidget(_app(_client(_payload(events: []))));
     await tester.pumpAndSettle();
     expect(find.text('La memoria factual se habilitará cuando existan eventos confirmados.'), findsNothing);
     expect(find.text(memoriaEmptyTitle), findsOneWidget);
-    expect(find.text(memoriaEmptyBody), findsOneWidget);
+    expect(find.text('ACTIVIDAD'), findsNothing);
+    expect(find.text('Todavía no hay actividad registrada'), findsNothing);
+    expect(find.text('Las ventas, conteos y cierres confirmados aparecerán aquí.'), findsNothing);
     expect(find.text('No hubo actividad.'), findsNothing);
-    expect(find.text(memoriaFooter, skipOffstage: false), findsOneWidget);
+    expect(find.text('Memoria muestra operaciones confirmadas registradas en Lumo.'), findsNothing);
     expect(find.text('Ver anteriores'), findsNothing);
     expect(find.byType(TextField), findsNothing);
     expect(find.text('Corregir'), findsNothing);
     expect(find.text('Explicar'), findsNothing);
     expect(find.text('Olvidar'), findsNothing);
     expect(find.text('Ver evidencia'), findsNothing);
+    expect(find.textContaining('Buscar'), findsNothing);
+    expect(find.textContaining('Patrones'), findsNothing);
   });
 
-  testWidgets('Memoria renders server cards and stops at a null cursor', (tester) async {
+  testWidgets('date groups share one ACTIVIDAD timeline without horizontal dividers', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        _client(
+          _payload(
+            events: [
+              {
+                'event_type': 'sale_confirmed',
+                'business_date': '2026-09-25',
+                'local_time': '12:06',
+                'facts': {'amount': '12.00', 'payment_method': 'cash'},
+              },
+              {
+                'event_type': 'sale_confirmed',
+                'business_date': '2026-09-25',
+                'local_time': '10:00',
+                'facts': {'amount': '8.00', 'payment_method': 'card'},
+              },
+              {
+                'event_type': 'cash_count_recorded',
+                'business_date': '2026-09-24',
+                'local_time': '18:00',
+                'facts': {
+                  'expected_cash': '1.00',
+                  'counted_cash': '1.00',
+                  'cash_difference': '0.00',
+                  'cash_status': 'balanced',
+                },
+              },
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Hoy'), findsOneWidget);
+    expect(find.text('Ayer'), findsOneWidget);
+    expect(find.text('ACTIVIDAD'), findsNWidgets(2));
+    expect(find.text('Venta en efectivo por \$12.00'), findsOneWidget);
+    expect(find.text('Venta con tarjeta por \$8.00'), findsOneWidget);
+    expect(find.text('Conteo'), findsOneWidget);
+    expect(find.byType(Divider), findsNothing);
+    expect(find.byType(MemoriaTimelineEvent), findsNWidgets(3));
+    final hoyEvents = tester.widgetList<MemoriaTimelineEvent>(find.byType(MemoriaTimelineEvent)).toList();
+    expect(hoyEvents.where((event) => event.connectAbove || event.connectBelow).length, greaterThan(0));
+    expect(hoyEvents[0].connectAbove, isFalse);
+    expect(hoyEvents[0].connectBelow, isTrue);
+    expect(hoyEvents[1].connectAbove, isTrue);
+    expect(hoyEvents[1].connectBelow, isFalse);
+  });
+
+  testWidgets('single-event group renders node without broken connector', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        _client(
+          _payload(
+            events: [
+              {
+                'event_type': 'sale_confirmed',
+                'business_date': '2026-09-25',
+                'local_time': '16:34',
+                'facts': {'amount': '195.00', 'payment_method': 'card'},
+              },
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(MemoriaTimelineEvent), findsOneWidget);
+    final event = tester.widget<MemoriaTimelineEvent>(find.byType(MemoriaTimelineEvent));
+    expect(event.connectAbove, isFalse);
+    expect(event.connectBelow, isFalse);
+    expect(find.text('Venta con tarjeta por \$195.00'), findsOneWidget);
+    expect(find.byType(Divider), findsNothing);
+  });
+
+  testWidgets('Memoria renders compact feed and Ver anteriores', (tester) async {
     final requests = <Uri>[];
     final httpClient = MockClient((request) async {
       requests.add(request.url);
@@ -171,33 +371,39 @@ void main() {
     });
     await tester.pumpWidget(_app(_client(httpClient)));
     await tester.pumpAndSettle();
-    expect(find.text('Venta registrada'), findsOneWidget);
-    expect(find.text('22.50 · Efectivo'), findsOneWidget);
-    expect(find.text('Cierre completado'), findsOneWidget);
-    expect(find.text('Ventas registradas 22.50'), findsOneWidget);
-    expect(find.text('Ventas registradas 1'), findsNothing);
+    expect(find.text('MEMORIA'), findsOneWidget);
+    expect(find.text('Lo que Lumo recuerda'), findsOneWidget);
+    expect(find.text('ACTIVIDAD'), findsOneWidget);
+    expect(find.text('Venta'), findsOneWidget);
+    expect(find.text('Venta en efectivo por \$22.50'), findsOneWidget);
+    expect(find.text('Cierre'), findsOneWidget);
+    expect(find.text('Cierre completado · \$22.50 en ventas'), findsOneWidget);
+    expect(find.text('Ventas registradas 22.50'), findsNothing);
     expect(find.text('Hoy'), findsOneWidget);
     expect(find.text('23:30'), findsWidgets);
     expect(find.text('Ver anteriores'), findsOneWidget);
     expect(find.textContaining('event_id'), findsNothing);
+    expect(find.text('Memoria muestra operaciones confirmadas registradas en Lumo.'), findsNothing);
+    expect(find.byType(Divider), findsNothing);
+    expect(find.byType(MemoriaTimelineEvent), findsNWidgets(2));
     await tester.tap(find.text('Ver anteriores'));
     await tester.pumpAndSettle();
-    expect(find.text('Conteo de efectivo'), findsOneWidget);
+    expect(find.text('Conteo'), findsOneWidget);
+    expect(find.text('Efectivo contado \$10.00'), findsOneWidget);
     expect(find.widgetWithText(LumoStatusChip, 'Faltante'), findsOneWidget);
     expect(find.text('Ver anteriores'), findsNothing);
     expect(requests.last.queryParameters['before'], 'cursor-2');
-    expect(find.text(memoriaFooter, skipOffstage: false), findsOneWidget);
   });
 
-  test('void request is parsed only from server actions', () {
-    final without = memoriaCardView({
+  test('void request is parsed only from server actions on sale_confirmed', () {
+    final without = memoriaFeedItem({
       'event_type': 'sale_confirmed',
       'local_time': '10:00',
       'facts': {'amount': '22.50', 'payment_method': 'cash'},
     })!;
     expect(without.voidRequest, isNull);
     expect(without.voidConversationId, isNull);
-    final withAction = memoriaCardView({
+    final withAction = memoriaFeedItem({
       'event_type': 'sale_confirmed',
       'local_time': '10:00',
       'facts': {'amount': '22.50', 'payment_method': 'cash'},
@@ -214,21 +420,6 @@ void main() {
     expect(withAction.voidRequest?.actionId, 'sale.void.request@1');
     expect(withAction.voidRequest?.contextToken, 'tok-void');
     expect(withAction.voidConversationId, 'conv-memoria');
-    final voided = memoriaCardView({
-      'event_type': 'sale_voided',
-      'local_time': '10:05',
-      'facts': {'amount': '22.50', 'payment_method': 'cash', 'void_reason': 'error'},
-      'actions': [
-        {
-          'action_id': 'sale.void.request@1',
-          'option_id': null,
-          'context_token': 'should-ignore',
-          'idempotency_key': 'x',
-          'conversation_id': 'conv',
-        },
-      ],
-    })!;
-    expect(voided.voidRequest, isNull);
   });
 
   testWidgets('Memoria shows Anular only when server action is present', (tester) async {
@@ -258,6 +449,12 @@ void main() {
                 'local_time': '09:00',
                 'facts': {'amount': '10.00', 'payment_method': 'card'},
               },
+              {
+                'event_type': 'sale_confirmed',
+                'business_date': '2026-09-24',
+                'local_time': '18:00',
+                'facts': {'amount': '5.00', 'payment_method': 'cash'},
+              },
             ],
           ),
         ),
@@ -265,8 +462,9 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.text('Anular'), findsOneWidget);
-    expect(find.text('22.50 · Efectivo'), findsOneWidget);
-    expect(find.text('10.00 · Tarjeta'), findsOneWidget);
+    expect(find.text('Venta en efectivo por \$22.50'), findsOneWidget);
+    expect(find.text('Venta con tarjeta por \$10.00'), findsOneWidget);
+    expect(find.text('Ayer'), findsOneWidget);
   });
 
   testWidgets('Memoria Anular posts void request then confirm and refreshes', (tester) async {
@@ -436,12 +634,13 @@ void main() {
     expect(posts.last['conversation_id'], 'conv-memoria');
     expect(posts.last['payload'], {'void_reason': 'cobro duplicado'});
     expect(find.text('Venta anulada'), findsOneWidget);
-    expect(find.text('Venta registrada'), findsOneWidget);
+    expect(find.text('Venta'), findsOneWidget);
+    expect(find.text('Motivo: cobro duplicado'), findsOneWidget);
     expect(find.text('Anular'), findsNothing);
     expect(memoryLoads, greaterThanOrEqualTo(2));
   });
 
-  testWidgets('close card uses gross sales and cash status is a chip', (tester) async {
+  testWidgets('close and cash status chips render without duplicated sales count', (tester) async {
     await tester.pumpWidget(
       _app(
         _client(
@@ -456,6 +655,7 @@ void main() {
                   'gross_sales_total': '22.50',
                   'cash_difference': '-2.50',
                   'cash_status': 'short',
+                  'close_note': 'Faltaron dos billetes',
                 },
               },
               {
@@ -467,6 +667,17 @@ void main() {
                   'counted_cash': '20.00',
                   'cash_difference': '-2.50',
                   'cash_status': 'short',
+                },
+              },
+              {
+                'event_type': 'daily_close_completed',
+                'business_date': '2026-09-25',
+                'local_time': '19:00',
+                'facts': {
+                  'sale_count': 1,
+                  'gross_sales_total': '12.00',
+                  'cash_difference': '0.00',
+                  'cash_status': 'balanced',
                 },
               },
               {
@@ -497,15 +708,20 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('Ventas registradas 22.50'), findsOneWidget);
+    expect(find.text('Cierre completado · \$22.50 en ventas'), findsOneWidget);
+    expect(find.text('Faltante · diferencia \$-2.50'), findsOneWidget);
+    expect(find.text('Faltaron dos billetes'), findsOneWidget);
     expect(find.text('Ventas registradas 1'), findsNothing);
-    expect(find.text('Caja Faltante'), findsOneWidget);
-    expect(find.text('Diferencia -2.50'), findsWidgets);
-    expect(find.text('Esperado 22.50'), findsOneWidget);
-    expect(find.text('Contado 20.00'), findsOneWidget);
+    expect(find.text('Efectivo contado \$20.00'), findsOneWidget);
+    expect(find.text('Esperado \$22.50 · diferencia \$-2.50'), findsOneWidget);
+    expect(find.text('Efectivo contado \$1.00'), findsOneWidget);
+    expect(find.text('Esperado \$1.00 · diferencia \$0.00'), findsOneWidget);
     expect(find.widgetWithText(LumoStatusChip, 'Faltante'), findsOneWidget);
-    expect(find.widgetWithText(LumoStatusChip, 'Cuadrado', skipOffstage: false), findsOneWidget);
     expect(find.widgetWithText(LumoStatusChip, 'Sobrante', skipOffstage: false), findsOneWidget);
+    // Conteo balanced: no standalone Cuadrado chip.
+    expect(find.widgetWithText(LumoStatusChip, 'Cuadrado'), findsNothing);
+    // Cierre balanced: status remains in secondary summary.
+    expect(find.text('Cuadrado · diferencia \$0.00'), findsOneWidget);
   });
 }
 

@@ -32,7 +32,7 @@ Views MUST NOT construct URLs, parse raw HTTP, or compute domain totals. A singl
 - **THEN** the client MUST expose `code`, `message`, `retryable`, and `correlation_id` to callers
 
 ### Requirement: Navigation foundation
-The app MUST provide bottom navigation matching the design-system tab bar: Inicio, Hoy, Memoria, and Negocio. Catalog and settings MUST be reachable later from Negocio; they MUST NOT replace the four-tab identity in this change. Onboarding MAY hide the tab bar. Tab roles MUST remain: Inicio is conversation-first control plane with a light operational header; Hoy is the structured day-operations surface including Daily Close entry; Memoria is factual/persistent business memory; Negocio is the existing business/context surface. Inicio MUST NOT become a KPI dashboard. Hoy MUST NOT become a generic analytics dashboard. Selected-tab visual treatment MUST preserve the existing accent pill and active label styling; unselected tabs MUST keep muted styling. Navigation structure MUST NOT be redesigned.
+The app MUST provide bottom navigation matching the design-system tab bar: Inicio, Hoy, Memoria, and Negocio. Catalog and settings MUST be reachable later from Negocio; they MUST NOT replace the four-tab identity in this change. Onboarding MAY hide the tab bar. Tab roles MUST remain: Inicio is conversation-first control plane with a light operational header; Hoy is the structured day-operations surface including Daily Close entry; Memoria is factual/persistent business memory presented as a compact chronological activity feed (not oversized event-detail cards and not a dashboard); Negocio is the existing business/context surface. Inicio MUST NOT become a KPI dashboard. Hoy MUST NOT become a generic analytics dashboard. Selected-tab visual treatment MUST preserve the existing accent pill and active label styling; unselected tabs MUST keep muted styling. Navigation structure MUST NOT be redesigned.
 
 #### Scenario: Four tabs present
 - **WHEN** a signed-in placeholder home is shown
@@ -45,6 +45,10 @@ The app MUST provide bottom navigation matching the design-system tab bar: Inici
 #### Scenario: Inicio is not a dashboard
 - **WHEN** Inicio is visible with an active operational day
 - **THEN** it MUST keep the greeting, light operational header, conversation, and composer, and MUST NOT show an hourly chart or KPI grid
+
+#### Scenario: Memoria is an activity feed
+- **WHEN** the merchant opens Memoria
+- **THEN** the tab MUST present confirmed events as a compact chronological activity feed and MUST NOT present a KPI dashboard
 
 ### Requirement: No domain calculations on the client
 Flutter MUST NOT calculate monetary totals, daily sales totals, payment-method splits, conversions, expected cash, counted cash, cash differences, cash status, averages, close readiness, or outcome gates. Display formatting of server-provided amounts and dates in the business locale is allowed. Formatting an ISO `business_date` MUST NOT change the calendar day and MUST NOT use the device timezone to choose the day. Formatting an ISO `counted_at` for display is allowed and MUST NOT change the stored instant. A `+` prefix on a positive overage amount is display-only and MUST NOT be treated as a computed difference. Flutter MUST NOT choose a payment method, a close request, or a close confirmation except by submitting an action or approved phrase the server already maps, including a silent `request_close` used only to populate the review surface.
@@ -274,7 +278,7 @@ After a successful sale commit, cash count recording, or close confirmation, Flu
 - **THEN** a later view of Inicio indicators and of Hoy MUST show `ready_to_close` / `Caja cuadrada` from the new GET
 
 ### Requirement: Renderer wires remove and Memoria void secondary controls
-`GenerativeUIRenderer` MUST map remove actions from `sale_item_added@1` and `sale_summary@1` through the existing `POST /api/v1/lumo/actions` client. Inicio `sale_confirmed@1` MUST NOT expose Anular. Memoria MUST map server-authored timeline `sale.void.request@1` actions to the existing void confirmation UX (reason + server before/after impact → `sale.void.confirm@1`) using the action’s server `conversation_id`. Inicio MUST keep conversation primary and MUST NOT add a POS item grid or a separate corrections screen. Hoy MUST NOT add sale-level void actions or an individual sales list in this slice. After remove or void mutations, operator surfaces that already refresh after sale mutations MUST refresh again so Hoy / Business Stream exclude voided sales; Memoria MUST refresh after void so Anular disappears from the original sale entry.
+`GenerativeUIRenderer` MUST map remove actions from `sale_item_added@1` and `sale_summary@1` through the existing `POST /api/v1/lumo/actions` client. Inicio `sale_confirmed@1` MUST NOT expose Anular. Memoria MUST map server-authored feed `sale.void.request@1` actions to the existing void confirmation UX (reason + server before/after impact → `sale.void.confirm@1`) using the action’s server `conversation_id`. Flutter MUST NOT infer void eligibility when `actions` is absent. Inicio MUST keep conversation primary and MUST NOT add a POS item grid or a separate corrections screen. Hoy MUST NOT add sale-level void actions or an individual sales list in this slice. After remove or void mutations, operator surfaces that already refresh after sale mutations MUST refresh again so Hoy / Business Stream exclude voided sales; Memoria MUST refresh after void so Anular disappears from the original sale feed item.
 
 #### Scenario: Remove does not rotate conversation
 - **WHEN** the merchant removes an item from the active sale
@@ -287,3 +291,7 @@ After a successful sale commit, cash count recording, or close confirmation, Flu
 #### Scenario: Void from Memoria refreshes Hoy facts
 - **WHEN** a confirmed sale is voided from Memoria
 - **THEN** the next Business Stream / Hoy refresh MUST show server totals that exclude that sale
+
+#### Scenario: Memoria Anular requires server action
+- **WHEN** a Memoria `sale_confirmed` feed item has no `sale.void.request@1` in `actions`
+- **THEN** Flutter MUST NOT show Anular on that item

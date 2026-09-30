@@ -1,10 +1,4 @@
-# memoria-timeline Specification
-
-## Purpose
-
-Memoria is a bounded, deterministic timeline of confirmed business events. Flutter renders server facts. It does not calculate them, and the screen is not a place to ask questions.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Memoria shows a bounded factual timeline
 `MemoriaPage` MUST show a compact chronological activity feed of confirmed business events for the authenticated business. The screen MUST use canvas `#FCFAF4`, forest-green accents, and restrained type chips. For each `business_date` group, the page MUST render one shared white Activity surface (not a stack of independent event cards) that includes an `ACTIVIDAD` label and the group's events as a vertical timeline: one small green circular node per event and a thin subtle vertical connector between nodes that stops at the first and last event. Events MUST NOT be separated by horizontal divider widgets. Events MUST NOT receive independent rounded-card chrome, per-row shadows, or nested card containers. The page header MUST keep the Memoria eyebrow and the Instrument Serif title "Lo que Lumo recuerda". Body text MUST use Inter. Events MUST be grouped by `business_date` with typographic date labels (`Hoy` / `Ayer` / calendar). The page MUST NOT add a composer, a search field, question chips, suggested memory questions, patterns observed, calculated insights, inventory entries, alerts, price-history features not already live, authorization codes, analytics/comparisons, or the actions Corregir, Explicar, Olvidar, and Ver evidencia. It MUST NOT register a new `UiAction` id. It MUST NOT be a Generative UI component. Questions stay on Inicio. When a feed item includes a server-authored `sale.void.request@1` action, Memoria MAY render secondary Anular (right-aligned on the time/chip line when layout allows) and run the existing void confirmation path; Flutter MUST NOT invent Anular when `actions` is absent or empty.
@@ -90,52 +84,6 @@ When the feed has no events, the page MUST show the lightweight empty state "Aú
 - **WHEN** the merchant opens Memoria with or without events
 - **THEN** the page MUST NOT show "Memoria muestra operaciones confirmadas registradas en Lumo."
 
-### Requirement: The timeline API is a narrow read
-The system MUST expose `GET /api/v1/memory/events`. The tenant MUST come from the authenticated context. Allowed query parameters MUST be only `limit` and `before`. `limit` MUST default to 20, MUST be at least 1, and MUST be at most 50. `before` MAY carry an opaque cursor of `occurred_at` and `id`. The server MUST return only events whose operational-day `business_date` is inside the last 7 business-local dates, including today. Order MUST be `occurred_at` descending, then `id` descending. The response MUST include `events`, `next_cursor`, `business_today`, and `business_yesterday`. Each event MUST include the business-event read DTO plus `local_time` as `HH:MM` in that operational day's business timezone. The route MUST NOT accept `event_type`, `business_id`, `query`, `q`, `filters`, free text, or SQL. An invalid `limit` or a malformed cursor MUST return HTTP 422 `VALIDATION_ERROR`. A well-formed cursor outside the 7-day window MUST return an empty event list and a null `next_cursor`. There MUST be no unbounded history. The route MUST NOT write an OperationalDay, a business event, source coverage, a sale, a payment, a CashCount, a ClosingSnapshot, an OutcomeRun, a WorkItem, audit, outbox, or idempotency. It MUST NOT use `BYPASSRLS`.
-
-#### Scenario: The first page is the latest 20 events
-- **WHEN** the tenant has 25 events inside the last 7 business dates
-- **THEN** the first response MUST contain 20 events in `occurred_at` descending order and a non-null `next_cursor`
-
-#### Scenario: The window does not walk full history
-- **WHEN** the client repeats `before` until events older than 7 business dates would be next
-- **THEN** those older events MUST NOT be returned
-
-#### Scenario: A bad limit writes nothing
-- **WHEN** the client sends `limit` 51
-- **THEN** the response MUST be HTTP 422 `VALIDATION_ERROR` and no business row MUST change
-
-#### Scenario: Another tenant cannot read the feed
-- **WHEN** tenant B calls `GET /api/v1/memory/events` while tenant A has events
-- **THEN** tenant B MUST NOT receive tenant A's events
-
-### Requirement: Timeline API may attach server-authored void request actions
-`GET /api/v1/memory/events` MUST keep the existing event read fields (`event_id`, `event_type`, `business_date`, `occurred_at`, `source_type`, `source_entity_type`, `source_entity_id`, `facts`, plus `local_time`) and MAY add an optional `actions` array on each event. Each action object MUST be the generative UI action envelope (`action_id`, `option_id`, `context_token`, `idempotency_key`) plus a server-authored `conversation_id` that MUST equal the JWT `conversation_id` claim so the client can `POST /api/v1/lumo/actions` after reload. Tokens MUST reuse existing `typ=ui_action` infrastructure. This slice MUST NOT invent a second void mechanism or a new action id.
-
-For a `sale_confirmed` event, the server MUST include exactly one `sale.void.request@1` action when and only when all of the following hold at response time:
-
-1. The referenced `SaleSession.status` is `confirmed`
-2. The sale’s `operational_day_id` is the tenant’s current OperationalDay
-3. That OperationalDay `status` is `open`
-
-Otherwise `actions` MUST be omitted or an empty list. `sale_voided`, `cash_count_recorded`, and `daily_close_completed` events MUST NOT include void actions. Flutter MUST treat presence of the action as eligibility and MUST NOT infer eligibility from facts, amounts, or local status.
-
-#### Scenario: Open-day confirmed sale exposes Anular
-- **WHEN** Memoria lists a `sale_confirmed` for a session that is still `confirmed` on the current open OperationalDay
-- **THEN** that event’s `actions` MUST contain exactly one `sale.void.request@1` with a verifiable `context_token` and server `conversation_id`
-
-#### Scenario: Already-voided sale does not expose Anular
-- **WHEN** the session is `voided` and both `sale_confirmed` and `sale_voided` events exist
-- **THEN** the `sale_confirmed` event MUST NOT include `sale.void.request@1` and the `sale_voided` event MUST NOT include void actions
-
-#### Scenario: Closed-day confirmed sale does not expose Anular
-- **WHEN** a `sale_confirmed` event belongs to a closed OperationalDay and the session is still `confirmed`
-- **THEN** that event’s `actions` MUST be absent or empty
-
-#### Scenario: Reload remints Memoria void actions
-- **WHEN** the merchant restarts the app and reloads Memoria while the sale remains void-eligible
-- **THEN** `GET /api/v1/memory/events` MUST again return `sale.void.request@1` with a fresh token and idempotency key for that event
-
 ### Requirement: Memoria Anular uses the existing void confirmation path
 When Memoria renders Anular from a server-provided `sale.void.request@1`, tapping MUST post that action through `POST /api/v1/lumo/actions` using the server `conversation_id`, then show the existing explicit confirmation with server before/after impact and collect a non-empty reason before posting `sale.void.confirm@1`. Flutter MUST NOT calculate impact. After a successful void, Memoria MUST refresh so the original Venta item no longer exposes Anular and Venta anulada is visible. History MUST keep both the original `sale_confirmed` item and the `sale_voided` item.
 
@@ -146,6 +94,8 @@ When Memoria renders Anular from a server-provided `sale.void.request@1`, tappin
 #### Scenario: History keeps both items without Anular on the original
 - **WHEN** a sale is voided from Memoria
 - **THEN** the feed MUST still show the original Venta item and Venta anulada, and neither item MUST expose Anular
+
+## ADDED Requirements
 
 ### Requirement: Activity feed preserves existing pagination window
 Memoria MUST continue to consume `GET /api/v1/memory/events` with the existing bounded window: default `limit` 20 (max 50), opaque `before` cursor, last 7 business-local dates, newest-first order. When `next_cursor` is present, the page MAY offer "Ver anteriores". This slice MUST NOT introduce infinite scroll unless that mechanism already exists (it does not). Flutter MUST NOT request unsupported query parameters.

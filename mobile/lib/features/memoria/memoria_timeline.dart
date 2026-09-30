@@ -3,10 +3,27 @@ library;
 
 import 'package:lumo/lumo/generative_ui/renderer.dart';
 
-const memoriaEmptyTitle = 'Todavía no hay actividad registrada';
-const memoriaEmptyBody = 'Las ventas, conteos y cierres confirmados aparecerán aquí.';
-const memoriaFooter = 'Memoria muestra operaciones confirmadas registradas en Lumo.';
+const memoriaEmptyTitle = 'Aún no hay actividad registrada.';
 const memoriaVoidRequestActionId = 'sale.void.request@1';
+
+/// Deterministic sale sentence from server payment_method + amount.
+///
+/// - cash → `Venta en efectivo por $X`
+/// - card → `Venta con tarjeta por $X`
+/// - transfer → `Venta por transferencia de $X` (avoids "por … por")
+String? memoriaSalePrimary({required String paymentMethod, required String amount}) {
+  final money = _money(amount);
+  switch (paymentMethod) {
+    case 'cash':
+      return 'Venta en efectivo por $money';
+    case 'card':
+      return 'Venta con tarjeta por $money';
+    case 'transfer':
+      return 'Venta por transferencia de $money';
+    default:
+      return null;
+  }
+}
 
 const _months = [
   'enero',
@@ -23,31 +40,29 @@ const _months = [
   'diciembre',
 ];
 
-const _paymentLabels = {
-  'cash': 'Efectivo',
-  'card': 'Tarjeta',
-  'transfer': 'Transferencia',
-};
-
 const _cashStatusLabels = {
   'balanced': 'Cuadrado',
   'short': 'Faltante',
   'over': 'Sobrante',
 };
 
-class MemoriaCardView {
-  const MemoriaCardView({
-    required this.title,
-    required this.lines,
-    this.chip,
+class MemoriaFeedItem {
+  const MemoriaFeedItem({
+    required this.typeLabel,
+    required this.primary,
+    this.secondary,
+    this.note,
+    this.statusChip,
     required this.localTime,
     this.voidRequest,
     this.voidConversationId,
   });
 
-  final String title;
-  final List<String> lines;
-  final String? chip;
+  final String typeLabel;
+  final String primary;
+  final String? secondary;
+  final String? note;
+  final String? statusChip;
   final String localTime;
   final GenerativeUiAction? voidRequest;
   final String? voidConversationId;
@@ -80,10 +95,10 @@ class MemoriaCardView {
 }
 
 class MemoriaDateGroup {
-  const MemoriaDateGroup({required this.label, required this.cards});
+  const MemoriaDateGroup({required this.label, required this.items});
 
   final String label;
-  final List<MemoriaCardView> cards;
+  final List<MemoriaFeedItem> items;
 }
 
 String memoriaDateLabel({
@@ -109,7 +124,9 @@ String memoriaDateLabel({
   return '$day de ${_months[monthIndex]} de ${parts[0]}';
 }
 
-MemoriaCardView? memoriaCardView(Map<String, dynamic> event) {
+String _money(Object? value) => '\$$value';
+
+MemoriaFeedItem? memoriaFeedItem(Map<String, dynamic> event) {
   final type = event['event_type'];
   final facts = event['facts'];
   if (facts is! Map) {
@@ -121,68 +138,72 @@ MemoriaCardView? memoriaCardView(Map<String, dynamic> event) {
   }
   final values = facts.map((key, value) => MapEntry(key.toString(), value));
   if (type == 'sale_confirmed') {
-    final method = _paymentLabels[values['payment_method']];
     final amount = values['amount'];
-    if (method == null || amount is! String) {
+    final method = values['payment_method'];
+    if (amount is! String || method is! String) {
+      return null;
+    }
+    final primary = memoriaSalePrimary(paymentMethod: method, amount: amount);
+    if (primary == null) {
       return null;
     }
     final voidAction = memoriaVoidRequest(event);
-    return MemoriaCardView(
-      title: 'Venta registrada',
-      lines: ['$amount · $method'],
+    return MemoriaFeedItem(
+      typeLabel: 'Venta',
+      primary: primary,
       localTime: localTime,
       voidRequest: voidAction?.action,
       voidConversationId: voidAction?.conversationId,
     );
   }
   if (type == 'sale_voided') {
-    final method = _paymentLabels[values['payment_method']];
     final amount = values['amount'];
-    if (method == null || amount is! String) {
+    final method = values['payment_method'];
+    if (amount is! String || method is! String) {
+      return null;
+    }
+    final primary = memoriaSalePrimary(paymentMethod: method, amount: amount);
+    if (primary == null) {
       return null;
     }
     final reason = values['void_reason'];
-    final lines = <String>['$amount · $method'];
-    if (reason is String && reason.isNotEmpty) {
-      lines.add(reason);
-    }
-    return MemoriaCardView(
-      title: 'Venta anulada',
-      lines: lines,
+    return MemoriaFeedItem(
+      typeLabel: 'Venta anulada',
+      primary: primary,
+      secondary: reason is String && reason.isNotEmpty ? 'Motivo: $reason' : null,
       localTime: localTime,
     );
   }
   if (type == 'cash_count_recorded') {
     final status = _cashStatusLabels[values['cash_status']];
-    if (status == null) {
+    final counted = values['counted_cash'];
+    final expected = values['expected_cash'];
+    final difference = values['cash_difference'];
+    if (status == null || counted is! String || expected is! String || difference is! String) {
       return null;
     }
-    return MemoriaCardView(
-      title: 'Conteo de efectivo',
-      lines: [
-        'Esperado ${values['expected_cash']}',
-        'Contado ${values['counted_cash']}',
-        'Diferencia ${values['cash_difference']}',
-      ],
-      chip: status,
+    return MemoriaFeedItem(
+      typeLabel: 'Conteo',
+      primary: 'Efectivo contado ${_money(counted)}',
+      secondary: 'Esperado ${_money(expected)} · diferencia ${_money(difference)}',
+      // Balanced is already implied by diferencia $0.00; keep exception chips only.
+      statusChip: status == 'Cuadrado' ? null : status,
       localTime: localTime,
     );
   }
   if (type == 'daily_close_completed') {
     final status = _cashStatusLabels[values['cash_status']];
     final gross = values['gross_sales_total'];
-    if (status == null || gross is! String) {
+    final difference = values['cash_difference'];
+    if (status == null || gross is! String || difference is! String) {
       return null;
     }
-    return MemoriaCardView(
-      title: 'Cierre completado',
-      lines: [
-        'Ventas registradas $gross',
-        'Caja $status',
-        'Diferencia ${values['cash_difference']}',
-        if (values['close_note'] is String && (values['close_note'] as String).isNotEmpty)
-          values['close_note'] as String,
-      ],
+    final note = values['close_note'];
+    return MemoriaFeedItem(
+      typeLabel: 'Cierre',
+      primary: 'Cierre completado · ${_money(gross)} en ventas',
+      secondary: '$status · diferencia ${_money(difference)}',
+      note: note is String && note.isNotEmpty ? note : null,
       localTime: localTime,
     );
   }
@@ -196,11 +217,11 @@ List<MemoriaDateGroup> memoriaGroups({
 }) {
   final groups = <MemoriaDateGroup>[];
   String? currentDate;
-  final cards = <MemoriaCardView>[];
+  final items = <MemoriaFeedItem>[];
   void flush() {
     final date = currentDate;
-    if (date == null || cards.isEmpty) {
-      cards.clear();
+    if (date == null || items.isEmpty) {
+      items.clear();
       return;
     }
     groups.add(
@@ -210,14 +231,14 @@ List<MemoriaDateGroup> memoriaGroups({
           businessToday: businessToday,
           businessYesterday: businessYesterday,
         ),
-        cards: List<MemoriaCardView>.from(cards),
+        items: List<MemoriaFeedItem>.from(items),
       ),
     );
-    cards.clear();
+    items.clear();
   }
 
   for (final event in events) {
-    final view = memoriaCardView(event);
+    final view = memoriaFeedItem(event);
     if (view == null) {
       continue;
     }
@@ -229,7 +250,7 @@ List<MemoriaDateGroup> memoriaGroups({
       flush();
       currentDate = businessDate;
     }
-    cards.add(view);
+    items.add(view);
   }
   flush();
   return groups;

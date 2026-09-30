@@ -292,7 +292,7 @@ void main() {
     expect(requests.where((request) => request.url.path == '/api/v1/business-stream/today').length, greaterThan(1));
     await tester.tap(find.text('Memoria'));
     await tester.pumpAndSettle();
-    expect(find.text('Todavía no hay actividad registrada'), findsOneWidget);
+    expect(find.text('Aún no hay actividad registrada.'), findsOneWidget);
     expect(requests.where((request) => request.url.path == '/api/v1/memory/events'), isNotEmpty);
   });
 
