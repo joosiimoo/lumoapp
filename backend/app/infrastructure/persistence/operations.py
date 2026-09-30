@@ -130,6 +130,25 @@ class OperationsRepository:
         )
         return _to_day(row) if row is not None else None
 
+    def lock_day_by_id_for_update(
+        self,
+        *,
+        tenant: TenantContext,
+        operational_day_id: UUID,
+    ) -> OperationalDay | None:
+        """Serialize void/close side effects on a known day row. Never inserts."""
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.scalar(
+            select(OperationalDayRow)
+            .where(
+                OperationalDayRow.business_id == tenant.business_id,
+                OperationalDayRow.id == operational_day_id,
+            )
+            .with_for_update()
+        )
+        return _to_day(row) if row is not None else None
+
     def get_by_date(self, *, tenant: TenantContext, business_date: date) -> OperationalDay | None:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)

@@ -340,7 +340,7 @@ class _LumoHomeState extends State<LumoHome> {
     super.dispose();
   }
 
-  Future<void> _onAction(GenerativeUiContract contract, GenerativeUiAction action) async {
+  Future<void> _onAction(GenerativeUiContract contract, GenerativeUiAction action, {String? voidReason}) async {
     final cardKey = uiCardKey(contract);
     if (_busyCardKey != null || _settledCards.contains(cardKey) || _tab != LumoTab.inicio) {
       return;
@@ -356,6 +356,7 @@ class _LumoHomeState extends State<LumoHome> {
         contextToken: action.contextToken,
         conversationId: _conversationId,
         idempotencyKey: action.idempotencyKey,
+        voidReason: voidReason,
       );
       if (!mounted) {
         return;

@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
 import 'package:lumo/api/lumo_api_client.dart';
 import 'package:lumo/features/memoria/memoria_timeline.dart';
+import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/tokens.dart';
 import 'package:lumo/lumo/typography.dart';
 import 'package:lumo/lumo/widgets/lumo_buttons.dart';
 import 'package:lumo/lumo/widgets/lumo_card.dart';
 import 'package:lumo/lumo/widgets/lumo_chips.dart';
+import 'package:lumo/lumo/widgets/lumo_scaffold.dart';
 
 class MemoriaPage extends StatefulWidget {
-  const MemoriaPage({super.key, required this.apiClient});
+  const MemoriaPage({super.key, required this.apiClient, this.onAfterVoid});
 
   final LumoApiClient apiClient;
+  final Future<void> Function()? onAfterVoid;
 
   @override
   State<MemoriaPage> createState() => _MemoriaPageState();
@@ -24,6 +27,7 @@ class _MemoriaPageState extends State<MemoriaPage> {
   var _loading = true;
   var _loadingMore = false;
   String? _error;
+  String? _busyKey;
 
   @override
   void initState() {
@@ -65,6 +69,117 @@ class _MemoriaPageState extends State<MemoriaPage> {
         _loadingMore = false;
         _error = 'No pude cargar Memoria.';
       });
+    }
+  }
+
+  Future<void> _startVoid(MemoriaCardView card) async {
+    final action = card.voidRequest;
+    final conversationId = card.voidConversationId;
+    if (action == null || conversationId == null || _busyKey != null) {
+      return;
+    }
+    setState(() => _busyKey = action.idempotencyKey);
+    try {
+      final response = await widget.apiClient.postAction(
+        actionId: action.actionId,
+        optionId: action.optionId,
+        contextToken: action.contextToken,
+        conversationId: conversationId,
+        idempotencyKey: action.idempotencyKey,
+      );
+      if (!mounted) {
+        return;
+      }
+      GenerativeUiContract? confirmUi;
+      for (final contract in response.ui) {
+        if (contract.component == 'sale_confirmed' &&
+            contract.actions.any((item) => item.actionId == voidConfirmActionId)) {
+          confirmUi = contract;
+          break;
+        }
+      }
+      if (confirmUi == null) {
+        setState(() => _busyKey = null);
+        LumoToast.show(context, response.text.trim().isEmpty ? 'No pude anular esa venta.' : response.text);
+        return;
+      }
+      final sheetContract = confirmUi;
+      setState(() => _busyKey = null);
+      final confirmed = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: LumoColors.background,
+        builder: (sheetContext) {
+          return Padding(
+            padding: EdgeInsets.only(
+              left: 20,
+              right: 20,
+              top: 20,
+              bottom: MediaQuery.of(sheetContext).viewInsets.bottom + 24,
+            ),
+            child: SingleChildScrollView(
+              child: SaleConfirmedView(
+                contract: sheetContract,
+                chrome: UiActionChrome(
+                  onAction: (confirmAction, {voidReason}) async {
+                    Navigator.of(sheetContext).pop(true);
+                    await _confirmVoid(
+                      action: confirmAction,
+                      conversationId: conversationId,
+                      voidReason: voidReason,
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        },
+      );
+      if (confirmed != true && mounted) {
+        setState(() => _busyKey = null);
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _busyKey = null);
+      LumoToast.show(context, 'No pude anular esa venta.');
+    }
+  }
+
+  Future<void> _confirmVoid({
+    required GenerativeUiAction action,
+    required String conversationId,
+    String? voidReason,
+  }) async {
+    setState(() => _busyKey = action.idempotencyKey);
+    try {
+      final response = await widget.apiClient.postAction(
+        actionId: action.actionId,
+        optionId: action.optionId,
+        contextToken: action.contextToken,
+        conversationId: conversationId,
+        idempotencyKey: action.idempotencyKey,
+        voidReason: voidReason,
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() => _busyKey = null);
+      await _load();
+      await widget.onAfterVoid?.call();
+      if (!mounted) {
+        return;
+      }
+      if (response.text.trim().isNotEmpty) {
+        LumoToast.show(context, response.text);
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _busyKey = null);
+      LumoToast.show(context, 'No pude anular esa venta.');
     }
   }
 
@@ -119,6 +234,21 @@ class _MemoriaPageState extends State<MemoriaPage> {
                           style: LumoTypography.inter(size: 13, color: LumoColors.mutedForeground),
                         ),
                       ),
+                      if (card.voidRequest != null) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: TextButton(
+                            onPressed: _busyKey == null ? () => _startVoid(card) : null,
+                            child: Text(
+                              'Anular',
+                              style: LumoTypography.buttonSecondary.copyWith(
+                                color: _busyKey == null ? LumoColors.primary : LumoColors.mutedForeground,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

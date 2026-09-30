@@ -20,6 +20,8 @@ SALE_002 = "SALE-002"
 SALE_003 = "SALE-003"
 SALE_004 = "SALE-004"
 SALE_005 = "SALE-005"
+SALE_006 = "SALE-006"
+SALE_007 = "SALE-007"
 PAY_001 = "PAY-001"
 DAY_001 = "DAY-001"
 NBA_001 = "NBA-001"
@@ -34,6 +36,8 @@ REGISTERED_SLICE_TOOLS = {
     "sale.add_item@1",
     "sale.totalize@1",
     "sale.commit@1",
+    "sale.remove_item@1",
+    "sale.void@1",
     "operational_day.summary@1",
     "operational_day.next_best_action@1",
     "memory.business_facts@1",
@@ -272,6 +276,58 @@ class FoundationPolicyEngine:
                 decision=PolicyDecisionName.DENY,
                 rule_ids=[SALE_004],
                 reason_code="sale_not_found",
+            )
+        if request.tool_id == "sale.remove_item@1":
+            # Orchestrator may gate before loading the session; workflow revalidates status.
+            if session_status is None:
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_006, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="arguments_must_be_revalidated",
+                )
+            if session_status in {"open", "ready_to_charge"}:
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_006, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="active_sale_remove",
+                )
+            return PolicyDecision(
+                decision=PolicyDecisionName.DENY,
+                rule_ids=[SALE_006],
+                reason_code="sale_not_active",
+            )
+        if request.tool_id == "sale.void@1":
+            mutate = arguments.get("mutate", True)
+            reason = arguments.get("void_reason")
+            if mutate and (not isinstance(reason, str) or not reason.strip()):
+                return PolicyDecision(
+                    decision=PolicyDecisionName.DENY,
+                    rule_ids=[SALE_007],
+                    reason_code="void_reason_required",
+                )
+            # Orchestrator may gate before loading the session; workflow revalidates status.
+            if session_status is None:
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_007, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="arguments_must_be_revalidated",
+                )
+            if session_status == "voided":
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_007, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="voided_read_back",
+                )
+            if session_status == "confirmed":
+                return PolicyDecision(
+                    decision=PolicyDecisionName.ALLOW,
+                    rule_ids=[SALE_007, SEC_003, INT_001, INT_003, INTP_001],
+                    reason_code="confirmed_void",
+                )
+            return PolicyDecision(
+                decision=PolicyDecisionName.DENY,
+                rule_ids=[SALE_007],
+                reason_code="sale_not_confirmed",
             )
         return PolicyDecision(
             decision=PolicyDecisionName.ALLOW,

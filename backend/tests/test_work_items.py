@@ -225,6 +225,9 @@ def test_nba_policy_denies_model_amounts() -> None:
         "sale.pay.cash@1",
         "sale.pay.card@1",
         "sale.pay.transfer@1",
+        "sale.remove_item@1",
+        "sale.void.request@1",
+        "sale.void.confirm@1",
         "closing.request@1",
         "closing.confirm@1",
     ]

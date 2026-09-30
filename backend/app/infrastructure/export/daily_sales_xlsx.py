@@ -31,7 +31,7 @@ def render_daily_sales_xlsx(export: SalesExport) -> bytes:
     for line in export.lines:
         _append_line(sheet, line, zone)
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:Q{sheet.max_row}"
+    sheet.auto_filter.ref = f"A1:R{sheet.max_row}"
     for index, width in enumerate(COLUMN_WIDTHS, start=1):
         sheet.column_dimensions[get_column_letter(index)].width = width
     fixed = datetime(1980, 1, 1, tzinfo=timezone.utc)
@@ -51,6 +51,7 @@ def _append_line(sheet, line: SalesExportLine, zone: ZoneInfo) -> None:
     values: list[object] = [
         line.business_date,
         str(line.sale_session_id),
+        line.sale_status,
         local,
         str(line.sale_item_id),
         line.product_name,

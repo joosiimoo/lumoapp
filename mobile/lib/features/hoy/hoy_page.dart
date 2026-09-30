@@ -166,7 +166,10 @@ class _HoyPageState extends State<HoyPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Incluye las ventas confirmadas de hoy.', style: LumoTypography.body),
+              Text(
+                'Incluye las ventas confirmadas y anuladas de hoy, con estado explícito en el archivo. Los totales de arriba excluyen ventas anuladas.',
+                style: LumoTypography.body,
+              ),
               const SizedBox(height: 16),
               LumoSecondaryButton(
                 label: 'Descargar Excel',

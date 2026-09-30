@@ -3,6 +3,7 @@
 EXPORT_COLUMNS: tuple[str, ...] = (
     "business_date",
     "sale_session_id",
+    "sale_status",
     "sale_confirmed_at",
     "sale_item_id",
     "product_name",
@@ -23,6 +24,7 @@ EXPORT_COLUMNS: tuple[str, ...] = (
 COLUMN_WIDTHS: tuple[int, ...] = (
     14,
     38,
+    12,
     22,
     38,
     28,

@@ -6,6 +6,9 @@ PAYMENT_ACTION_IDS = (
     "sale.pay.card@1",
     "sale.pay.transfer@1",
 )
+REMOVE_ITEM_ACTION_ID = "sale.remove_item@1"
+VOID_REQUEST_ACTION_ID = "sale.void.request@1"
+VOID_CONFIRM_ACTION_ID = "sale.void.confirm@1"
 REQUEST_CLOSE_ACTION_ID = "closing.request@1"
 CONFIRM_CLOSE_ACTION_ID = "closing.confirm@1"
 
@@ -17,6 +20,9 @@ _PAYMENT_METHODS = {
 
 _CATALOG = (
     *PAYMENT_ACTION_IDS,
+    REMOVE_ITEM_ACTION_ID,
+    VOID_REQUEST_ACTION_ID,
+    VOID_CONFIRM_ACTION_ID,
     REQUEST_CLOSE_ACTION_ID,
     CONFIRM_CLOSE_ACTION_ID,
 )
@@ -37,3 +43,12 @@ class UiActionRegistry:
 
     def is_payment(self, action_id: str) -> bool:
         return action_id in _PAYMENT_METHODS
+
+    def is_remove_item(self, action_id: str) -> bool:
+        return action_id == REMOVE_ITEM_ACTION_ID
+
+    def is_void_request(self, action_id: str) -> bool:
+        return action_id == VOID_REQUEST_ACTION_ID
+
+    def is_void_confirm(self, action_id: str) -> bool:
+        return action_id == VOID_CONFIRM_ACTION_ID

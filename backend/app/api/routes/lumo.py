@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, Request
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 from app.agent.orchestrator import FoundationOrchestrator
@@ -17,6 +17,8 @@ from app.application.workflows.get_daily_close_preparation import GetDailyCloseP
 from app.application.workflows.get_operational_day_summary import GetOperationalDaySummary
 from app.application.workflows.record_cash_count import RecordCashCount
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
+from app.application.workflows.remove_sale_item import RemoveSaleItem
+from app.application.workflows.void_sale_session import VoidSaleSession
 from app.domain.identity.onboarding import sales_allowed
 from app.domain.shared.errors import ForbiddenError, OnboardingIncompleteError, ValidationAppError
 from app.domain.shared.ids import new_uuid7
@@ -67,12 +69,19 @@ class LumoActionRequest(BaseModel):
             raise ValueError("option_id must be null")
         return None
 
-    @field_validator("payload")
-    @classmethod
-    def payload_must_be_empty(cls, value: dict | None) -> dict | None:
-        if value not in (None, {}):
-            raise ValueError("payload must be empty")
-        return value
+    @model_validator(mode="after")
+    def payload_for_action(self) -> LumoActionRequest:
+        value = self.payload
+        if value in (None, {}):
+            return self
+        if self.action_id == "sale.void.confirm@1":
+            if set(value) - {"void_reason"}:
+                raise ValueError("void confirm payload may only include void_reason")
+            reason = value.get("void_reason")
+            if not isinstance(reason, str):
+                raise ValueError("void_reason must be a string")
+            return self
+        raise ValueError("payload must be empty")
 
 
 class LumoMessageResponse(BaseModel):
@@ -194,6 +203,21 @@ def _orchestrator(request: Request, session: Session) -> FoundationOrchestrator:
         idempotency=idempotency,
         outbox=outbox,
     )
+    remove_item = RemoveSaleItem(
+        sales=sales,
+        identities=identities,
+        audit=audit,
+        idempotency=idempotency,
+        outbox=outbox,
+    )
+    void_sale = VoidSaleSession(
+        sales=sales,
+        identities=identities,
+        operations=operations,
+        audit=audit,
+        idempotency=idempotency,
+        outbox=outbox,
+    )
     day_summary = GetOperationalDaySummary(identities=identities, operations=operations)
     factual_memory = FactualMemoryService(identities=identities, operations=operations)
     next_best_action = GetNextBestAction(identities=identities, operations=operations)
@@ -220,6 +244,8 @@ def _orchestrator(request: Request, session: Session) -> FoundationOrchestrator:
         workflow=workflow,
         totalize=totalize,
         commit=commit,
+        remove_item=remove_item,
+        void_sale=void_sale,
         day_summary=day_summary,
         factual_memory=factual_memory,
         next_best_action=next_best_action,

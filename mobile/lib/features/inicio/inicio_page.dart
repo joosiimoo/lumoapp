@@ -43,7 +43,7 @@ class InicioPage extends StatelessWidget {
 
   final List<InicioTurn> messages;
   final String? businessName;
-  final void Function(GenerativeUiContract contract, GenerativeUiAction action)? onAction;
+  final void Function(GenerativeUiContract contract, GenerativeUiAction action, {String? voidReason})? onAction;
   final Set<String> disabledCardKeys;
   final String? busyCardKey;
   final String? busyActionKey;
@@ -132,7 +132,9 @@ class InicioPage extends StatelessWidget {
       hideFallback: true,
       disabled: disabledCardKeys.contains(cardKey) || busyCardKey == cardKey,
       loadingKey: busyCardKey == cardKey ? busyActionKey : null,
-      onAction: onAction == null ? null : (action) => onAction!(contract, action),
+      onAction: onAction == null
+          ? null
+          : (action, {voidReason}) => onAction!(contract, action, voidReason: voidReason),
     );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

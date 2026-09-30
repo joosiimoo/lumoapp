@@ -25,6 +25,7 @@ from app.domain.operations.business_event import (
     cash_count_recorded_facts,
     daily_close_completed_facts,
     sale_confirmed_facts,
+    sale_voided_facts,
 )
 from app.domain.operations.closing_snapshot import ClosingSnapshot
 from app.domain.shared.errors import ValidationAppError
@@ -73,6 +74,47 @@ def record_confirmed_sale(
                 payment_method=payment_method,
                 amount=amount,
                 currency=currency,
+            ),
+            created_at=created_at,
+        ),
+    )
+
+
+def record_voided_sale(
+    *,
+    operations: OperationsRepository,
+    tenant: TenantContext,
+    operational_day_id: UUID,
+    sale_session_id: UUID,
+    payment_id: UUID,
+    payment_method: str,
+    amount: Decimal | str,
+    currency: str,
+    void_reason: str,
+    voided_by_actor_id: UUID,
+    occurred_at: datetime,
+    created_at: datetime,
+) -> None:
+    # Void must not delete or rewrite sales coverage already observed for the day.
+    operations.append_business_event(
+        tenant=tenant,
+        event=BusinessEvent(
+            id=new_uuid7(),
+            business_id=tenant.business_id,
+            operational_day_id=operational_day_id,
+            event_type=BusinessEventType.SALE_VOIDED,
+            occurred_at=occurred_at,
+            source_type=BusinessEventSourceType.MANUAL_CAPTURE,
+            source_entity_type=SourceEntityType.SALE_SESSION,
+            source_entity_id=sale_session_id,
+            facts=sale_voided_facts(
+                sale_session_id=sale_session_id,
+                payment_id=payment_id,
+                payment_method=payment_method,
+                amount=amount,
+                currency=currency,
+                void_reason=void_reason,
+                voided_by_actor_id=voided_by_actor_id,
             ),
             created_at=created_at,
         ),

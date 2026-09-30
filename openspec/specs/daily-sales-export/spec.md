@@ -21,20 +21,19 @@ The API MUST expose `GET /api/v1/operational-days/{operational_day_ref}/sales-ex
 - **THEN** the response MUST be `422 VALIDATION_ERROR` and MUST NOT return a file
 
 ### Requirement: The file is one row per confirmed SaleItem
-The export MUST include only `SaleSession` rows with `status=confirmed` whose `operational_day_id` is the target day, their persisted `SaleItem` rows, and that sale's recorded `Payment`. `open` and `ready_to_charge` sessions MUST be excluded. The grain MUST be one row per `SaleItem`. A sale with several lines MUST produce several rows. The file MUST NOT collapse a sale into one row and MUST NOT aggregate products across sales. Both formats MUST use this column order: `business_date`, `sale_session_id`, `sale_confirmed_at`, `sale_item_id`, `product_name`, `source_type`, `product_id`, `quantity`, `unit`, `catalog_unit_price`, `unit_price`, `price_override_reason`, `line_total`, `currency`, `payment_id`, `payment_method`, `payment_amount`. `product_name` MUST be `product_name_snapshot`. `quantity` MUST be `quantity_normalized` and `unit` MUST be `unit_normalized`. The file MUST NOT include `quantity_input`, `unit_input`, `operational_day_id`, `payment_status`, `created_at`, actor ids, policy ids, audit ids, outbox ids, idempotency keys, normalized aliases, or model text.
+The export MUST include `SaleSession` rows with `status` `confirmed` or `voided` whose `operational_day_id` is the target day, their persisted `SaleItem` rows, and that sale's recorded `Payment`. `open` and `ready_to_charge` sessions MUST be excluded. The grain MUST be one row per `SaleItem`. A sale with several lines MUST produce several rows. The file MUST NOT collapse a sale into one row and MUST NOT aggregate products across sales. Both formats MUST use this column order: `business_date`, `sale_session_id`, `sale_status`, `sale_confirmed_at`, `sale_item_id`, `product_name`, `source_type`, `product_id`, `quantity`, `unit`, `catalog_unit_price`, `unit_price`, `price_override_reason`, `line_total`, `currency`, `payment_id`, `payment_method`, `payment_amount`. `sale_status` MUST be `confirmed` or `voided`. `product_name` MUST be `product_name_snapshot`. `quantity` MUST be `quantity_normalized` and `unit` MUST be `unit_normalized`. The file MUST NOT include `quantity_input`, `unit_input`, `operational_day_id`, `payment_status`, `created_at`, actor ids, policy ids, audit ids, outbox ids, idempotency keys, normalized aliases, or model text.
 
 #### Scenario: Mixed sale
 - **WHEN** one confirmed sale contains a catalog line and a free-concept line
-- **THEN** the file MUST contain two rows, one for each `sale_item_id`
+- **THEN** the file MUST contain two rows, one for each `sale_item_id`, each with `sale_status` `confirmed`
 
 #### Scenario: Active sales stay out
 - **WHEN** the day has a confirmed sale and the tenant also has an `open` session and a `ready_to_charge` session
-- **THEN** only the confirmed sale's items MUST appear
+- **THEN** only the confirmed or voided sale's items MUST appear
 
-#### Scenario: Confirmed sale is present
-- **WHEN** a sale is `confirmed` on the target day
-- **THEN** each of its `SaleItem` rows MUST appear with that `sale_session_id`
-
+#### Scenario: Voided sale is present with status
+- **WHEN** a sale on the target day is `voided`
+- **THEN** each of its `SaleItem` rows MUST appear with that `sale_session_id` and `sale_status` `voided`
 ### Requirement: Prices come from the SaleItem snapshot
 A normal catalog line MUST export `catalog_unit_price` equal to `catalog_unit_price_snapshot`, `unit_price` equal to the charged price, and a blank `price_override_reason`. A catalog override MUST export the snapshot, the charged price, and the persisted reason, and `source_type` MUST remain `catalog`. A free concept MUST export a blank `catalog_unit_price`, a blank `price_override_reason`, the explicit `unit_price`, a blank `product_id`, and `source_type` `free_concept`. Blank MUST be an empty CSV field and an empty XLSX cell, not the text `null`. The export MUST NOT read `Product.current_price` or `Product.name`.
 
@@ -55,20 +54,23 @@ A normal catalog line MUST export `catalog_unit_price` equal to `catalog_unit_pr
 - **THEN** `catalog_unit_price` and `product_name` MUST still be the `SaleItem` snapshot values
 
 ### Requirement: Payment facts repeat and are not allocated
-Every item row MUST repeat its sale's `payment_id`, `payment_method`, and full `payment_amount`. The amount MUST NOT be divided across lines. The file MUST NOT add a calculated payment-allocation column. `payment_amount` MUST NOT be summed down every row, because a multi-item sale repeats that payment. Valid gross reconciliation is `SUM(line_total)` across export rows and, independently, `SUM(payment_amount)` once per distinct `payment_id`. Both MUST equal the operational-day confirmed gross. `payment_method` MUST be the persisted `cash`, `card`, or `transfer`. Every confirmed session on the day MUST have exactly one `recorded` payment and at least one `SaleItem`. If any confirmed session does not, the response MUST be `500 INTERNAL_ERROR` with message `confirmed sales export is inconsistent` and MUST NOT include a partial file. A currency on a line or payment that differs from the business currency MUST be `422 VALIDATION_ERROR` and MUST NOT include a file.
+Every item row MUST repeat its sale's `payment_id`, `payment_method`, and full `payment_amount`. The amount MUST NOT be divided across lines. The file MUST NOT add a calculated payment-allocation column. `payment_amount` MUST NOT be summed down every row, because a multi-item sale repeats that payment. Valid operational gross reconciliation is `SUM(line_total)` across export rows whose `sale_status` is `confirmed` and, independently, `SUM(payment_amount)` once per distinct `payment_id` among those confirmed rows. Both MUST equal the operational-day live confirmed gross. Voided rows MUST be present for audit and MUST NOT be included in that reconciliation. `payment_method` MUST be the persisted `cash`, `card`, or `transfer`. Every confirmed or voided session on the day MUST have exactly one `recorded` payment and at least one `SaleItem`. If any such session does not, the response MUST be `500 INTERNAL_ERROR` with message `confirmed sales export is inconsistent` and MUST NOT include a partial file. A currency on a line or payment that differs from the business currency MUST be `422 VALIDATION_ERROR` and MUST NOT include a file.
 
 #### Scenario: Cash, card, and transfer
 - **WHEN** the day has one confirmed cash sale, one confirmed card sale, and one confirmed transfer sale
-- **THEN** each row MUST show that sale's method and the full payment amount
+- **THEN** each row MUST show that sale's method and the full payment amount with `sale_status` `confirmed`
 
 #### Scenario: Repeated payment
 - **WHEN** one cash sale has two items and payment amount `47.00`
 - **THEN** both rows MUST show the same `payment_id`, `payment_method` `cash`, and `payment_amount` `47.00`, and the file MUST NOT contain an allocated share of `47.00`
 
-#### Scenario: Missing payment fails closed
-- **WHEN** a confirmed session on the day has no recorded payment
-- **THEN** the response MUST be `500 INTERNAL_ERROR` and the body MUST NOT be a CSV or XLSX file
+#### Scenario: Voided rows excluded from operational reconciliation
+- **WHEN** the day has one confirmed sale of `24.50` and one voided sale of `22.50`
+- **THEN** confirmed-only `SUM(line_total)` MUST equal `24.50` while voided rows remain in the file with `sale_status` `voided`
 
+#### Scenario: Missing payment fails closed
+- **WHEN** a confirmed or voided session on the day has no recorded payment
+- **THEN** the response MUST be `500 INTERNAL_ERROR` and the body MUST NOT be a CSV or XLSX file
 ### Requirement: CSV is UTF-8 RFC 4180 text
 CSV MUST be UTF-8 with a leading BOM, comma-separated, using `"` as the quote character, doubling internal quotes, and `\r\n` line endings including after the last line. The header row MUST always be present. Money MUST be dot-decimal strings with two places and no currency symbol. Quantity MUST be a plain decimal without an exponent and without trailing zeros. `business_date` MUST be `YYYY-MM-DD`. Fields that contain a comma, quote, or newline MUST be quoted. Two CSV exports of the same unchanged persisted day MUST be byte-for-byte identical.
 

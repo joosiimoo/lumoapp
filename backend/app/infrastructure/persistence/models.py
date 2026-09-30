@@ -751,11 +751,22 @@ class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         Index("ix_sale_sessions_business_id", "business_id"),
         Index("ix_sale_sessions_operational_day_id", "operational_day_id"),
-        CheckConstraint("status IN ('open', 'ready_to_charge', 'confirmed')", name="ck_sale_sessions_status"),
         CheckConstraint(
-            "(status = 'confirmed' AND operational_day_id IS NOT NULL AND confirmed_at IS NOT NULL) "
+            "status IN ('open', 'ready_to_charge', 'confirmed', 'voided')",
+            name="ck_sale_sessions_status",
+        ),
+        CheckConstraint(
+            "(status IN ('confirmed', 'voided') AND operational_day_id IS NOT NULL AND confirmed_at IS NOT NULL) "
             "OR (status IN ('open', 'ready_to_charge') AND operational_day_id IS NULL AND confirmed_at IS NULL)",
             name="ck_sale_sessions_day_membership",
+        ),
+        CheckConstraint("sale_revision >= 1", name="ck_sale_sessions_sale_revision"),
+        CheckConstraint(
+            "(status = 'voided' AND voided_at IS NOT NULL AND voided_by_actor_id IS NOT NULL "
+            "AND void_reason IS NOT NULL AND length(btrim(void_reason)) > 0 "
+            "AND void_reason = btrim(void_reason)) "
+            "OR (status <> 'voided' AND voided_at IS NULL AND voided_by_actor_id IS NULL AND void_reason IS NULL)",
+            name="ck_sale_sessions_void_metadata",
         ),
         ForeignKeyConstraint(
             ["operational_day_id", "business_id"],
@@ -770,8 +781,12 @@ class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     conversation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="open")
     currency: Mapped[str] = mapped_column(String(3), nullable=False)
+    sale_revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     operational_day_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    voided_by_actor_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    void_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
 
 class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):

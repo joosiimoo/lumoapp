@@ -10,7 +10,8 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-from app.application.ports import IdentityPort
+from app.application.ports import IdentityPort, SalesPort
+from app.application.ui_action_token import issue_ui_action_token
 from app.domain.operations import (
     LIMITATION_ONLY_LUMO_REGISTERED_OPERATIONS,
     BusinessEvent,
@@ -41,7 +42,9 @@ from app.domain.operations.factual_memory import (
     business_date_is_future,
     recent_days_in_range,
 )
+from app.domain.sales import SaleSessionStatus
 from app.domain.shared.errors import ValidationAppError
+from app.domain.shared.ids import new_uuid7
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.base import utcnow
@@ -50,6 +53,7 @@ from app.infrastructure.persistence.operations import OperationsRepository
 TIMELINE_WINDOW_DAYS = 7
 TIMELINE_DEFAULT_LIMIT = 20
 TIMELINE_MAX_LIMIT = 50
+_VOID_REQUEST_ACTION_ID = "sale.void.request@1"
 _DAY_SCOPED = frozenset(
     {
         FactualQueryType.DAY_SUMMARY,
@@ -62,9 +66,18 @@ _DAY_SCOPED = frozenset(
 
 
 class FactualMemoryService:
-    def __init__(self, *, identities: IdentityPort, operations: OperationsRepository) -> None:
+    def __init__(
+        self,
+        *,
+        identities: IdentityPort,
+        operations: OperationsRepository,
+        sales: SalesPort | None = None,
+        token_secret: str | None = None,
+    ) -> None:
         self._identities = identities
         self._operations = operations
+        self._sales = sales
+        self._token_secret = token_secret
 
     def tool_arguments(
         self,
@@ -161,12 +174,80 @@ class FactualMemoryService:
         )
         page = rows[:limit]
         next_cursor = _encode_cursor(page[-1]) if len(rows) > limit and page else None
-        events = [_timeline_event(row) for row in page]
+        current_open_day = self._operations.get_by_date(tenant=tenant, business_date=business_today)
+        if current_open_day is not None and current_open_day.status is not OperationalDayStatus.OPEN:
+            current_open_day = None
+        events = [
+            self._timeline_event_with_actions(tenant=tenant, row=row, current_open_day=current_open_day)
+            for row in page
+        ]
         return {
             "events": events,
             "next_cursor": next_cursor,
             "business_today": business_today.isoformat(),
             "business_yesterday": (business_today - timedelta(days=1)).isoformat(),
+        }
+
+    def _timeline_event_with_actions(
+        self,
+        *,
+        tenant: TenantContext,
+        row: DatedBusinessEvent,
+        current_open_day: OperationalDay | None,
+    ) -> dict[str, Any]:
+        body = _timeline_event(row)
+        action = self._void_request_action_for_event(
+            tenant=tenant,
+            event=row.event,
+            current_open_day=current_open_day,
+        )
+        if action is not None:
+            body["actions"] = [action]
+        return body
+
+    def _void_request_action_for_event(
+        self,
+        *,
+        tenant: TenantContext,
+        event: BusinessEvent,
+        current_open_day: OperationalDay | None,
+    ) -> dict[str, Any] | None:
+        if (
+            self._sales is None
+            or not self._token_secret
+            or current_open_day is None
+            or event.event_type is not BusinessEventType.SALE_CONFIRMED
+        ):
+            return None
+        session = self._sales.get_session_by_id(
+            tenant=tenant,
+            sale_session_id=event.source_entity_id,
+            for_update=False,
+        )
+        if (
+            session is None
+            or session.status is not SaleSessionStatus.CONFIRMED
+            or session.operational_day_id != current_open_day.id
+        ):
+            return None
+        # Bind the sale's conversation so VoidSaleSession's conversation check still passes.
+        conversation_id = (session.conversation_id or "").strip()
+        if not conversation_id:
+            return None
+        return {
+            "action_id": _VOID_REQUEST_ACTION_ID,
+            "option_id": None,
+            "context_token": issue_ui_action_token(
+                secret=self._token_secret,
+                action_id=_VOID_REQUEST_ACTION_ID,
+                business_id=tenant.business_id,
+                actor_id=tenant.actor_id,
+                conversation_id=conversation_id,
+                issued_at=utcnow(),
+                sale_session_id=session.id,
+            ),
+            "idempotency_key": str(new_uuid7()),
+            "conversation_id": conversation_id,
         }
 
     def _business_today(self, tenant: TenantContext, now: datetime | None) -> date:

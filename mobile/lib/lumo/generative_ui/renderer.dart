@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:lumo/lumo/tokens.dart';
 import 'package:lumo/lumo/typography.dart';
 import 'package:lumo/lumo/widgets/lumo_card.dart';
+import 'package:lumo/lumo/widgets/lumo_buttons.dart';
 import 'package:lumo/lumo/widgets/lumo_chips.dart';
 import 'package:lumo/lumo/widgets/lumo_mark.dart';
 import 'package:lumo/lumo/widgets/lumo_messages.dart';
@@ -75,6 +76,26 @@ const uiActionLabels = <String, String>{
   'closing.confirm@1': 'Confirmar cierre',
 };
 
+const removeItemActionId = 'sale.remove_item@1';
+const voidRequestActionId = 'sale.void.request@1';
+const voidConfirmActionId = 'sale.void.confirm@1';
+
+List<GenerativeUiAction> contractActionsForId(GenerativeUiContract contract, String actionId) {
+  return [
+    for (final action in contract.actions)
+      if (action.actionId == actionId) action,
+  ];
+}
+
+GenerativeUiAction? firstContractActionForId(GenerativeUiContract contract, String actionId) {
+  for (final action in contract.actions) {
+    if (action.actionId == actionId) {
+      return action;
+    }
+  }
+  return null;
+}
+
 bool hideAssistantProse(String text, GenerativeUiContract contract) {
   if (text.trim() != contract.fallbackText.trim()) {
     return false;
@@ -101,10 +122,18 @@ class UiActionChrome {
     this.hideFallback = false,
   });
 
-  final void Function(GenerativeUiAction action)? onAction;
+  final void Function(GenerativeUiAction action, {String? voidReason})? onAction;
   final bool disabled;
   final String? loadingKey;
   final bool hideFallback;
+
+  bool actionEnabled(GenerativeUiAction action) {
+    return !disabled && onAction != null && loadingKey == null;
+  }
+
+  bool actionLoading(GenerativeUiAction action) {
+    return loadingKey == action.idempotencyKey;
+  }
 }
 
 class GenerativeUIRenderer {
@@ -192,10 +221,58 @@ class UiActionBar extends StatelessWidget {
             _ActionPill(
               label: uiActionLabels[action.actionId]!,
               loading: chrome.loadingKey == action.idempotencyKey,
-              enabled: !chrome.disabled && chrome.onAction != null && chrome.loadingKey == null,
+              enabled: chrome.actionEnabled(action),
               onPressed: () => chrome.onAction?.call(action),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class UiSecondaryActionButton extends StatelessWidget {
+  const UiSecondaryActionButton({
+    super.key,
+    required this.label,
+    required this.action,
+    required this.chrome,
+  });
+
+  final String label;
+  final GenerativeUiAction action;
+  final UiActionChrome chrome;
+
+  @override
+  Widget build(BuildContext context) {
+    final loading = chrome.actionLoading(action);
+    final enabled = chrome.actionEnabled(action);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: enabled ? () => chrome.onAction?.call(action) : null,
+        borderRadius: BorderRadius.circular(LumoRadius.pill),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (loading) ...[
+                const SizedBox(
+                  width: 12,
+                  height: 12,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: LumoTypography.buttonSecondary.copyWith(
+                  color: enabled ? LumoColors.primary : LumoColors.mutedForeground,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -341,6 +418,17 @@ class SaleItemAddedView extends StatelessWidget {
                         style: LumoTypography.caption,
                       ),
                     ],
+                    if (firstContractActionForId(contract, removeItemActionId) != null) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: UiSecondaryActionButton(
+                          label: 'Quitar',
+                          action: firstContractActionForId(contract, removeItemActionId)!,
+                          chrome: chrome,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -401,6 +489,7 @@ class SaleSummaryView extends StatelessWidget {
   Widget build(BuildContext context) {
     final data = contract.data;
     final items = List<dynamic>.from(data['items'] as List? ?? const []);
+    final removeActions = contractActionsForId(contract, removeItemActionId);
     final count = '${data['item_count'] ?? ''}';
     final total = SaleItemAddedView.formatAmount(data['total']);
     return Row(
@@ -431,7 +520,12 @@ class SaleSummaryView extends StatelessWidget {
                       child: LumoStatusChip(label: 'Lista para cobrar'),
                     ),
                     const SizedBox(height: 10),
-                    for (final raw in items) _itemRow(Map<String, dynamic>.from(raw as Map)),
+                    for (var index = 0; index < items.length; index++)
+                      _itemRow(
+                        Map<String, dynamic>.from(items[index] as Map),
+                        removeAction: index < removeActions.length ? removeActions[index] : null,
+                        chrome: chrome,
+                      ),
                     const SizedBox(height: 8),
                     Row(
                       children: [
@@ -460,7 +554,11 @@ class SaleSummaryView extends StatelessWidget {
     );
   }
 
-  static Widget _itemRow(Map<String, dynamic> item) {
+  static Widget _itemRow(
+    Map<String, dynamic> item, {
+    GenerativeUiAction? removeAction,
+    UiActionChrome chrome = const UiActionChrome(),
+  }) {
     final productName = '${item['product_name'] ?? ''}';
     final quantity = '${item['quantity_normalized'] ?? ''}';
     final unit = SaleItemAddedView.displayUnit('${item['unit_normalized'] ?? ''}');
@@ -490,12 +588,124 @@ class SaleSummaryView extends StatelessWidget {
                     SaleItemAddedView.adjustedPriceCaption(item)!,
                     style: LumoTypography.caption,
                   ),
+                if (removeAction != null)
+                  UiSecondaryActionButton(
+                    label: 'Quitar',
+                    action: removeAction,
+                    chrome: chrome,
+                  ),
               ],
             ),
           ),
           Text(lineTotal, style: LumoTypography.metricSm),
         ],
       ),
+    );
+  }
+}
+
+class SaleVoidImpactView {
+  static List<String> impactLines(Map<String, dynamic>? impact) {
+    if (impact == null) {
+      return const [];
+    }
+    final before = Map<String, dynamic>.from(impact['before'] as Map? ?? const {});
+    final after = Map<String, dynamic>.from(impact['after'] as Map? ?? const {});
+    final lines = <String>[];
+    void pair(String label, String key, {String? format}) {
+      final left = _impactValue(before, key, format: format);
+      final right = _impactValue(after, key, format: format);
+      if (left.isEmpty && right.isEmpty) {
+        return;
+      }
+      lines.add('$label: $left → $right');
+    }
+
+    pair('Ventas del día', 'sale_count', format: 'count');
+    pair('Total vendido', 'gross_sales_total', format: 'money');
+    pair('Efectivo esperado', 'expected_cash', format: 'money');
+    if (before.containsKey('cash_difference') || after.containsKey('cash_difference')) {
+      pair('Diferencia de caja', 'cash_difference', format: 'money');
+    }
+    if (before.containsKey('cash_status') || after.containsKey('cash_status')) {
+      pair('Estado de caja', 'cash_status', format: 'cash_status');
+    }
+    return lines;
+  }
+
+  static String _impactValue(Map<String, dynamic> side, String key, {String? format}) {
+    final value = side[key];
+    if (value == null) {
+      return '';
+    }
+    if (format == 'count') {
+      return '$value';
+    }
+    if (format == 'cash_status') {
+      return DailyClosePreparationView.statusLabel('$value');
+    }
+    return SaleItemAddedView.formatAmount(value);
+  }
+}
+
+class SaleVoidConfirmationPanel extends StatefulWidget {
+  const SaleVoidConfirmationPanel({
+    super.key,
+    required this.impact,
+    required this.confirmAction,
+    required this.chrome,
+  });
+
+  final Map<String, dynamic> impact;
+  final GenerativeUiAction confirmAction;
+  final UiActionChrome chrome;
+
+  @override
+  State<SaleVoidConfirmationPanel> createState() => _SaleVoidConfirmationPanelState();
+}
+
+class _SaleVoidConfirmationPanelState extends State<SaleVoidConfirmationPanel> {
+  final _reasonController = TextEditingController();
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final reason = _reasonController.text.trim();
+    final lines = SaleVoidImpactView.impactLines(widget.impact);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 12),
+        Text('Confirmar anulación', style: LumoTypography.cardTitle),
+        const SizedBox(height: 8),
+        for (final line in lines)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text(line, style: LumoTypography.body),
+          ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _reasonController,
+          onChanged: (_) => setState(() {}),
+          decoration: const InputDecoration(
+            hintText: 'Motivo de la anulación',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        const SizedBox(height: 12),
+        LumoPrimaryButton(
+          label: 'Anular venta',
+          enabled: reason.isNotEmpty && widget.chrome.actionEnabled(widget.confirmAction),
+          onPressed: reason.isEmpty
+              ? null
+              : () => widget.chrome.onAction?.call(widget.confirmAction, voidReason: reason),
+        ),
+      ],
     );
   }
 }
@@ -509,11 +719,17 @@ class SaleConfirmedView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final data = contract.data;
+    final status = '${data['status'] ?? 'confirmed'}';
+    final voided = status == 'voided';
     final count = '${data['item_count'] ?? ''}';
     final total = SaleItemAddedView.formatAmount(data['total']);
     final payment = Map<String, dynamic>.from(data['payment'] as Map? ?? const {});
     final methodLabel = SaleConfirmedView.displayMethod('${payment['method'] ?? ''}');
     final items = List<dynamic>.from(data['items'] as List? ?? const []);
+    final voidRequest = voided ? null : firstContractActionForId(contract, voidRequestActionId);
+    final voidConfirm = firstContractActionForId(contract, voidConfirmActionId);
+    final impact = data['impact'] is Map ? Map<String, dynamic>.from(data['impact'] as Map) : null;
+    final voidReason = '${data['void_reason'] ?? ''}'.trim();
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -537,9 +753,9 @@ class SaleConfirmedView extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Align(
+                    Align(
                       alignment: Alignment.centerLeft,
-                      child: LumoStatusChip(label: 'Venta registrada'),
+                      child: LumoStatusChip(label: voided ? 'Venta anulada' : 'Venta registrada'),
                     ),
                     const SizedBox(height: 10),
                     for (final raw in items) SaleSummaryView._itemRow(Map<String, dynamic>.from(raw as Map)),
@@ -557,6 +773,27 @@ class SaleConfirmedView extends StatelessWidget {
                     ),
                     const SizedBox(height: 8),
                     Text('Pago $methodLabel', style: LumoTypography.cardTitle),
+                    if (voided && voidReason.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Text('Motivo: $voidReason', style: LumoTypography.caption),
+                    ],
+                    if (voidRequest != null) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: UiSecondaryActionButton(
+                          label: 'Anular',
+                          action: voidRequest,
+                          chrome: chrome,
+                        ),
+                      ),
+                    ],
+                    if (voidConfirm != null && impact != null)
+                      SaleVoidConfirmationPanel(
+                        impact: impact,
+                        confirmAction: voidConfirm,
+                        chrome: chrome,
+                      ),
                   ],
                 ),
               ),

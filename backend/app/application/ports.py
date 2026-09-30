@@ -103,7 +103,21 @@ class SalesPort(Protocol):
 
     def add_item(self, *, tenant: TenantContext, item: Any) -> Any: ...
 
+    def remove_item(self, *, tenant: TenantContext, sale_session_id: UUID, sale_item_id: UUID) -> bool: ...
+
     def list_items(self, *, tenant: TenantContext, sale_session_id: UUID) -> list[Any]: ...
+
+    def advance_sale_revision(self, *, tenant: TenantContext, sale_session_id: UUID) -> Any: ...
+
+    def void_session(
+        self,
+        *,
+        tenant: TenantContext,
+        sale_session_id: UUID,
+        voided_at: Any,
+        voided_by_actor_id: UUID,
+        void_reason: str,
+    ) -> Any: ...
 
     def add_payment(self, *, tenant: TenantContext, payment: Any) -> Any: ...
 

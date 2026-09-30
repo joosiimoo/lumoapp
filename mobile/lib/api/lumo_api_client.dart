@@ -127,18 +127,23 @@ class LumoApiClient {
     required String contextToken,
     required String conversationId,
     required String idempotencyKey,
+    String? voidReason,
   }) async {
+    final body = <String, dynamic>{
+      'action_id': actionId,
+      'option_id': optionId,
+      'context_token': contextToken,
+      'conversation_id': conversationId,
+      'idempotency_key': idempotencyKey,
+    };
+    if (voidReason != null) {
+      body['payload'] = {'void_reason': voidReason};
+    }
     final decoded = await post(
       '/api/v1/lumo/actions',
       operation: 'lumo.action.$idempotencyKey',
       idempotencyKey: idempotencyKey,
-      body: {
-        'action_id': actionId,
-        'option_id': optionId,
-        'context_token': contextToken,
-        'conversation_id': conversationId,
-        'idempotency_key': idempotencyKey,
-      },
+      body: body,
     );
     return LumoMessageResponse.fromJson(decoded);
   }

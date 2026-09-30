@@ -38,6 +38,17 @@ void main() {
       })!.lines.single,
       '8.00 · Transferencia',
     );
+    final voided = memoriaCardView({
+      'event_type': 'sale_voided',
+      'local_time': '12:10',
+      'facts': {
+        'amount': '22.50',
+        'payment_method': 'cash',
+        'void_reason': 'cobro duplicado',
+      },
+    })!;
+    expect(voided.title, 'Venta anulada');
+    expect(voided.lines, ['22.50 · Efectivo', 'cobro duplicado']);
     final cash = memoriaCardView({
       'event_type': 'cash_count_recorded',
       'local_time': '18:00',
@@ -176,6 +187,258 @@ void main() {
     expect(find.text('Ver anteriores'), findsNothing);
     expect(requests.last.queryParameters['before'], 'cursor-2');
     expect(find.text(memoriaFooter, skipOffstage: false), findsOneWidget);
+  });
+
+  test('void request is parsed only from server actions', () {
+    final without = memoriaCardView({
+      'event_type': 'sale_confirmed',
+      'local_time': '10:00',
+      'facts': {'amount': '22.50', 'payment_method': 'cash'},
+    })!;
+    expect(without.voidRequest, isNull);
+    expect(without.voidConversationId, isNull);
+    final withAction = memoriaCardView({
+      'event_type': 'sale_confirmed',
+      'local_time': '10:00',
+      'facts': {'amount': '22.50', 'payment_method': 'cash'},
+      'actions': [
+        {
+          'action_id': 'sale.void.request@1',
+          'option_id': null,
+          'context_token': 'tok-void',
+          'idempotency_key': 'idem-void',
+          'conversation_id': 'conv-memoria',
+        },
+      ],
+    })!;
+    expect(withAction.voidRequest?.actionId, 'sale.void.request@1');
+    expect(withAction.voidRequest?.contextToken, 'tok-void');
+    expect(withAction.voidConversationId, 'conv-memoria');
+    final voided = memoriaCardView({
+      'event_type': 'sale_voided',
+      'local_time': '10:05',
+      'facts': {'amount': '22.50', 'payment_method': 'cash', 'void_reason': 'error'},
+      'actions': [
+        {
+          'action_id': 'sale.void.request@1',
+          'option_id': null,
+          'context_token': 'should-ignore',
+          'idempotency_key': 'x',
+          'conversation_id': 'conv',
+        },
+      ],
+    })!;
+    expect(voided.voidRequest, isNull);
+  });
+
+  testWidgets('Memoria shows Anular only when server action is present', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        _client(
+          _payload(
+            events: [
+              {
+                'event_type': 'sale_confirmed',
+                'business_date': '2026-09-25',
+                'local_time': '10:00',
+                'facts': {'amount': '22.50', 'payment_method': 'cash'},
+                'actions': [
+                  {
+                    'action_id': 'sale.void.request@1',
+                    'option_id': null,
+                    'context_token': 'tok-void',
+                    'idempotency_key': 'idem-void',
+                    'conversation_id': 'conv-memoria',
+                  },
+                ],
+              },
+              {
+                'event_type': 'sale_confirmed',
+                'business_date': '2026-09-25',
+                'local_time': '09:00',
+                'facts': {'amount': '10.00', 'payment_method': 'card'},
+              },
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Anular'), findsOneWidget);
+    expect(find.text('22.50 · Efectivo'), findsOneWidget);
+    expect(find.text('10.00 · Tarjeta'), findsOneWidget);
+  });
+
+  testWidgets('Memoria Anular posts void request then confirm and refreshes', (tester) async {
+    final posts = <Map<String, dynamic>>[];
+    var memoryLoads = 0;
+    final httpClient = MockClient((request) async {
+      if (request.method == 'GET' && request.url.path.endsWith('/api/v1/memory/events')) {
+        memoryLoads += 1;
+        final events = memoryLoads == 1
+            ? [
+                {
+                  'event_type': 'sale_confirmed',
+                  'business_date': '2026-09-25',
+                  'local_time': '10:00',
+                  'facts': {'amount': '22.50', 'payment_method': 'cash'},
+                  'actions': [
+                    {
+                      'action_id': 'sale.void.request@1',
+                      'option_id': null,
+                      'context_token': 'tok-void-req',
+                      'idempotency_key': 'idem-void-req',
+                      'conversation_id': 'conv-memoria',
+                    },
+                  ],
+                },
+              ]
+            : [
+                {
+                  'event_type': 'sale_voided',
+                  'business_date': '2026-09-25',
+                  'local_time': '10:05',
+                  'facts': {
+                    'amount': '22.50',
+                    'payment_method': 'cash',
+                    'void_reason': 'cobro duplicado',
+                  },
+                },
+                {
+                  'event_type': 'sale_confirmed',
+                  'business_date': '2026-09-25',
+                  'local_time': '10:00',
+                  'facts': {'amount': '22.50', 'payment_method': 'cash'},
+                },
+              ];
+        return http.Response(
+          jsonEncode({
+            'events': events,
+            'next_cursor': null,
+            'business_today': '2026-09-25',
+            'business_yesterday': '2026-09-24',
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      if (request.method == 'POST' && request.url.path.endsWith('/api/v1/lumo/actions')) {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        posts.add(body);
+        if (body['action_id'] == 'sale.void.request@1') {
+          return http.Response(
+            jsonEncode({
+              'text': 'Confirma la anulación',
+              'ui': [
+                {
+                  'component': 'sale_confirmed',
+                  'version': 1,
+                  'data': {
+                    'sale_session_id': 'sess',
+                    'payment_id': 'pay',
+                    'status': 'confirmed',
+                    'currency': 'MXN',
+                    'item_count': 1,
+                    'total': {'amount': '22.50', 'currency': 'MXN'},
+                    'payment': {
+                      'method': 'cash',
+                      'amount': {'amount': '22.50', 'currency': 'MXN'},
+                      'status': 'recorded',
+                    },
+                    'items': [
+                      {
+                        'sale_item_id': 'i1',
+                        'product_name': 'Zanahoria',
+                        'quantity_normalized': '0.900',
+                        'unit_normalized': 'kilogram',
+                        'unit_price': {'amount': '25.00', 'currency': 'MXN'},
+                        'line_total': {'amount': '22.50', 'currency': 'MXN'},
+                      },
+                    ],
+                    'impact': {
+                      'before': {
+                        'sale_count': 1,
+                        'gross_sales_total': {'amount': '22.50', 'currency': 'MXN'},
+                        'expected_cash': {'amount': '22.50', 'currency': 'MXN'},
+                      },
+                      'after': {
+                        'sale_count': 0,
+                        'gross_sales_total': {'amount': '0.00', 'currency': 'MXN'},
+                        'expected_cash': {'amount': '0.00', 'currency': 'MXN'},
+                      },
+                    },
+                  },
+                  'actions': [
+                    {
+                      'action_id': 'sale.void.confirm@1',
+                      'option_id': null,
+                      'context_token': 'tok-void-confirm',
+                      'idempotency_key': 'idem-void-confirm',
+                    },
+                  ],
+                  'fallback_text': 'Confirma la anulación',
+                },
+              ],
+            }),
+            200,
+            headers: {'content-type': 'application/json'},
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'text': '',
+            'ui': [
+              {
+                'component': 'sale_confirmed',
+                'version': 1,
+                'data': {
+                  'sale_session_id': 'sess',
+                  'payment_id': 'pay',
+                  'status': 'voided',
+                  'currency': 'MXN',
+                  'item_count': 1,
+                  'total': {'amount': '22.50', 'currency': 'MXN'},
+                  'payment': {
+                    'method': 'cash',
+                    'amount': {'amount': '22.50', 'currency': 'MXN'},
+                    'status': 'recorded',
+                  },
+                  'items': [],
+                  'void_reason': 'cobro duplicado',
+                },
+                'actions': [],
+                'fallback_text': 'Venta anulada',
+              },
+            ],
+          }),
+          200,
+          headers: {'content-type': 'application/json'},
+        );
+      }
+      return http.Response('not found', 404);
+    });
+    await tester.pumpWidget(_app(_client(httpClient)));
+    await tester.pumpAndSettle();
+    expect(find.text('Anular'), findsOneWidget);
+    await tester.tap(find.text('Anular'));
+    await tester.pumpAndSettle();
+    expect(posts, isNotEmpty);
+    expect(posts.first['action_id'], 'sale.void.request@1');
+    expect(posts.first['conversation_id'], 'conv-memoria');
+    expect(posts.first['context_token'], 'tok-void-req');
+    expect(find.text('Anular venta'), findsOneWidget);
+    await tester.enterText(find.byType(TextField), 'cobro duplicado');
+    await tester.pump();
+    await tester.tap(find.text('Anular venta'));
+    await tester.pumpAndSettle();
+    expect(posts.length, 2);
+    expect(posts.last['action_id'], 'sale.void.confirm@1');
+    expect(posts.last['conversation_id'], 'conv-memoria');
+    expect(posts.last['payload'], {'void_reason': 'cobro duplicado'});
+    expect(find.text('Venta anulada'), findsOneWidget);
+    expect(find.text('Venta registrada'), findsOneWidget);
+    expect(find.text('Anular'), findsNothing);
+    expect(memoryLoads, greaterThanOrEqualTo(2));
   });
 
   testWidgets('close card uses gross sales and cash status is a chip', (tester) async {

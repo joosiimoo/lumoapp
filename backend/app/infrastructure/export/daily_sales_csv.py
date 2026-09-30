@@ -26,6 +26,7 @@ def _row(line: SalesExportLine, zone: ZoneInfo) -> list[str]:
     return [
         line.business_date.isoformat(),
         str(line.sale_session_id),
+        line.sale_status,
         local.isoformat(timespec="seconds"),
         str(line.sale_item_id),
         line.product_name,

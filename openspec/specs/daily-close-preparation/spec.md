@@ -3,7 +3,7 @@
 Server-derived expected cash, signed cash difference, cash status, and the read tool `closing.prepare@1`. Preparation of an open day never closes it. A closed day is read from its `ClosingSnapshot` as `daily_close_confirmed@1`.
 ## Requirements
 ### Requirement: Expected cash is recorded cash payments of the day
-`expected_cash` MUST be computed in the backend as the `Decimal` sum of `sales.payments.amount` where `status=recorded` and `method=cash`, for the `SaleSession`s of that `OperationalDay` whose status is `confirmed`. It MUST be quantized to two decimal places, MUST be `0.00` when there are no cash sales, and MUST use the business currency. Card and transfer payments MUST NOT change it. `open` and `ready_to_charge` sessions MUST be excluded. `expected_cash` MUST be produced by the same repository aggregation that computes `cash_total` for `operational_day.summary@1`, and the two values MUST be equal for the same day. Build A MUST NOT include an opening float, cash expenses, withdrawals, deposits, refunds, voids, tips, or rounding adjustments in the formula, because no authoritative Build A requirement defines them. The client, the interpreter, and the model MUST NOT supply or recompute `expected_cash`.
+`expected_cash` MUST be computed in the backend as the `Decimal` sum of `sales.payments.amount` where `status=recorded` and `method=cash`, for the `SaleSession`s of that `OperationalDay` whose status is `confirmed`. It MUST be quantized to two decimal places, MUST be `0.00` when there are no cash sales, and MUST use the business currency. Card and transfer payments MUST NOT change it. `open`, `ready_to_charge`, and `voided` sessions MUST be excluded. `expected_cash` MUST be produced by the same repository aggregation that computes `cash_total` for `operational_day.summary@1`, and the two values MUST be equal for the same day. Build A MUST NOT include an opening float, cash expenses, withdrawals, deposits, refunds, tips, or rounding adjustments in the formula. Voided sales are excluded by the `confirmed`-only session filter rather than by deleting payments. The client, the interpreter, and the model MUST NOT supply or recompute `expected_cash`.
 
 #### Scenario: Only cash sales count
 - **WHEN** today's confirmed sales are one cash sale of `22.50`, one card sale of `10.00`, and one transfer sale of `24.00`
@@ -17,6 +17,9 @@ Server-derived expected cash, signed cash difference, cash status, and the read 
 - **WHEN** an `open` or `ready_to_charge` session exists for the same business date
 - **THEN** it MUST NOT change `expected_cash`
 
+#### Scenario: Voided cash sale is excluded
+- **WHEN** a cash sale of `22.50` on the day is `voided` and no other cash sale remains confirmed
+- **THEN** `expected_cash` MUST be `0.00`
 ### Requirement: Cash difference is signed and derived
 `cash_difference` MUST equal `counted_cash − expected_cash`, computed with `Decimal` in the backend and quantized to two decimal places. A positive value MUST mean an overage, zero MUST mean balanced, and a negative value MUST mean a shortage. It MUST be serialized as a signed decimal string with the business currency. `cash_difference` MUST NOT be persisted in `operations.cash_counts` or `operations.operational_days`. No tolerance, threshold, rounding band, automatic adjustment, or silent correction MUST be applied. The client MUST NOT compute or re-derive it.
 
@@ -124,4 +127,3 @@ A successful insert of a new current `CashCount` MUST, in that same transaction,
 #### Scenario: Preparation does not write coverage or memory
 - **WHEN** the actor posts `preparar el cierre`
 - **THEN** `closing.prepare@1` MUST NOT insert or update a coverage row or a business event
-

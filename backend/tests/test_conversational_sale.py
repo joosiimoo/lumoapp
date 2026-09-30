@@ -837,7 +837,7 @@ def _three_item_ready(client, token, conversation_id, prefix: str):
 def _assert_confirmed_card(card, *, method: str, session_id: str | None = None) -> None:
     assert card["component"] == "sale_confirmed"
     assert card["version"] == 1
-    assert card["actions"] == []
+    assert not any(action["action_id"] == "sale.void.request@1" for action in card.get("actions") or [])
     assert card["data"]["status"] == "confirmed"
     assert card["data"]["item_count"] == 3
     assert card["data"]["total"]["amount"] == "56.50"

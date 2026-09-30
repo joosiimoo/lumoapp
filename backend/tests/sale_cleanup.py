@@ -36,8 +36,10 @@ from app.infrastructure.persistence.rls import set_current_business_id
 SALE_AUDIT_ACTIONS = (
     "sale.start@1",
     "sale.add_item@1",
+    "sale.remove_item@1",
     "sale.totalize@1",
     "sale.commit@1",
+    "sale.void@1",
     "operational_day.opened",
     "closing.submit_cash_count@1",
     "closing.confirm@1",
@@ -50,8 +52,10 @@ SALE_AUDIT_ACTIONS = (
 )
 SALE_OUTBOX_EVENTS = (
     "sale.item.added",
+    "sale.item.removed",
     "sale.ready_to_charge",
     "sale.confirmed",
+    "sale.voided",
     "payment.recorded",
     "operational_day.opened",
     "cash_count.recorded",
@@ -59,8 +63,10 @@ SALE_OUTBOX_EVENTS = (
 )
 SALE_MESSAGE_OPERATIONS = (
     "lumo.message.add_sale_item",
+    "lumo.message.remove_sale_item",
     "lumo.message.totalize_sale",
     "lumo.message.commit_sale",
+    "lumo.message.void_sale",
     "lumo.message.record_cash_count",
     "lumo.message.confirm_close",
 )

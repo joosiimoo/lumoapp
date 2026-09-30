@@ -22,6 +22,7 @@ from app.infrastructure.persistence.sales_export import ExportDayRead, ExportLin
 class SalesExportLine:
     business_date: date
     sale_session_id: UUID
+    sale_status: str
     sale_confirmed_at: datetime
     sale_item_id: UUID
     product_name: str
@@ -123,6 +124,7 @@ def _to_line(loaded: ExportDayRead, line: ExportLineRead) -> SalesExportLine:
     return SalesExportLine(
         business_date=loaded.business_date,
         sale_session_id=line.sale_session_id,
+        sale_status=line.sale_status,
         sale_confirmed_at=line.sale_confirmed_at,
         sale_item_id=line.sale_item_id,
         product_name=line.product_name,

@@ -54,6 +54,8 @@ void main() {
       ),
     );
 
+    expect(find.text('Anular'), findsNothing);
+    expect(find.text('Venta registrada'), findsNothing);
     await tester.tap(find.text('Descargar CSV'));
     await tester.pumpAndSettle();
 
@@ -234,6 +236,12 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    expect(
+      find.text(
+        'Incluye las ventas confirmadas y anuladas de hoy, con estado explícito en el archivo. Los totales de arriba excluyen ventas anuladas.',
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Así va Carrota hoy'), findsOneWidget);
     expect(find.text('2 ventas'), findsOneWidget);
     expect(find.text(r'$52.50'), findsOneWidget);

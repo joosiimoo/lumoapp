@@ -1,9 +1,12 @@
 /// Deterministic Memoria copy. Amounts and times come from the server payload.
 library;
 
+import 'package:lumo/lumo/generative_ui/renderer.dart';
+
 const memoriaEmptyTitle = 'Todavía no hay actividad registrada';
 const memoriaEmptyBody = 'Las ventas, conteos y cierres confirmados aparecerán aquí.';
 const memoriaFooter = 'Memoria muestra operaciones confirmadas registradas en Lumo.';
+const memoriaVoidRequestActionId = 'sale.void.request@1';
 
 const _months = [
   'enero',
@@ -38,12 +41,42 @@ class MemoriaCardView {
     required this.lines,
     this.chip,
     required this.localTime,
+    this.voidRequest,
+    this.voidConversationId,
   });
 
   final String title;
   final List<String> lines;
   final String? chip;
   final String localTime;
+  final GenerativeUiAction? voidRequest;
+  final String? voidConversationId;
+}
+
+/// Server-authored Anular from a timeline event, if present.
+({GenerativeUiAction action, String conversationId})? memoriaVoidRequest(Map<String, dynamic> event) {
+  final raw = event['actions'];
+  if (raw is! List) {
+    return null;
+  }
+  for (final item in raw) {
+    if (item is! Map) {
+      continue;
+    }
+    final map = Map<String, dynamic>.from(item);
+    if (map['action_id'] != memoriaVoidRequestActionId) {
+      continue;
+    }
+    final conversationId = map['conversation_id'];
+    if (conversationId is! String || conversationId.isEmpty) {
+      return null;
+    }
+    return (
+      action: GenerativeUiAction.fromJson(map),
+      conversationId: conversationId,
+    );
+  }
+  return null;
 }
 
 class MemoriaDateGroup {
@@ -93,9 +126,29 @@ MemoriaCardView? memoriaCardView(Map<String, dynamic> event) {
     if (method == null || amount is! String) {
       return null;
     }
+    final voidAction = memoriaVoidRequest(event);
     return MemoriaCardView(
       title: 'Venta registrada',
       lines: ['$amount · $method'],
+      localTime: localTime,
+      voidRequest: voidAction?.action,
+      voidConversationId: voidAction?.conversationId,
+    );
+  }
+  if (type == 'sale_voided') {
+    final method = _paymentLabels[values['payment_method']];
+    final amount = values['amount'];
+    if (method == null || amount is! String) {
+      return null;
+    }
+    final reason = values['void_reason'];
+    final lines = <String>['$amount · $method'];
+    if (reason is String && reason.isNotEmpty) {
+      lines.add(reason);
+    }
+    return MemoriaCardView(
+      title: 'Venta anulada',
+      lines: lines,
       localTime: localTime,
     );
   }

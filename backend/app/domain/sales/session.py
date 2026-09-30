@@ -15,6 +15,7 @@ class SaleSessionStatus(StrEnum):
     OPEN = "open"
     READY_TO_CHARGE = "ready_to_charge"
     CONFIRMED = "confirmed"
+    VOIDED = "voided"
 
 
 class PaymentMethod(StrEnum):
@@ -59,10 +60,14 @@ class SaleSession:
     conversation_id: str | None
     status: SaleSessionStatus
     currency: str
+    sale_revision: int = 1
     created_at: datetime | None = None
     updated_at: datetime | None = None
     operational_day_id: UUID | None = None
     confirmed_at: datetime | None = None
+    voided_at: datetime | None = None
+    voided_by_actor_id: UUID | None = None
+    void_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

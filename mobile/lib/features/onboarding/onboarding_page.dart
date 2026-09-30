@@ -57,7 +57,7 @@ class _OnboardingPageState extends State<OnboardingPage> {
               child: GenerativeUIRenderer().build(
                 card,
                 chrome: UiActionChrome(
-                  onAction: (action) {
+                  onAction: (action, {voidReason}) {
                     if (action.actionId == 'start_using_lumo') {
                       widget.onStartUsingLumo?.call();
                     }

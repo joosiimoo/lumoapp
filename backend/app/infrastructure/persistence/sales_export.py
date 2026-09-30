@@ -25,6 +25,7 @@ from app.infrastructure.persistence.rls import set_current_business_id
 @dataclass(frozen=True, slots=True)
 class ExportLineRead:
     sale_session_id: UUID
+    sale_status: str
     sale_confirmed_at: datetime
     sale_item_id: UUID
     product_name: str
@@ -92,7 +93,7 @@ class SalesExportRepository:
                       ON i.sale_session_id = s.id AND i.business_id = s.business_id
                     WHERE s.operational_day_id = operations.operational_days.id
                       AND s.business_id = operations.operational_days.business_id
-                      AND s.status = 'confirmed'
+                      AND s.status IN ('confirmed', 'voided')
                     GROUP BY s.id
                     HAVING count(i.id) = 0
                        OR count(DISTINCT p.id) FILTER (WHERE p.status = 'recorded') <> 1
@@ -110,6 +111,7 @@ class SalesExportRepository:
                 BusinessRow.currency,
                 broken_count,
                 SaleSessionRow.id,
+                SaleSessionRow.status,
                 SaleSessionRow.confirmed_at,
                 SaleItemRow.id,
                 SaleItemRow.product_name_snapshot,
@@ -134,7 +136,7 @@ class SalesExportRepository:
                 and_(
                     SaleSessionRow.operational_day_id == OperationalDayRow.id,
                     SaleSessionRow.business_id == OperationalDayRow.business_id,
-                    SaleSessionRow.status == "confirmed",
+                    SaleSessionRow.status.in_(("confirmed", "voided")),
                 ),
             )
             .outerjoin(
@@ -171,27 +173,28 @@ class SalesExportRepository:
         first = rows[0]
         lines: list[ExportLineRead] = []
         for row in rows:
-            if row[9] is None:
+            if row[10] is None:
                 continue
             lines.append(
                 ExportLineRead(
                     sale_session_id=row[7],
-                    sale_confirmed_at=row[8],
-                    sale_item_id=row[9],
-                    product_name=row[10],
-                    source_type=row[11],
-                    product_id=row[12],
-                    quantity=row[13],
-                    unit=row[14],
-                    catalog_unit_price=row[15],
-                    unit_price=row[16],
-                    price_override_reason=row[17],
-                    line_total=row[18],
-                    currency=row[19],
-                    payment_id=row[20],
-                    payment_method=row[21],
-                    payment_amount=row[22],
-                    payment_currency=row[23],
+                    sale_status=row[8],
+                    sale_confirmed_at=row[9],
+                    sale_item_id=row[10],
+                    product_name=row[11],
+                    source_type=row[12],
+                    product_id=row[13],
+                    quantity=row[14],
+                    unit=row[15],
+                    catalog_unit_price=row[16],
+                    unit_price=row[17],
+                    price_override_reason=row[18],
+                    line_total=row[19],
+                    currency=row[20],
+                    payment_id=row[21],
+                    payment_method=row[22],
+                    payment_amount=row[23],
+                    payment_currency=row[24],
                 )
             )
         return ExportDayRead(

@@ -114,3 +114,10 @@ A successful close MUST insert one `daily_close_completed` event whose facts ref
 #### Scenario: Short close still closes and stays observed
 - **WHEN** expected cash is `22.50`, the current count is `20.00`, and the actor confirms with a matching token
 - **THEN** the day MUST be `closed`, the snapshot `cash_status` MUST be `short`, sales coverage MUST remain `observed`, and the close event `facts.cash_status` MUST be `short`
+
+### Requirement: Void can stale an outstanding close confirmation
+When a sale void on an open day changes preparation figures that were embedded in an outstanding `closing.confirm@1` fingerprint, a later confirm attempt MUST fail as confirmation stale, MUST NOT write a ClosingSnapshot, and MUST require a fresh prepare/confirm path. The void itself MUST NOT close the day and MUST NOT rewrite an existing snapshot.
+
+#### Scenario: Confirm after void is stale
+- **WHEN** the merchant prepares close while balanced, then voids a cash sale that changes expected cash, then posts the old confirmation token
+- **THEN** the confirm MUST be rejected as stale and the OperationalDay MUST remain `open`

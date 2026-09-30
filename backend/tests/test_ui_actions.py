@@ -52,11 +52,13 @@ def _ready(client, token, conversation_id: str, prefix: str):
     totaled = _message(client, token, "totalizar", f"{prefix}-tot", conversation_id)
     assert totaled.status_code == 200, totaled.text
     card = totaled.json()["ui"][0]
-    assert [action["action_id"] for action in card["actions"]] == [
+    pay_ids = [action["action_id"] for action in card["actions"] if action["action_id"].startswith("sale.pay.")]
+    assert pay_ids == [
         "sale.pay.cash@1",
         "sale.pay.card@1",
         "sale.pay.transfer@1",
     ]
+    assert any(action["action_id"] == "sale.remove_item@1" for action in card["actions"])
     return card
 
 
@@ -85,16 +87,25 @@ def test_action_catalog_is_closed_and_not_a_tool() -> None:
         "sale.pay.cash@1",
         "sale.pay.card@1",
         "sale.pay.transfer@1",
+        "sale.remove_item@1",
+        "sale.void.request@1",
+        "sale.void.confirm@1",
         "closing.request@1",
         "closing.confirm@1",
     ]
     tools = ToolRegistry()
     register_conversational_sale_tools(tools)
+    # UI-only actions must not be tools. remove_item and closing.confirm are dual-registered.
+    dual_registered = {"closing.confirm@1", "sale.remove_item@1"}
     for action_id in registry.ids():
-        if action_id != "closing.confirm@1":
+        if action_id not in dual_registered:
             assert tools.get(action_id) is None
     assert tools.is_registered("closing.confirm@1")
+    assert tools.is_registered("sale.remove_item@1")
+    assert tools.is_registered("sale.void@1")
     assert tools.is_registered("sale.pay.cash@1") is False
+    assert tools.is_registered("sale.void.request@1") is False
+    assert tools.is_registered("sale.void.confirm@1") is False
 
 
 def test_typed_and_button_cash_each_confirm_once(client: TestClient, db_session) -> None:
@@ -104,7 +115,7 @@ def test_typed_and_button_cash_each_confirm_once(client: TestClient, db_session)
     typed = _message(client, token, "efectivo", "typed-pay", typed_conversation)
     assert typed.status_code == 200, typed.text
     assert typed.json()["ui"][0]["component"] == "sale_confirmed"
-    assert typed.json()["ui"][0]["actions"] == []
+    assert not any(a["action_id"] == "sale.void.request@1" for a in typed.json()["ui"][0].get("actions") or [])
     assert typed.json()["ui"][0]["data"]["payment"]["method"] == "cash"
 
     button_conversation = "conv-button-cash"
@@ -112,7 +123,7 @@ def test_typed_and_button_cash_each_confirm_once(client: TestClient, db_session)
     paid = _pay(client, token, button_conversation, _action_by_id(card, "sale.pay.cash@1"))
     assert paid.status_code == 200, paid.text
     assert paid.json()["ui"][0]["component"] == "sale_confirmed"
-    assert paid.json()["ui"][0]["actions"] == []
+    assert not any(a["action_id"] == "sale.void.request@1" for a in paid.json()["ui"][0].get("actions") or [])
     assert paid.json()["ui"][0]["data"]["payment"]["method"] == "cash"
     payments = _rows(db_session, tenant.business_id, PaymentRow)
     assert len(payments) == 2
@@ -138,6 +149,7 @@ def test_card_and_transfer_buttons(client: TestClient, db_session, action_id: st
     claims = jwt.decode(card["actions"][0]["context_token"], options={"verify_signature": False})
     assert claims["typ"] == "ui_action"
     assert claims["sale_session_id"] == card["data"]["sale_session_id"]
+    assert claims["sale_revision"] == 1
     assert "payment_method" not in claims
     paid = _pay(client, token, conversation_id, _action_by_id(card, action_id))
     assert paid.status_code == 200, paid.text

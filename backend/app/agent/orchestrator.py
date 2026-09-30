@@ -12,7 +12,9 @@ from app.agent.generative_ui import GenerativeUIAction, GenerativeUIComposer, Ge
 from app.agent.tools import ToolRegistry
 from app.agent.ui_actions import (
     CONFIRM_CLOSE_ACTION_ID,
+    REMOVE_ITEM_ACTION_ID,
     REQUEST_CLOSE_ACTION_ID,
+    VOID_CONFIRM_ACTION_ID,
     UiActionRegistry,
 )
 from app.agent.providers.scripted import normalize_closed_phrase
@@ -29,6 +31,8 @@ from app.application.queries.get_next_best_action import (
 from app.application.workflows.add_catalog_sale_item import AddCatalogSaleItem
 from app.application.workflows.commit_sale_session import CommitSaleSession
 from app.application.workflows.confirm_daily_close import ConfirmDailyClose
+from app.application.workflows.remove_sale_item import RemoveSaleItem
+from app.application.workflows.void_sale_session import VoidSaleSession
 from app.application.workflows.get_daily_close_preparation import (
     CASH_COUNT_REQUIRED_TEXT,
     NO_OPEN_DAY_TEXT,
@@ -66,6 +70,8 @@ _CLOSED_TOOLS = frozenset(
     {
         "sale.totalize@1",
         "sale.commit@1",
+        "sale.remove_item@1",
+        "sale.void@1",
         "operational_day.summary@1",
         "memory.business_facts@1",
         "operational_day.next_best_action@1",
@@ -92,6 +98,8 @@ class FoundationOrchestrator:
     workflow: AddCatalogSaleItem | None = None
     totalize: TotalizeSaleSession | None = None
     commit: CommitSaleSession | None = None
+    remove_item: RemoveSaleItem | None = None
+    void_sale: VoidSaleSession | None = None
     day_summary: GetOperationalDaySummary | None = None
     factual_memory: FactualMemoryService | None = None
     next_best_action: GetNextBestAction | None = None
@@ -323,10 +331,12 @@ class FoundationOrchestrator:
                     "total": result.payload["total"],
                     "items": result.payload["items"],
                 },
-                actions=self._payment_actions(
+                actions=self._summary_actions(
                     tenant=tenant,
                     conversation_id=conversation_id,
                     sale_session_id=result.payload["sale_session_id"],
+                    sale_revision=int(result.payload.get("sale_revision") or 1),
+                    items=result.payload.get("items") or [],
                     issued_at=context.get("now") or utcnow(),
                     status=result.payload["status"],
                 ),
@@ -377,31 +387,74 @@ class FoundationOrchestrator:
             raw_message=message,
             confirmed_at=context.get("now"),
         )
-        return self._sale_confirmed_response(result)
+        return self._sale_confirmed_response(
+            result,
+            tenant=tenant,
+            conversation_id=conversation_id,
+            issued_at=context.get("now") or utcnow(),
+        )
 
-    def _sale_confirmed_response(self, result: Any) -> AgentResponse:
+    def _sale_confirmed_response(
+        self,
+        result: Any,
+        *,
+        tenant: TenantContext | None = None,
+        conversation_id: str | None = None,
+        issued_at: Any = None,
+    ) -> AgentResponse:
         if result.kind in {"clarify", "deny", "stale"}:
             return AgentResponse(text=result.text, ui=[])
-        ui: list[dict[str, Any]] = []
-        if self.ui_composer is not None:
-            contract = GenerativeUIContract(
-                component="sale_confirmed",
-                version=1,
-                data={
-                    "sale_session_id": result.payload["sale_session_id"],
-                    "payment_id": result.payload["payment_id"],
-                    "status": result.payload["status"],
-                    "currency": result.payload["currency"],
-                    "item_count": result.payload["item_count"],
-                    "total": result.payload["total"],
-                    "payment": result.payload["payment"],
-                    "items": result.payload["items"],
-                },
-                actions=[],
-                fallback_text=result.text,
-            )
-            ui = [self.ui_composer.compose(contract)]
-        return AgentResponse(text=result.text, ui=ui)
+        if self.ui_composer is None:
+            return AgentResponse(text=result.text, ui=[])
+        status = result.payload.get("status", "confirmed")
+        data = {
+            "sale_session_id": result.payload["sale_session_id"],
+            "payment_id": result.payload["payment_id"],
+            "status": status,
+            "currency": result.payload.get("currency"),
+            "item_count": result.payload["item_count"],
+            "total": result.payload["total"],
+            "payment": result.payload["payment"],
+            "items": result.payload["items"],
+        }
+        if status == "voided":
+            data["void_reason"] = result.payload.get("void_reason")
+            data["voided_at"] = result.payload.get("voided_at")
+        if result.payload.get("impact"):
+            data["impact"] = result.payload["impact"]
+        # Inicio is not a void entry point: never mint sale.void.request@1 on sale_confirmed.
+        # Void confirm remains for the Memoria-driven confirmation response (compose=void_request).
+        actions: list[GenerativeUIAction] = []
+        stamp = issued_at or utcnow()
+        if (
+            tenant is not None
+            and conversation_id
+            and result.payload.get("compose") == "void_request"
+        ):
+            actions = [
+                GenerativeUIAction(
+                    action_id=VOID_CONFIRM_ACTION_ID,
+                    option_id=None,
+                    context_token=issue_ui_action_token(
+                        secret=self.token_secret,
+                        action_id=VOID_CONFIRM_ACTION_ID,
+                        business_id=tenant.business_id,
+                        actor_id=tenant.actor_id,
+                        conversation_id=conversation_id,
+                        issued_at=stamp,
+                        sale_session_id=UUID(str(result.payload["sale_session_id"])),
+                    ),
+                    idempotency_key=str(new_uuid7()),
+                )
+            ]
+        contract = GenerativeUIContract(
+            component="sale_confirmed",
+            version=1,
+            data=data,
+            actions=actions,
+            fallback_text=result.text,
+        )
+        return AgentResponse(text=result.text, ui=[self.ui_composer.compose(contract)])
 
     def _handle_day_summary(
         self,
@@ -797,6 +850,7 @@ class FoundationOrchestrator:
         now = context.get("now") or utcnow()
         token = action.get("context_token")
         token_text = token if isinstance(token, str) else None
+        action_payload = action.get("payload") if isinstance(action.get("payload"), dict) else {}
         if registry.is_payment(action_id):
             verified = verify_ui_action_token(
                 secret=self.token_secret,
@@ -807,8 +861,14 @@ class FoundationOrchestrator:
                 conversation_id=conversation_id,
                 now=now,
                 require_sale_session_id=True,
+                require_sale_revision=True,
             )
-            if verified is None or verified.sale_session_id is None or self.commit is None:
+            if (
+                verified is None
+                or verified.sale_session_id is None
+                or verified.sale_revision is None
+                or self.commit is None
+            ):
                 return AgentResponse(text="No pude verificar esa acción.", ui=[])
             method = registry.payment_method(action_id)
             registered = self.tools.is_registered("sale.commit@1")
@@ -834,8 +894,102 @@ class FoundationOrchestrator:
                 confirmed_at=now,
                 ui_action_id=action_id,
                 bound_sale_session_id=verified.sale_session_id,
+                bound_sale_revision=verified.sale_revision,
             )
-            return self._sale_confirmed_response(result)
+            if result.kind == "stale":
+                return AgentResponse(text=result.text, ui=[])
+            return self._sale_confirmed_response(
+                result, tenant=tenant, conversation_id=conversation_id, issued_at=now
+            )
+        if registry.is_remove_item(action_id):
+            verified = verify_ui_action_token(
+                secret=self.token_secret,
+                token=token_text,
+                action_id=action_id,
+                business_id=tenant.business_id,
+                actor_id=tenant.actor_id,
+                conversation_id=conversation_id,
+                now=now,
+                require_sale_session_id=True,
+                require_sale_item_id=True,
+            )
+            if (
+                verified is None
+                or verified.sale_session_id is None
+                or verified.sale_item_id is None
+                or self.remove_item is None
+            ):
+                return AgentResponse(text="No pude verificar esa acción.", ui=[])
+            registered = self.tools.is_registered("sale.remove_item@1")
+            policy = self.policies.evaluate(
+                PolicyRequest(
+                    action="execute_tool",
+                    tool_id="sale.remove_item@1",
+                    tool_registered=registered,
+                    from_llm=True,
+                    arguments={},
+                )
+            )
+            if not registered or policy.decision.value == "deny":
+                return AgentResponse(text="That action is not available.", ui=[])
+            result = self.remove_item.execute(
+                tenant=tenant,
+                conversation_id=conversation_id,
+                sale_session_id=verified.sale_session_id,
+                sale_item_id=verified.sale_item_id,
+                idempotency_key=context["idempotency_key"],
+                correlation_id=context.get("correlation_id", "unknown"),
+                policy=policy,
+                fail_after_write=bool(context.get("fail_after_write")),
+                ui_action_id=action_id,
+            )
+            return self._remove_item_response(result, tenant, conversation_id, now)
+        if registry.is_void_request(action_id) or registry.is_void_confirm(action_id):
+            verified = verify_ui_action_token(
+                secret=self.token_secret,
+                token=token_text,
+                action_id=action_id,
+                business_id=tenant.business_id,
+                actor_id=tenant.actor_id,
+                conversation_id=conversation_id,
+                now=now,
+                require_sale_session_id=True,
+            )
+            if verified is None or verified.sale_session_id is None or self.void_sale is None:
+                return AgentResponse(text="No pude verificar esa acción.", ui=[])
+            mutate = registry.is_void_confirm(action_id)
+            reason = action_payload.get("void_reason") if mutate else None
+            registered = self.tools.is_registered("sale.void@1")
+            policy = self.policies.evaluate(
+                PolicyRequest(
+                    action="execute_tool",
+                    tool_id="sale.void@1",
+                    tool_registered=registered,
+                    from_llm=True,
+                    arguments={
+                        "void_reason": (reason or "").strip() if mutate else "",
+                        "mutate": mutate,
+                    },
+                )
+            )
+            if not registered or (policy.decision.value == "deny" and not mutate):
+                return AgentResponse(text="That action is not available.", ui=[])
+            result = self.void_sale.execute(
+                tenant=tenant,
+                conversation_id=conversation_id,
+                sale_session_id=verified.sale_session_id,
+                void_reason=reason if isinstance(reason, str) else None,
+                idempotency_key=context["idempotency_key"],
+                correlation_id=context.get("correlation_id", "unknown"),
+                policy=policy,
+                fail_after_write=bool(context.get("fail_after_write")),
+                ui_action_id=action_id,
+                voided_at=now,
+                mutate=mutate,
+            )
+            return self._sale_confirmed_response(
+                result, tenant=tenant, conversation_id=conversation_id, issued_at=now
+            )
         if action_id == REQUEST_CLOSE_ACTION_ID:
             verified = verify_ui_action_token(
                 secret=self.token_secret,
@@ -870,6 +1024,7 @@ class FoundationOrchestrator:
         tenant: TenantContext | None,
         conversation_id: str | None,
         sale_session_id: str,
+        sale_revision: int,
         issued_at: Any,
         status: str,
     ) -> list[GenerativeUIAction]:
@@ -891,11 +1046,113 @@ class FoundationOrchestrator:
                         conversation_id=conversation_id,
                         issued_at=issued_at,
                         sale_session_id=UUID(str(sale_session_id)),
+                        sale_revision=sale_revision,
                     ),
                     idempotency_key=str(new_uuid7()),
                 )
             )
         return actions
+
+    def _remove_actions(
+        self,
+        *,
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+        sale_session_id: str,
+        items: list[dict[str, Any]],
+        issued_at: Any,
+    ) -> list[GenerativeUIAction]:
+        if tenant is None or not conversation_id:
+            return []
+        actions: list[GenerativeUIAction] = []
+        for item in items:
+            item_id = item.get("sale_item_id")
+            if not item_id:
+                continue
+            actions.append(
+                GenerativeUIAction(
+                    action_id=REMOVE_ITEM_ACTION_ID,
+                    option_id=None,
+                    context_token=issue_ui_action_token(
+                        secret=self.token_secret,
+                        action_id=REMOVE_ITEM_ACTION_ID,
+                        business_id=tenant.business_id,
+                        actor_id=tenant.actor_id,
+                        conversation_id=conversation_id,
+                        issued_at=issued_at,
+                        sale_session_id=UUID(str(sale_session_id)),
+                        sale_item_id=UUID(str(item_id)),
+                    ),
+                    idempotency_key=str(new_uuid7()),
+                )
+            )
+        return actions
+
+    def _summary_actions(
+        self,
+        *,
+        tenant: TenantContext | None,
+        conversation_id: str | None,
+        sale_session_id: str,
+        sale_revision: int,
+        items: list[dict[str, Any]],
+        issued_at: Any,
+        status: str,
+    ) -> list[GenerativeUIAction]:
+        return [
+            *self._payment_actions(
+                tenant=tenant,
+                conversation_id=conversation_id,
+                sale_session_id=sale_session_id,
+                sale_revision=sale_revision,
+                issued_at=issued_at,
+                status=status,
+            ),
+            *self._remove_actions(
+                tenant=tenant,
+                conversation_id=conversation_id,
+                sale_session_id=sale_session_id,
+                items=items,
+                issued_at=issued_at,
+            ),
+        ]
+
+    def _remove_item_response(
+        self,
+        result: Any,
+        tenant: TenantContext,
+        conversation_id: str | None,
+        issued_at: Any,
+    ) -> AgentResponse:
+        if result.kind in {"deny", "stale"}:
+            return AgentResponse(text=result.text, ui=[])
+        compose = result.payload.get("compose")
+        if compose == "sale_summary" and self.ui_composer is not None:
+            contract = GenerativeUIContract(
+                component="sale_summary",
+                version=1,
+                data={
+                    "sale_session_id": result.payload["sale_session_id"],
+                    "status": result.payload["status"],
+                    "currency": result.payload.get("currency"),
+                    "item_count": result.payload["item_count"],
+                    "subtotal": result.payload.get("subtotal") or result.payload["total"],
+                    "total": result.payload["total"],
+                    "items": result.payload["items"],
+                },
+                actions=self._summary_actions(
+                    tenant=tenant,
+                    conversation_id=conversation_id,
+                    sale_session_id=result.payload["sale_session_id"],
+                    sale_revision=int(result.payload.get("sale_revision") or 1),
+                    items=result.payload.get("items") or [],
+                    issued_at=issued_at,
+                    status=result.payload["status"],
+                ),
+                fallback_text=result.text,
+            )
+            return AgentResponse(text=result.text, ui=[self.ui_composer.compose(contract)])
+        return AgentResponse(text=result.text, ui=[])
 
     def _close_actions(
         self,
@@ -991,7 +1248,13 @@ class FoundationOrchestrator:
                     "session_item_count": result.payload["session_item_count"],
                     "session_total": result.payload["session_total"],
                 },
-                actions=[],
+                actions=self._remove_actions(
+                    tenant=tenant,
+                    conversation_id=conversation_id,
+                    sale_session_id=result.payload["sale_session_id"],
+                    items=[{"sale_item_id": result.payload["sale_item_id"]}],
+                    issued_at=utcnow(),
+                ),
                 fallback_text=result.text,
             )
             ui = [self.ui_composer.compose(contract)]

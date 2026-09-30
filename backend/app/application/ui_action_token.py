@@ -18,6 +18,8 @@ class VerifiedUiAction:
     actor_id: UUID
     conversation_id: str
     sale_session_id: UUID | None
+    sale_item_id: UUID | None = None
+    sale_revision: int | None = None
 
 
 def issue_ui_action_token(
@@ -29,6 +31,8 @@ def issue_ui_action_token(
     conversation_id: str,
     issued_at: datetime,
     sale_session_id: UUID | None = None,
+    sale_item_id: UUID | None = None,
+    sale_revision: int | None = None,
 ) -> str:
     issued = int(issued_at.timestamp())
     payload: dict[str, str | int] = {
@@ -43,6 +47,10 @@ def issue_ui_action_token(
     }
     if sale_session_id is not None:
         payload["sale_session_id"] = str(sale_session_id)
+    if sale_item_id is not None:
+        payload["sale_item_id"] = str(sale_item_id)
+    if sale_revision is not None:
+        payload["sale_revision"] = int(sale_revision)
     token = jwt.encode(payload, secret, algorithm="HS256")
     return token if isinstance(token, str) else token.decode("ascii")
 
@@ -57,6 +65,8 @@ def verify_ui_action_token(
     conversation_id: str,
     now: datetime,
     require_sale_session_id: bool,
+    require_sale_item_id: bool = False,
+    require_sale_revision: bool = False,
 ) -> VerifiedUiAction | None:
     if token is None or not str(token).strip():
         return None
@@ -91,10 +101,36 @@ def verify_ui_action_token(
         if raw_session not in (None, ""):
             return None
         sale_session_id = None
+
+    raw_item = payload.get("sale_item_id")
+    if require_sale_item_id:
+        if not isinstance(raw_item, str) or not raw_item.strip():
+            return None
+        try:
+            sale_item_id = UUID(raw_item)
+        except ValueError:
+            return None
+    else:
+        if raw_item not in (None, ""):
+            return None
+        sale_item_id = None
+
+    raw_revision = payload.get("sale_revision")
+    if require_sale_revision:
+        if isinstance(raw_revision, bool) or not isinstance(raw_revision, int) or raw_revision < 1:
+            return None
+        sale_revision = raw_revision
+    else:
+        if raw_revision is not None:
+            return None
+        sale_revision = None
+
     return VerifiedUiAction(
         action_id=action_id,
         business_id=business_id,
         actor_id=actor_id,
         conversation_id=conversation_id,
         sale_session_id=sale_session_id,
+        sale_item_id=sale_item_id,
+        sale_revision=sale_revision,
     )

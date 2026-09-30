@@ -16,6 +16,17 @@ _CASH_STATUSES = frozenset({"balanced", "short", "over"})
 SALE_CONFIRMED_FACT_KEYS = frozenset(
     {"sale_session_id", "payment_id", "payment_method", "amount", "currency"}
 )
+SALE_VOIDED_FACT_KEYS = frozenset(
+    {
+        "sale_session_id",
+        "payment_id",
+        "payment_method",
+        "amount",
+        "currency",
+        "void_reason",
+        "voided_by_actor_id",
+    }
+)
 CASH_COUNT_RECORDED_FACT_KEYS = frozenset(
     {"cash_count_id", "expected_cash", "counted_cash", "cash_difference", "cash_status", "currency"}
 )
@@ -36,6 +47,7 @@ DAILY_CLOSE_COMPLETED_FACT_KEYS = frozenset(
 
 class BusinessEventType(StrEnum):
     SALE_CONFIRMED = "sale_confirmed"
+    SALE_VOIDED = "sale_voided"
     CASH_COUNT_RECORDED = "cash_count_recorded"
     DAILY_CLOSE_COMPLETED = "daily_close_completed"
 
@@ -54,16 +66,19 @@ class SourceEntityType(StrEnum):
 
 _ENTITY_FOR_EVENT = {
     BusinessEventType.SALE_CONFIRMED: SourceEntityType.SALE_SESSION,
+    BusinessEventType.SALE_VOIDED: SourceEntityType.SALE_SESSION,
     BusinessEventType.CASH_COUNT_RECORDED: SourceEntityType.CASH_COUNT,
     BusinessEventType.DAILY_CLOSE_COMPLETED: SourceEntityType.CLOSING_SNAPSHOT,
 }
 _KEYS_FOR_EVENT = {
     BusinessEventType.SALE_CONFIRMED: SALE_CONFIRMED_FACT_KEYS,
+    BusinessEventType.SALE_VOIDED: SALE_VOIDED_FACT_KEYS,
     BusinessEventType.CASH_COUNT_RECORDED: CASH_COUNT_RECORDED_FACT_KEYS,
     BusinessEventType.DAILY_CLOSE_COMPLETED: DAILY_CLOSE_COMPLETED_FACT_KEYS,
 }
 _ID_FACT_FOR_EVENT = {
     BusinessEventType.SALE_CONFIRMED: "sale_session_id",
+    BusinessEventType.SALE_VOIDED: "sale_session_id",
     BusinessEventType.CASH_COUNT_RECORDED: "cash_count_id",
     BusinessEventType.DAILY_CLOSE_COMPLETED: "closing_snapshot_id",
 }
@@ -121,6 +136,32 @@ def sale_confirmed_facts(
         "payment_method": payment_method,
         "amount": decimal_fact(amount),
         "currency": _currency(currency),
+    }
+
+
+def sale_voided_facts(
+    *,
+    sale_session_id: UUID,
+    payment_id: UUID,
+    payment_method: str,
+    amount: Decimal | str,
+    currency: str,
+    void_reason: str,
+    voided_by_actor_id: UUID,
+) -> dict[str, str]:
+    if payment_method not in _PAYMENT_METHODS:
+        raise ValidationAppError("payment_method is not a confirmed payment method")
+    reason = void_reason.strip()
+    if not reason or reason != void_reason:
+        raise ValidationAppError("void_reason must be non-empty trimmed text")
+    return {
+        "sale_session_id": str(sale_session_id),
+        "payment_id": str(payment_id),
+        "payment_method": payment_method,
+        "amount": decimal_fact(amount),
+        "currency": _currency(currency),
+        "void_reason": reason,
+        "voided_by_actor_id": str(voided_by_actor_id),
     }
 
 
@@ -193,6 +234,16 @@ def validate_business_event_facts(
             raise ValidationAppError("payment_method is not a confirmed payment method")
         checked["amount"] = _require_money(checked["amount"])
         checked["currency"] = _currency(checked["currency"])
+    elif event_type is BusinessEventType.SALE_VOIDED:
+        _require_uuid_text(checked["payment_id"], "payment_id")
+        _require_uuid_text(checked["voided_by_actor_id"], "voided_by_actor_id")
+        if checked["payment_method"] not in _PAYMENT_METHODS:
+            raise ValidationAppError("payment_method is not a confirmed payment method")
+        checked["amount"] = _require_money(checked["amount"])
+        checked["currency"] = _currency(checked["currency"])
+        reason = checked.get("void_reason")
+        if not isinstance(reason, str) or not reason.strip() or reason != reason.strip():
+            raise ValidationAppError("void_reason must be non-empty trimmed text")
     elif event_type is BusinessEventType.CASH_COUNT_RECORDED:
         for key in ("expected_cash", "counted_cash", "cash_difference"):
             checked[key] = _require_money(checked[key])

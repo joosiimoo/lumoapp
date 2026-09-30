@@ -499,6 +499,7 @@ void main() {
     expect(find.text('Registrar'), findsNothing);
     expect(find.text('Corregir'), findsNothing);
     expect(find.text('Deshacer'), findsNothing);
+    expect(find.text('Anular'), findsNothing);
     expect(find.text('Efectivo'), findsNothing);
     expect(find.text('Transferencia'), findsNothing);
     expect(find.textContaining('cambio'), findsNothing);
@@ -1278,6 +1279,156 @@ void main() {
     expect(find.text('Solo el texto de respaldo'), findsOneWidget);
     expect(find.text('Cerrar el día'), findsNothing);
   });
+
+  testWidgets('remove control posts only server minted sale.remove_item@1', (tester) async {
+    GenerativeUiAction? tapped;
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._goldenContract(),
+      'actions': [
+        {
+          'action_id': 'sale.remove_item@1',
+          'option_id': null,
+          'context_token': 'remove-token',
+          'idempotency_key': 'remove-key',
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: renderer.build(
+            contract,
+            chrome: UiActionChrome(onAction: (action, {voidReason}) => tapped = action),
+          ),
+        ),
+      ),
+    );
+    await tapLabel(tester, 'Quitar');
+    expect(tapped?.actionId, 'sale.remove_item@1');
+    expect(tapped?.idempotencyKey, 'remove-key');
+  });
+
+  testWidgets('summary remove actions align with server item order', (tester) async {
+    final tapped = <GenerativeUiAction>[];
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._summaryContract(),
+      'actions': [
+        {
+          'action_id': 'sale.remove_item@1',
+          'option_id': null,
+          'context_token': 'remove-z',
+          'idempotency_key': 'remove-z',
+        },
+        {
+          'action_id': 'sale.remove_item@1',
+          'option_id': null,
+          'context_token': 'remove-t',
+          'idempotency_key': 'remove-t',
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: renderer.build(
+            contract,
+            chrome: UiActionChrome(onAction: (action, {voidReason}) => tapped.add(action)),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Quitar'), findsNWidgets(2));
+    await tester.tap(find.text('Quitar').first);
+    await tester.pump();
+    expect(tapped.single.idempotencyKey, 'remove-z');
+  });
+
+  testWidgets('void confirmation requires a reason before confirm', (tester) async {
+    GenerativeUiAction? confirmed;
+    String? reason;
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._confirmedContract(),
+      'data': {
+        ..._confirmedContract()['data'] as Map<String, dynamic>,
+        'impact': {
+          'before': {
+            'sale_count': 2,
+            'gross_sales_total': {'amount': '47.00', 'currency': 'MXN'},
+            'expected_cash': {'amount': '47.00', 'currency': 'MXN'},
+          },
+          'after': {
+            'sale_count': 1,
+            'gross_sales_total': {'amount': '24.50', 'currency': 'MXN'},
+            'expected_cash': {'amount': '24.50', 'currency': 'MXN'},
+          },
+        },
+      },
+      'actions': [
+        {
+          'action_id': 'sale.void.confirm@1',
+          'option_id': null,
+          'context_token': 'void-confirm',
+          'idempotency_key': 'void-confirm-key',
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: renderer.build(
+            contract,
+            chrome: UiActionChrome(
+              onAction: (action, {voidReason}) {
+                confirmed = action;
+                reason = voidReason;
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.textContaining('47.00'), findsWidgets);
+    expect(find.textContaining('24.50'), findsWidgets);
+    expect(find.text('Anular'), findsNothing);
+    final confirm = find.text('Anular venta');
+    await tester.ensureVisible(confirm);
+    await tester.tap(confirm);
+    await tester.pump();
+    expect(confirmed, isNull);
+    await tester.enterText(find.byType(TextField), 'cobro duplicado');
+    await tester.pump();
+    await tester.tap(confirm);
+    await tester.pump();
+    expect(confirmed?.actionId, 'sale.void.confirm@1');
+    expect(reason, 'cobro duplicado');
+  });
+
+  testWidgets('voided sale_confirmed shows chip and hides Anular', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._confirmedContract(),
+      'data': {
+        ..._confirmedContract()['data'] as Map<String, dynamic>,
+        'status': 'voided',
+        'void_reason': 'cobro duplicado',
+      },
+      'actions': [
+        {
+          'action_id': 'sale.void.request@1',
+          'option_id': null,
+          'context_token': 'void-request',
+          'idempotency_key': 'void-request-key',
+        },
+      ],
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('Venta anulada'), findsOneWidget);
+    expect(find.text('Motivo: cobro duplicado'), findsOneWidget);
+    expect(find.text('Anular'), findsNothing);
+  });
 }
 
-void _ignoreAction(GenerativeUiAction action) {}
+void _ignoreAction(GenerativeUiAction action, {String? voidReason}) {}

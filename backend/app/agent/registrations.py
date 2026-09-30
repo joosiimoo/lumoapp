@@ -148,6 +148,64 @@ COMMIT_SALE = ToolRegistration(
     side_effect="write",
 )
 
+REMOVE_SALE_ITEM = ToolRegistration(
+    tool_id="sale.remove_item",
+    version=1,
+    input_schema={
+        "type": "object",
+        "required": ["sale_session_id", "sale_item_id"],
+        "properties": {
+            "sale_session_id": {"type": "string"},
+            "sale_item_id": {"type": "string"},
+        },
+        "additionalProperties": False,
+    },
+    output_schema={
+        "type": "object",
+        "required": ["sale_session_id", "status", "item_count", "total", "items"],
+        "properties": {
+            "status": {"enum": ["open", "ready_to_charge"]},
+        },
+    },
+    permission="sale.create",
+    policy_id="SALE-006",
+    requires_idempotency=True,
+    side_effect="write",
+)
+
+VOID_SALE = ToolRegistration(
+    tool_id="sale.void",
+    version=1,
+    input_schema={
+        "type": "object",
+        "required": ["sale_session_id"],
+        "properties": {
+            "sale_session_id": {"type": "string"},
+            "void_reason": {"type": "string"},
+        },
+        "additionalProperties": False,
+    },
+    output_schema={
+        "type": "object",
+        "required": [
+            "sale_session_id",
+            "payment_id",
+            "status",
+            "item_count",
+            "total",
+            "payment",
+            "items",
+        ],
+        "properties": {
+            "status": {"enum": ["voided", "confirmed"]},
+        },
+    },
+    permission="sale.create",
+    policy_id="SALE-007",
+    requires_idempotency=True,
+    side_effect="write",
+)
+
 OPERATIONAL_DAY_SUMMARY = ToolRegistration(
     tool_id="operational_day.summary",
     version=1,
@@ -347,6 +405,9 @@ SALE_CONFIRMED = GenerativeUIRegistration(
     data_schema={
         "type": "object",
         "required": ["sale_session_id", "payment_id", "status", "item_count", "total", "payment", "items"],
+        "properties": {
+            "status": {"enum": ["confirmed", "voided"]},
+        },
     },
 )
 
@@ -436,6 +497,8 @@ def register_conversational_sale_tools(registry: ToolRegistry) -> None:
         ADD_ITEM,
         TOTALIZE_SALE,
         COMMIT_SALE,
+        REMOVE_SALE_ITEM,
+        VOID_SALE,
         OPERATIONAL_DAY_SUMMARY,
         BUSINESS_FACTS,
         NEXT_BEST_ACTION,

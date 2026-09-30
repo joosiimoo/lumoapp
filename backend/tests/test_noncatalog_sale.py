@@ -83,7 +83,7 @@ def test_free_concept_packages_units_and_follow_ups(client: TestClient, db_sessi
     assert card["version"] == 1
     assert card["data"]["product_name"] == "bolsas de hielo"
     assert card["data"]["line_total"]["amount"] == "36.00"
-    assert card["actions"] == []
+    assert any(action["action_id"] == "sale.remove_item@1" for action in card["actions"])
     assert "Concepto libre" not in bags.json()["text"]
     assert bags.json()["text"] == "Agregué 2 bolsas de hielo · $36.00"
     _, items = _sales_for(db_session, tenant.business_id)

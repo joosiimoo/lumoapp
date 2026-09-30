@@ -9,6 +9,7 @@ from app.api.dependencies import get_db, get_tenant
 from app.application.queries.get_factual_memory import FactualMemoryService
 from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.tenant import TenantContext
+from app.infrastructure.persistence.catalog_sales import SalesRepository
 from app.infrastructure.persistence.operations import OperationsRepository
 from app.infrastructure.persistence.repositories import IdentityRepository
 
@@ -28,7 +29,10 @@ def list_memory_events(
     unknown = set(request.query_params) - _ALLOWED_QUERY
     if unknown:
         raise ValidationAppError("unsupported memory query")
+    settings = request.app.state.settings
     return FactualMemoryService(
         identities=IdentityRepository(session),
         operations=OperationsRepository(session),
+        sales=SalesRepository(session),
+        token_secret=settings.dev_token_secret,
     ).list_timeline(tenant=tenant, limit=limit, before=before)

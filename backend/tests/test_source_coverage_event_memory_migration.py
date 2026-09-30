@@ -11,7 +11,7 @@ from tests.conftest import postgres_available, settings_kwargs
 from tests.sale_cleanup import discard_work_items
 from tests.test_work_item_migration import _config
 
-HEAD = "0015_onboarding_minimum_configuration"
+HEAD = "0016_sale_corrections"
 
 pytestmark = pytest.mark.schema_migration
 

@@ -212,6 +212,7 @@ class SalesRepository:
             conversation_id=session.conversation_id,
             status=session.status.value,
             currency=session.currency,
+            sale_revision=session.sale_revision if session.sale_revision >= 1 else 1,
         )
         self._session.add(row)
         self._session.flush()
@@ -248,6 +249,30 @@ class SalesRepository:
         self._session.flush()
         return _to_item(row)
 
+    def remove_item(self, *, tenant: TenantContext, sale_session_id: UUID, sale_item_id: UUID) -> bool:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        session_row = self._session.get(SaleSessionRow, sale_session_id)
+        if session_row is None or session_row.business_id != tenant.business_id:
+            raise TenantScopeViolationError("sale session not found")
+        if session_row.status not in (
+            SaleSessionStatus.OPEN.value,
+            SaleSessionStatus.READY_TO_CHARGE.value,
+        ):
+            raise SaleNotOpenError("sale is not active")
+        row = self._session.scalar(
+            select(SaleItemRow).where(
+                SaleItemRow.id == sale_item_id,
+                SaleItemRow.sale_session_id == sale_session_id,
+                SaleItemRow.business_id == tenant.business_id,
+            )
+        )
+        if row is None:
+            return False
+        self._session.delete(row)
+        self._session.flush()
+        return True
+
     def list_items(self, *, tenant: TenantContext, sale_session_id: UUID) -> list[SaleItem]:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)
@@ -260,6 +285,40 @@ class SalesRepository:
             .order_by(SaleItemRow.created_at.asc(), SaleItemRow.id.asc())
         ).all()
         return [_to_item(row) for row in rows]
+
+    def advance_sale_revision(self, *, tenant: TenantContext, sale_session_id: UUID) -> SaleSession:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.get(SaleSessionRow, sale_session_id)
+        if row is None or row.business_id != tenant.business_id:
+            raise ValidationAppError("sale session not found")
+        row.sale_revision = int(row.sale_revision) + 1
+        self._session.flush()
+        return _to_session(row)
+
+    def void_session(
+        self,
+        *,
+        tenant: TenantContext,
+        sale_session_id: UUID,
+        voided_at: datetime,
+        voided_by_actor_id: UUID,
+        void_reason: str,
+    ) -> SaleSession:
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        row = self._session.get(SaleSessionRow, sale_session_id)
+        if row is None or row.business_id != tenant.business_id:
+            raise ValidationAppError("sale session not found")
+        reason = void_reason.strip()
+        if not reason:
+            raise ValidationAppError("void_reason is required")
+        row.status = SaleSessionStatus.VOIDED.value
+        row.voided_at = voided_at
+        row.voided_by_actor_id = voided_by_actor_id
+        row.void_reason = reason
+        self._session.flush()
+        return _to_session(row)
 
     def add_payment(self, *, tenant: TenantContext, payment: Payment) -> Payment:
         tenant = _require_tenant(tenant)
@@ -381,10 +440,14 @@ def _to_session(row: SaleSessionRow) -> SaleSession:
         conversation_id=row.conversation_id,
         status=SaleSessionStatus(row.status),
         currency=row.currency,
+        sale_revision=int(row.sale_revision),
         created_at=row.created_at,
         updated_at=row.updated_at,
         operational_day_id=row.operational_day_id,
         confirmed_at=row.confirmed_at,
+        voided_at=row.voided_at,
+        voided_by_actor_id=row.voided_by_actor_id,
+        void_reason=row.void_reason,
     )
 
 

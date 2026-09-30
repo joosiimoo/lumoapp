@@ -102,10 +102,11 @@ class CommitSaleSession:
         confirmed_at: datetime | None = None,
         ui_action_id: str | None = None,
         bound_sale_session_id: UUID | None = None,
+        bound_sale_revision: int | None = None,
     ) -> CommitWorkflowResult:
         if ui_action_id is not None:
             request_hash = sha256(
-                f"{ui_action_id}|{conversation_id or ''}|commit|{payment_method or ''}|{bound_sale_session_id}".encode()
+                f"{ui_action_id}|{conversation_id or ''}|commit|{payment_method or ''}|{bound_sale_session_id}|{bound_sale_revision}".encode()
             ).hexdigest()
         else:
             request_hash = sha256(
@@ -133,6 +134,7 @@ class CommitSaleSession:
                 confirmed_at=confirmed_at,
                 ui_action_id=ui_action_id,
                 bound_sale_session_id=bound_sale_session_id,
+                bound_sale_revision=bound_sale_revision,
                 request_hash=request_hash,
             )
 
@@ -227,9 +229,12 @@ class CommitSaleSession:
         confirmed_at: datetime | None,
         ui_action_id: str,
         bound_sale_session_id: UUID | None,
+        bound_sale_revision: int | None,
         request_hash: str,
     ) -> CommitWorkflowResult:
         if bound_sale_session_id is None or payment_method not in {"cash", "card", "transfer"}:
+            return _stale_action()
+        if bound_sale_revision is None or bound_sale_revision < 1:
             return _stale_action()
         bound = self._sales.get_session_by_id(
             tenant=tenant,
@@ -237,6 +242,8 @@ class CommitSaleSession:
             for_update=True,
         )
         if bound is None or (bound.conversation_id or "") != (conversation_id or ""):
+            return _stale_action()
+        if bound.sale_revision != bound_sale_revision:
             return _stale_action()
         newer = self._sales.has_newer_active_session(
             tenant=tenant,
@@ -453,7 +460,7 @@ def _stale_action() -> CommitWorkflowResult:
     return CommitWorkflowResult(
         kind="stale",
         text=UI_ACTION_STALE_TEXT,
-        payload={"code": "UI_ACTION_STALE", "reason": "ui_action_stale"},
+        payload={"code": "UI_ACTION_STALE", "reason_code": "ui_action_stale"},
     )
 
 
