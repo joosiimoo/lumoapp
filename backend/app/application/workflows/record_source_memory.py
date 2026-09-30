@@ -216,6 +216,7 @@ def record_daily_close(
                 cash_difference_amount=snapshot.cash_difference,
                 cash_status=snapshot.cash_status.value,
                 currency=snapshot.currency,
+                close_note=snapshot.close_note,
             ),
             created_at=created_at,
         ),

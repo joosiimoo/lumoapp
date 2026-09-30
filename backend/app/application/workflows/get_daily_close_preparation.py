@@ -123,7 +123,11 @@ def preparation_ui_data(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def confirmed_ui_data(payload: dict[str, Any]) -> dict[str, Any]:
-    return {key: payload[key] for key in CONFIRMED_DATA_KEYS}
+    data = {key: payload[key] for key in CONFIRMED_DATA_KEYS}
+    note = payload.get("close_note")
+    if isinstance(note, str) and note:
+        data["close_note"] = note
+    return data
 
 
 def request_close_text(payload: dict[str, Any]) -> str:
@@ -176,6 +180,8 @@ def build_confirmed_close(snapshot: ClosingSnapshot) -> dict[str, Any]:
         "cash_status": snapshot.cash_status.value,
         "cash_count_id": str(snapshot.cash_count_id),
     }
+    if snapshot.close_note:
+        payload["close_note"] = snapshot.close_note
     payload["text"] = confirmed_close_text(payload)
     return payload
 

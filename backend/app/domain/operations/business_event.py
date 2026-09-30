@@ -12,6 +12,7 @@ from app.domain.shared.errors import ValidationAppError
 _TWO_PLACES = Decimal("0.01")
 _PAYMENT_METHODS = frozenset({"cash", "card", "transfer"})
 _CASH_STATUSES = frozenset({"balanced", "short", "over"})
+_CLOSE_NOTE_MAX = 500
 
 SALE_CONFIRMED_FACT_KEYS = frozenset(
     {"sale_session_id", "payment_id", "payment_method", "amount", "currency"}
@@ -43,6 +44,7 @@ DAILY_CLOSE_COMPLETED_FACT_KEYS = frozenset(
         "currency",
     }
 )
+DAILY_CLOSE_OPTIONAL_FACT_KEYS = frozenset({"close_note"})
 
 
 class BusinessEventType(StrEnum):
@@ -197,12 +199,13 @@ def daily_close_completed_facts(
     cash_difference_amount: Decimal | str,
     cash_status: str,
     currency: str,
+    close_note: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(sale_count, bool) or not isinstance(sale_count, int):
         raise ValidationAppError("sale_count must be a JSON integer")
     if cash_status not in _CASH_STATUSES:
         raise ValidationAppError("cash_status is not a counted status")
-    return {
+    facts: dict[str, Any] = {
         "outcome_run_id": str(outcome_run_id),
         "closing_snapshot_id": str(closing_snapshot_id),
         "sale_count": sale_count,
@@ -213,6 +216,10 @@ def daily_close_completed_facts(
         "cash_status": cash_status,
         "currency": _currency(currency),
     }
+    note = _normalize_optional_close_note(close_note)
+    if note is not None:
+        facts["close_note"] = note
+    return facts
 
 
 def validate_business_event_facts(
@@ -222,7 +229,11 @@ def validate_business_event_facts(
     facts: dict[str, Any],
 ) -> dict[str, Any]:
     expected = _KEYS_FOR_EVENT[event_type]
-    if set(facts) != expected:
+    if event_type is BusinessEventType.DAILY_CLOSE_COMPLETED:
+        allowed = expected | DAILY_CLOSE_OPTIONAL_FACT_KEYS
+        if not expected.issubset(facts.keys()) or set(facts) - allowed:
+            raise ValidationAppError("business event facts must contain the approved keys only")
+    elif set(facts) != expected:
         raise ValidationAppError("business event facts must contain the approved keys only")
     checked = dict(facts)
     id_key = _ID_FACT_FOR_EVENT[event_type]
@@ -259,6 +270,11 @@ def validate_business_event_facts(
         if checked["cash_status"] not in _CASH_STATUSES:
             raise ValidationAppError("cash_status is not a counted status")
         checked["currency"] = _currency(checked["currency"])
+        if "close_note" in checked:
+            note = _normalize_optional_close_note(checked["close_note"])
+            if note is None:
+                raise ValidationAppError("close_note must be non-empty trimmed text when present")
+            checked["close_note"] = note
     return checked
 
 
@@ -308,3 +324,16 @@ def _money_text(value: str) -> bool:
         body = value
     whole, dot, fraction = body.partition(".")
     return bool(dot) and whole.isdigit() and len(fraction) == 2 and fraction.isdigit()
+
+
+def _normalize_optional_close_note(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationAppError("close_note must be a string")
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if len(trimmed) > _CLOSE_NOTE_MAX:
+        raise ValidationAppError(f"close_note must be at most {_CLOSE_NOTE_MAX} characters")
+    return trimmed

@@ -120,22 +120,16 @@ def primary_action(
     outcome_run_id: UUID | None,
 ) -> dict[str, Any] | None:
     """At most one action. The panel does not carry closing.request@1 or a confirmation token."""
-    if state is OperatorState.CASH_COUNT_REQUIRED:
+    if state in {
+        OperatorState.CASH_COUNT_REQUIRED,
+        OperatorState.CASH_DIFFERENCE,
+        OperatorState.READY_TO_CLOSE,
+    }:
         return {
-            "kind": "record_cash_count",
-            "label": "Registrar conteo",
-            "invocation": "composer",
+            "kind": "prepare_daily_close",
+            "label": "Preparar el cierre del día",
+            "invocation": "close_workspace",
             "message": None,
-            "action_id": None,
-            "work_item_id": _id(work_item_id),
-            "outcome_run_id": _id(outcome_run_id),
-        }
-    if state in {OperatorState.CASH_DIFFERENCE, OperatorState.READY_TO_CLOSE}:
-        return {
-            "kind": "request_close",
-            "label": "Revisar cierre",
-            "invocation": "review_surface",
-            "message": REQUEST_CLOSE_MESSAGE,
             "action_id": None,
             "work_item_id": _id(work_item_id),
             "outcome_run_id": _id(outcome_run_id),

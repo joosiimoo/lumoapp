@@ -173,6 +173,7 @@ def test_export_is_not_a_tool_or_ui_action() -> None:
         "sale.void.confirm@1",
         "closing.request@1",
         "closing.confirm@1",
+        "closing.submit_cash_count@1",
     ]
     assert actions.is_registered("operational_day.export_sales@1") is False
     provider = ScriptedLLMProvider()

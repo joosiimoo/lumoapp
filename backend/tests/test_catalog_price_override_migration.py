@@ -387,7 +387,7 @@ def test_catalog_override_blocks_downgrade_without_deleting_rows(migrated) -> No
     discard_work_items(migrated)
     with pytest.raises(Exception, match="cannot downgrade 0009 while a catalog price override exists"):
         command.downgrade(_config(), "0008_noncatalog_sale_item")
-    assert _revision(migrated) == "0016_sale_corrections"
+    assert _revision(migrated) == "0017_closing_snapshot_close_note"
     with migrated.begin() as connection:
         connection.execute(text("ALTER TABLE sales.sale_items DISABLE ROW LEVEL SECURITY"))
         kept = connection.execute(

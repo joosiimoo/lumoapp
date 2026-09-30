@@ -323,6 +323,7 @@ class ClosingSnapshotRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     counted_cash: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     cash_difference: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     cash_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    close_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
     closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

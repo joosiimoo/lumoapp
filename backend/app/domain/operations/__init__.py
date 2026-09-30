@@ -21,7 +21,12 @@ from app.domain.operations.cash_count import (
     cash_status_for,
     parse_counted_amount,
 )
-from app.domain.operations.closing_snapshot import ClosingSnapshot, preparation_fingerprint
+from app.domain.operations.closing_snapshot import (
+    CLOSE_NOTE_MAX_LENGTH,
+    ClosingSnapshot,
+    normalize_close_note,
+    preparation_fingerprint,
+)
 from app.domain.operations.daily_close_outcome import (
     OUTCOME_DEFINITION_ID,
     OUTCOME_TYPE_DAILY_CLOSE_READY,
@@ -65,8 +70,10 @@ __all__ = [
     "LIMITATION_ONLY_LUMO_REGISTERED_OPERATIONS",
     "CashCountSource",
     "CashStatus",
+    "CLOSE_NOTE_MAX_LENGTH",
     "ClosingSnapshot",
     "DaySummaryTotals",
+    "normalize_close_note",
     "InvalidBusinessTimezone",
     "OUTCOME_DEFINITION_ID",
     "OUTCOME_TYPE_DAILY_CLOSE_READY",

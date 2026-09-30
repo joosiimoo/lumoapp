@@ -251,6 +251,7 @@ void main() {
     expect(find.text('Revisar cierre'), findsNothing);
     expect(find.text('Confirmar cierre'), findsNothing);
     expect(find.text('Registrar conteo'), findsNothing);
+    expect(find.text('Preparar el cierre del día'), findsNothing);
     final summary = tester.getTopLeft(find.text('Así va Carrota hoy'));
     final excel = tester.getTopLeft(find.text('Descargar Excel'));
     expect(excel.dy, greaterThan(summary.dy));

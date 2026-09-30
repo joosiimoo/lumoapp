@@ -474,6 +474,7 @@ def test_contracts_do_not_add_memory_tools_or_copy(client: TestClient) -> None:
         "sale.void.confirm@1",
         "closing.request@1",
         "closing.confirm@1",
+        "closing.submit_cash_count@1",
     ]
 
 

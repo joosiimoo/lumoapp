@@ -329,7 +329,10 @@ CLOSING_CONFIRM = ToolRegistration(
         "type": "object",
         "required": ["confirmation_token"],
         "additionalProperties": False,
-        "properties": {"confirmation_token": {"type": "string"}},
+        "properties": {
+            "confirmation_token": {"type": "string"},
+            "close_note": {"type": "string"},
+        },
     },
     output_schema={
         "type": "object",
@@ -350,6 +353,7 @@ CLOSING_CONFIRM = ToolRegistration(
         "properties": {
             "day_status": {"enum": ["closed"]},
             "cash_status": {"enum": ["balanced", "over", "short"]},
+            "close_note": {"type": ["string", "null"]},
         },
     },
     permission="closing.confirm",
@@ -464,6 +468,7 @@ DAILY_CLOSE_CONFIRMED_UI = GenerativeUIRegistration(
         "properties": {
             "day_status": {"enum": ["closed"]},
             "cash_status": {"enum": ["balanced", "over", "short"]},
+            "close_note": {"type": "string"},
         },
     },
 )

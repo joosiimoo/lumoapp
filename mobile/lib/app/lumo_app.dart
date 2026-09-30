@@ -3,9 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:lumo/api/lumo_api_client.dart';
 import 'package:lumo/core/env/app_config.dart';
 import 'package:lumo/core/session/session_store.dart';
+import 'package:lumo/features/hoy/close_workspace.dart';
 import 'package:lumo/features/hoy/hoy_page.dart';
 import 'package:lumo/features/inicio/business_stream.dart';
-import 'package:lumo/features/inicio/close_review_sheet.dart';
 import 'package:lumo/features/inicio/inicio_page.dart';
 import 'package:lumo/features/memoria/memoria_page.dart';
 import 'package:lumo/features/negocio/negocio_page.dart';
@@ -104,32 +104,12 @@ class _LumoHomeState extends State<LumoHome> {
   String _onboardingPrompt = '¿Cómo se llama tu negocio?';
   String? _nextField;
   List<GenerativeUiContract> _onboardingCards = const [];
-  bool _cashCountComposerActive = false;
 
   @override
   void initState() {
     super.initState();
     _conversationId = const Uuid().v4();
-    _composerFocus.addListener(_onComposerFocusChange);
     _loadBusiness();
-  }
-
-  void _onComposerFocusChange() {
-    if (!_composerFocus.hasFocus && _cashCountComposerActive && mounted) {
-      setState(() => _cashCountComposerActive = false);
-    }
-  }
-
-  void _beginCashCountEntry() {
-    if (_tab != LumoTab.inicio) {
-      setState(() => _tab = LumoTab.inicio);
-    }
-    setState(() => _cashCountComposerActive = true);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _composerFocus.requestFocus();
-      }
-    });
   }
 
   Future<void> _loadBusiness() async {
@@ -233,8 +213,9 @@ class _LumoHomeState extends State<LumoHome> {
       if (!mounted) {
         return;
       }
+      final next = BusinessStream.fromJson(body);
       setState(() {
-        _stream = BusinessStream.fromJson(body);
+        _stream = next;
         _streamFailed = false;
       });
     } catch (_) {
@@ -252,89 +233,26 @@ class _LumoHomeState extends State<LumoHome> {
     return tab == LumoTab.inicio || tab == LumoTab.hoy;
   }
 
-  Future<void> _openCloseReview() async {
-    if (_sending) {
-      return;
-    }
+  Future<void> _openCloseWorkspace() async {
     final current = _stream;
     final action = current?.primaryAction;
-    final message = action?.message;
     if (current == null ||
         action == null ||
-        action.kind != 'request_close' ||
-        action.invocation != 'review_surface' ||
-        message == null ||
-        message.isEmpty) {
+        action.kind != 'prepare_daily_close' ||
+        action.invocation != 'close_workspace') {
       return;
     }
-    setState(() => _sending = true);
-    try {
-      final response = await widget.apiClient.postMessage(
-        message,
-        operation: 'lumo.review.${DateTime.now().microsecondsSinceEpoch}',
-        conversationId: _conversationId,
-      );
-      if (!mounted) {
-        return;
-      }
-      final review = CloseReviewRequest.fromUi(response.ui);
-      setState(() => _sending = false);
-      if (review == null) {
-        LumoToast.show(context, 'No pude preparar el cierre.');
-        return;
-      }
-      final facts = CloseReviewFacts.fromServer(stream: current, preparation: review.preparation);
-      if (!mounted) {
-        return;
-      }
-      await showModalBottomSheet<void>(
-        context: context,
-        useRootNavigator: true,
-        isScrollControlled: true,
-        backgroundColor: LumoColors.background,
-        builder: (sheetContext) {
-          return CloseReviewSheet(
-            facts: facts,
-            onConfirm: () => _confirmClose(review.action),
-          );
-        },
-      );
-    } catch (_) {
-      if (!mounted) {
-        return;
-      }
-      setState(() => _sending = false);
-      LumoToast.show(context, 'No pude preparar el cierre.');
-    }
-  }
-
-  Future<String?> _confirmClose(GenerativeUiAction action) async {
-    try {
-      final response = await widget.apiClient.postAction(
-        actionId: action.actionId,
-        optionId: action.optionId,
-        contextToken: action.contextToken,
-        conversationId: _conversationId,
-        idempotencyKey: action.idempotencyKey,
-      );
-      if (!mounted) {
-        return 'No pude registrar eso. Intenta de nuevo.';
-      }
-      _confirmationToken = null;
-      await _loadStream();
-      if (_stream?.operatorState == 'closed') {
-        return null;
-      }
-      final text = response.text.trim();
-      return text.isEmpty ? 'No pude registrar eso. Intenta de nuevo.' : text;
-    } catch (_) {
-      return 'No pude registrar eso. Intenta de nuevo.';
-    }
+    await showCloseWorkspace(
+      context: context,
+      apiClient: widget.apiClient,
+      conversationId: _conversationId,
+      stream: current,
+      onFinished: _loadStream,
+    );
   }
 
   @override
   void dispose() {
-    _composerFocus.removeListener(_onComposerFocusChange);
     _composerFocus.dispose();
     _composer.dispose();
     super.dispose();
@@ -342,7 +260,10 @@ class _LumoHomeState extends State<LumoHome> {
 
   Future<void> _onAction(GenerativeUiContract contract, GenerativeUiAction action, {String? voidReason}) async {
     final cardKey = uiCardKey(contract);
-    if (_busyCardKey != null || _settledCards.contains(cardKey) || _tab != LumoTab.inicio) {
+    if (_busyCardKey != null ||
+        _settledCards.contains(cardKey) ||
+        _tab != LumoTab.inicio ||
+        _stream?.operatorState == 'closed') {
       return;
     }
     setState(() {
@@ -398,7 +319,6 @@ class _LumoHomeState extends State<LumoHome> {
       if (last == null || !last.fromUser || last.text != text) {
         _inicio.add(InicioTurn.user(text));
       }
-      _cashCountComposerActive = false;
       _sending = true;
     });
     try {
@@ -453,7 +373,6 @@ class _LumoHomeState extends State<LumoHome> {
           ? LumoComposer(
               controller: _composer,
               focusNode: _composerFocus,
-              emphasized: _cashCountComposerActive,
               onSend: _onSend,
             )
           : null,
@@ -468,16 +387,13 @@ class _LumoHomeState extends State<LumoHome> {
             stream: _stream,
             streamFailed: _streamFailed,
             onRetryStream: _loadStream,
-            onRecordCashCount: _beginCashCountEntry,
-            onReviewClose: _openCloseReview,
           ),
         LumoTab.hoy => HoyPage(
             apiClient: widget.apiClient,
             businessName: _businessName,
             stream: _stream,
             streamFailed: _streamFailed,
-            onRecordCashCount: _beginCashCountEntry,
-            onReviewClose: _openCloseReview,
+            onPrepareClose: _openCloseWorkspace,
           ),
         LumoTab.memoria => MemoriaPage(apiClient: widget.apiClient),
         LumoTab.negocio => const NegocioPage(),

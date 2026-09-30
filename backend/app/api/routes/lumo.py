@@ -73,6 +73,8 @@ class LumoActionRequest(BaseModel):
     def payload_for_action(self) -> LumoActionRequest:
         value = self.payload
         if value in (None, {}):
+            if self.action_id == "closing.submit_cash_count@1":
+                raise ValueError("cash count payload must include amount")
             return self
         if self.action_id == "sale.void.confirm@1":
             if set(value) - {"void_reason"}:
@@ -80,6 +82,20 @@ class LumoActionRequest(BaseModel):
             reason = value.get("void_reason")
             if not isinstance(reason, str):
                 raise ValueError("void_reason must be a string")
+            return self
+        if self.action_id == "closing.submit_cash_count@1":
+            if set(value) != {"amount"}:
+                raise ValueError("cash count payload must include only amount")
+            amount = value.get("amount")
+            if not isinstance(amount, str) or not amount.strip():
+                raise ValueError("amount must be a non-empty decimal string")
+            return self
+        if self.action_id == "closing.confirm@1":
+            if set(value) - {"close_note"}:
+                raise ValueError("confirm payload may only include close_note")
+            note = value.get("close_note")
+            if note is not None and not isinstance(note, str):
+                raise ValueError("close_note must be a string")
             return self
         raise ValueError("payload must be empty")
 

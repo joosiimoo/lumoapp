@@ -37,8 +37,6 @@ class InicioPage extends StatelessWidget {
     this.stream,
     this.streamFailed = false,
     this.onRetryStream,
-    this.onRecordCashCount,
-    this.onReviewClose,
   });
 
   final List<InicioTurn> messages;
@@ -50,8 +48,6 @@ class InicioPage extends StatelessWidget {
   final BusinessStream? stream;
   final bool streamFailed;
   final VoidCallback? onRetryStream;
-  final VoidCallback? onRecordCashCount;
-  final VoidCallback? onReviewClose;
 
   @override
   Widget build(BuildContext context) {
@@ -83,12 +79,10 @@ class InicioPage extends StatelessWidget {
               ),
               if (streamFailed || stream != null) ...[
                 const SizedBox(height: 16),
-                BusinessStreamPanel(
+                InicioOperationalHeader(
                   stream: stream,
                   failed: streamFailed,
                   onRetry: onRetryStream ?? () {},
-                  onRecordCashCount: onRecordCashCount ?? () {},
-                  onReviewClose: onReviewClose ?? () {},
                 ),
               ],
             ],
@@ -128,11 +122,13 @@ class InicioPage extends StatelessWidget {
     }
     final hide = hideAssistantProse(turn.text, contract);
     final cardKey = uiCardKey(contract);
+    final dayClosed = stream?.operatorState == 'closed';
     final chrome = UiActionChrome(
       hideFallback: true,
-      disabled: disabledCardKeys.contains(cardKey) || busyCardKey == cardKey,
+      disabled: disabledCardKeys.contains(cardKey) || busyCardKey == cardKey || dayClosed,
+      hideMutationActions: dayClosed,
       loadingKey: busyCardKey == cardKey ? busyActionKey : null,
-      onAction: onAction == null
+      onAction: onAction == null || dayClosed
           ? null
           : (action, {voidReason}) => onAction!(contract, action, voidReason: voidReason),
     );

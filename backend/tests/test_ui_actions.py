@@ -92,15 +92,17 @@ def test_action_catalog_is_closed_and_not_a_tool() -> None:
         "sale.void.confirm@1",
         "closing.request@1",
         "closing.confirm@1",
+        "closing.submit_cash_count@1",
     ]
     tools = ToolRegistry()
     register_conversational_sale_tools(tools)
-    # UI-only actions must not be tools. remove_item and closing.confirm are dual-registered.
-    dual_registered = {"closing.confirm@1", "sale.remove_item@1"}
+    # UI-only actions must not be tools. Dual-registered ids are both action and tool.
+    dual_registered = {"closing.confirm@1", "sale.remove_item@1", "closing.submit_cash_count@1"}
     for action_id in registry.ids():
         if action_id not in dual_registered:
             assert tools.get(action_id) is None
     assert tools.is_registered("closing.confirm@1")
+    assert tools.is_registered("closing.submit_cash_count@1")
     assert tools.is_registered("sale.remove_item@1")
     assert tools.is_registered("sale.void@1")
     assert tools.is_registered("sale.pay.cash@1") is False
@@ -386,7 +388,9 @@ def test_not_counted_has_no_close_action_and_short_can_confirm(client: TestClien
     _cash_sale(client, token, "not-counted", "900gr zanahoria")
     prepared = _message(client, token, "preparar el cierre", "not-counted-prep", conversation_id)
     assert prepared.json()["ui"][0]["data"]["cash_status"] == "not_counted"
-    assert prepared.json()["ui"][0]["actions"] == []
+    assert [a["action_id"] for a in prepared.json()["ui"][0]["actions"]] == ["closing.submit_cash_count@1"]
+    assert "closing.confirm@1" not in [a["action_id"] for a in prepared.json()["ui"][0]["actions"]]
+    assert "closing.request@1" not in [a["action_id"] for a in prepared.json()["ui"][0]["actions"]]
 
     short_conversation = "conv-short-action"
     _cash_sale(client, token, "short-act", "900gr zanahoria")

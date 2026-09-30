@@ -196,11 +196,11 @@ def test_cash_count_short_over_ready_and_closed(client: TestClient, db_session) 
     assert ready_body["operator_state"] == "ready_to_close"
     assert ready_body["close_progress"] == "ready"
     assert ready_body["responsibility"] == "Cierre listo para confirmar"
-    assert ready_body["primary_action"]["label"] == "Revisar cierre"
-    assert ready_body["primary_action"]["message"] == "cerrar el día"
-    assert ready_body["primary_action"]["invocation"] == "review_surface"
+    assert ready_body["primary_action"]["label"] == "Preparar el cierre del día"
+    assert ready_body["primary_action"]["message"] is None
+    assert ready_body["primary_action"]["invocation"] == "close_workspace"
     assert ready_body["primary_action"]["action_id"] is None
-    assert ready_body["primary_action"]["kind"] == "request_close"
+    assert ready_body["primary_action"]["kind"] == "prepare_daily_close"
     assert "closing.request@1" not in ready.text
     assert "closing.confirm@1" not in ready.text
     assert "Confirmar cierre" not in ready.text
@@ -249,9 +249,9 @@ def test_cash_count_short_over_ready_and_closed(client: TestClient, db_session) 
     assert waiting["factual_summary"]["basis"] == "registered_sales"
     assert waiting["attention"]["why"] == "Hace falta para continuar con el cierre."
     action = waiting["primary_action"]
-    assert action["kind"] == "record_cash_count"
-    assert action["label"] == "Registrar conteo"
-    assert action["invocation"] == "composer"
+    assert action["kind"] == "prepare_daily_close"
+    assert action["label"] == "Preparar el cierre del día"
+    assert action["invocation"] == "close_workspace"
     assert action["message"] is None
     assert action["action_id"] is None
     assert action["work_item_id"]
@@ -271,10 +271,10 @@ def test_cash_count_short_over_ready_and_closed(client: TestClient, db_session) 
     assert short["factual_summary"]["counted_cash"]["amount"] == "20.00"
     assert short["factual_summary"]["cash_difference"]["amount"] == "-2.50"
     assert short["factual_summary"]["cash_status"] == "short"
-    assert short["primary_action"]["label"] == "Revisar cierre"
-    assert short["primary_action"]["kind"] == "request_close"
-    assert short["primary_action"]["invocation"] == "review_surface"
-    assert short["primary_action"]["message"] == "cerrar el día"
+    assert short["primary_action"]["label"] == "Preparar el cierre del día"
+    assert short["primary_action"]["kind"] == "prepare_daily_close"
+    assert short["primary_action"]["invocation"] == "close_workspace"
+    assert short["primary_action"]["message"] is None
     assert short["primary_action"]["action_id"] is None
     assert "confirmation_token" not in json.dumps(short)
     assert "closing.confirm@1" not in json.dumps(short)
@@ -293,10 +293,10 @@ def test_over_uses_server_difference(client: TestClient, db_session) -> None:
     assert body["operator_state"] == "cash_difference"
     assert body["factual_summary"]["cash_status"] == "over"
     assert body["factual_summary"]["cash_difference"]["amount"] == "2.50"
-    assert body["primary_action"]["label"] == "Revisar cierre"
-    assert body["primary_action"]["kind"] == "request_close"
-    assert body["primary_action"]["invocation"] == "review_surface"
-    assert body["primary_action"]["message"] == "cerrar el día"
+    assert body["primary_action"]["label"] == "Preparar el cierre del día"
+    assert body["primary_action"]["kind"] == "prepare_daily_close"
+    assert body["primary_action"]["invocation"] == "close_workspace"
+    assert body["primary_action"]["message"] is None
     assert body["primary_action"]["action_id"] is None
     assert "confirmation_token" not in json.dumps(body)
 

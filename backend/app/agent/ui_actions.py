@@ -11,6 +11,7 @@ VOID_REQUEST_ACTION_ID = "sale.void.request@1"
 VOID_CONFIRM_ACTION_ID = "sale.void.confirm@1"
 REQUEST_CLOSE_ACTION_ID = "closing.request@1"
 CONFIRM_CLOSE_ACTION_ID = "closing.confirm@1"
+SUBMIT_CASH_COUNT_ACTION_ID = "closing.submit_cash_count@1"
 
 _PAYMENT_METHODS = {
     "sale.pay.cash@1": "cash",
@@ -25,6 +26,7 @@ _CATALOG = (
     VOID_CONFIRM_ACTION_ID,
     REQUEST_CLOSE_ACTION_ID,
     CONFIRM_CLOSE_ACTION_ID,
+    SUBMIT_CASH_COUNT_ACTION_ID,
 )
 
 
@@ -52,3 +54,12 @@ class UiActionRegistry:
 
     def is_void_confirm(self, action_id: str) -> bool:
         return action_id == VOID_CONFIRM_ACTION_ID
+
+    def is_submit_cash_count(self, action_id: str) -> bool:
+        return action_id == SUBMIT_CASH_COUNT_ACTION_ID
+
+    def is_request_close(self, action_id: str) -> bool:
+        return action_id == REQUEST_CLOSE_ACTION_ID
+
+    def is_confirm_close(self, action_id: str) -> bool:
+        return action_id == CONFIRM_CLOSE_ACTION_ID

@@ -63,6 +63,7 @@ def test_memory_tool_is_read_only_and_actions_stay_closed() -> None:
         "sale.void.confirm@1",
         "closing.request@1",
         "closing.confirm@1",
+        "closing.submit_cash_count@1",
     ]
 
 

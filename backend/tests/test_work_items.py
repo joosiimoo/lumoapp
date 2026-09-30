@@ -230,6 +230,7 @@ def test_nba_policy_denies_model_amounts() -> None:
         "sale.void.confirm@1",
         "closing.request@1",
         "closing.confirm@1",
+        "closing.submit_cash_count@1",
     ]
 
 

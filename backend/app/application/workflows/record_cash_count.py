@@ -66,6 +66,7 @@ class RecordCashCount:
         fail_after_write: bool = False,
         raw_message: str = "",
         counted_at: datetime | None = None,
+        ui_action_id: str | None = None,
     ) -> RecordCashCountResult:
         amount = parse_counted_amount(counted_amount)
         request_hash = sha256(
@@ -212,6 +213,7 @@ class RecordCashCount:
                 "cash_status": payload["cash_status"],
                 "counted_at": payload["counted_at"],
                 "supersedes_cash_count_id": payload["supersedes_cash_count_id"],
+                **({"ui_action_id": ui_action_id} if ui_action_id else {}),
             },
         )
 

@@ -120,6 +120,7 @@ class UiActionChrome {
     this.disabled = false,
     this.loadingKey,
     this.hideFallback = false,
+    this.hideMutationActions = false,
   });
 
   final void Function(GenerativeUiAction action, {String? voidReason})? onAction;
@@ -127,8 +128,11 @@ class UiActionChrome {
   final String? loadingKey;
   final bool hideFallback;
 
+  /// When true, sale mutation controls are omitted (closed operational day).
+  final bool hideMutationActions;
+
   bool actionEnabled(GenerativeUiAction action) {
-    return !disabled && onAction != null && loadingKey == null;
+    return !disabled && !hideMutationActions && onAction != null && loadingKey == null;
   }
 
   bool actionLoading(GenerativeUiAction action) {
@@ -208,7 +212,7 @@ class UiActionBar extends StatelessWidget {
       for (final action in actions)
         if (uiActionLabels.containsKey(action.actionId)) action,
     ];
-    if (visible.isEmpty) {
+    if (chrome.hideMutationActions || visible.isEmpty) {
       return const SizedBox.shrink();
     }
     return Padding(
@@ -246,6 +250,9 @@ class UiSecondaryActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final loading = chrome.actionLoading(action);
     final enabled = chrome.actionEnabled(action);
+    if (chrome.hideMutationActions) {
+      return const SizedBox.shrink();
+    }
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -418,7 +425,8 @@ class SaleItemAddedView extends StatelessWidget {
                         style: LumoTypography.caption,
                       ),
                     ],
-                    if (firstContractActionForId(contract, removeItemActionId) != null) ...[
+                    if (firstContractActionForId(contract, removeItemActionId) != null &&
+                        !chrome.hideMutationActions) ...[
                       const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -515,15 +523,19 @@ class SaleSummaryView extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const Align(
-                      alignment: Alignment.centerLeft,
-                      child: LumoStatusChip(label: 'Lista para cobrar'),
-                    ),
-                    const SizedBox(height: 10),
+                    if (!chrome.hideMutationActions) ...[
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: LumoStatusChip(label: 'Lista para cobrar'),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
                     for (var index = 0; index < items.length; index++)
                       _itemRow(
                         Map<String, dynamic>.from(items[index] as Map),
-                        removeAction: index < removeActions.length ? removeActions[index] : null,
+                        removeAction: chrome.hideMutationActions
+                            ? null
+                            : (index < removeActions.length ? removeActions[index] : null),
                         chrome: chrome,
                       ),
                     const SizedBox(height: 8),
@@ -538,7 +550,8 @@ class SaleSummaryView extends StatelessWidget {
                         Text(total, style: LumoTypography.metricSm),
                       ],
                     ),
-                    if (contract.actions.any((action) => uiActionLabels.containsKey(action.actionId))) ...[
+                    if (!chrome.hideMutationActions &&
+                        contract.actions.any((action) => uiActionLabels.containsKey(action.actionId))) ...[
                       const SizedBox(height: 12),
                       Text('¿Cómo pagó?', style: LumoTypography.cardTitle),
                       UiActionBar(actions: contract.actions, chrome: chrome),
@@ -726,8 +739,10 @@ class SaleConfirmedView extends StatelessWidget {
     final payment = Map<String, dynamic>.from(data['payment'] as Map? ?? const {});
     final methodLabel = SaleConfirmedView.displayMethod('${payment['method'] ?? ''}');
     final items = List<dynamic>.from(data['items'] as List? ?? const []);
-    final voidRequest = voided ? null : firstContractActionForId(contract, voidRequestActionId);
-    final voidConfirm = firstContractActionForId(contract, voidConfirmActionId);
+    final voidRequest =
+        voided || chrome.hideMutationActions ? null : firstContractActionForId(contract, voidRequestActionId);
+    final voidConfirm =
+        chrome.hideMutationActions ? null : firstContractActionForId(contract, voidConfirmActionId);
     final impact = data['impact'] is Map ? Map<String, dynamic>.from(data['impact'] as Map) : null;
     final voidReason = '${data['void_reason'] ?? ''}'.trim();
     return Row(

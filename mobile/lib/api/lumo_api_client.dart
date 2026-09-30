@@ -128,6 +128,8 @@ class LumoApiClient {
     required String conversationId,
     required String idempotencyKey,
     String? voidReason,
+    String? amount,
+    String? closeNote,
   }) async {
     final body = <String, dynamic>{
       'action_id': actionId,
@@ -138,6 +140,10 @@ class LumoApiClient {
     };
     if (voidReason != null) {
       body['payload'] = {'void_reason': voidReason};
+    } else if (amount != null) {
+      body['payload'] = {'amount': amount};
+    } else if (closeNote != null) {
+      body['payload'] = {'close_note': closeNote};
     }
     final decoded = await post(
       '/api/v1/lumo/actions',

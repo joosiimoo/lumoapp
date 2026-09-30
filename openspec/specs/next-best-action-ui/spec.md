@@ -6,11 +6,11 @@ Hoy shows the current operational day from the business-stream today projection.
 
 ## Requirements
 ### Requirement: Hoy shows one next step and the pending count
-Hoy MUST NOT use `GET /api/v1/operational-days/current/next-best-action` as its primary body. Hoy MUST show the Business Stream today projection as specified in `business-stream`. When that projection has no `primary_action`, Hoy MUST omit closing CTAs. When `pending_count` semantics exist only on the NBA GET, Hoy MUST NOT require a pendientes line. Hoy MUST NOT render a WorkItem list, a chart, a hero analytics metric, a day picker, or a closing-flow screen. Memoria and Negocio MUST stay unchanged.
+Hoy MUST NOT use `GET /api/v1/operational-days/current/next-best-action` as its primary body. Hoy MUST show the Business Stream today projection as specified in `business-stream`, including the single prepare-close entry when present. When that projection has no `primary_action`, Hoy MUST omit closing CTAs. When `pending_count` semantics exist only on the NBA GET, Hoy MUST NOT require a pendientes line or invent a count from the supporting copy `Confirma efectivo y revisa pendientes`. Hoy MUST NOT render a WorkItem list, a chart, a hero analytics metric, a day picker, or a separate closing-flow screen outside the Hoy prepare-close workspace. Memoria and Negocio MUST stay unchanged aside from close-note display rules owned by `memoria-timeline`.
 
 #### Scenario: After close the closing CTA is gone
 - **WHEN** today's day is `closed` and the merchant opens Hoy
-- **THEN** Hoy MUST show the closed daily summary and MUST NOT show `Revisar cierre`, `Confirmar cierre`, or `Cerrar el día`
+- **THEN** Hoy MUST show the closed daily summary and MUST NOT show `Preparar el cierre del día`, `Revisar cierre`, `Confirmar cierre`, or `Cerrar el día`
 
 ### Requirement: Hoy does not calculate money or priority
 Hoy MUST display server strings and server amounts from `GET /api/v1/business-stream/today`. It MUST NOT format evidence amounts into NBA sentences, MUST NOT subtract counted cash from expected cash, MUST NOT choose which WorkItem is next, and MUST NOT invent a priority.
@@ -20,15 +20,15 @@ Hoy MUST display server strings and server amounts from `GET /api/v1/business-st
 - **THEN** Hoy MUST show `Faltante` and `-2.50` and MUST NOT compute `20.00 − 22.50`
 
 ### Requirement: Hoy starts close through the existing phrase
-When today `primary_action.kind` is `request_close`, Hoy MUST show `Revisar cierre` and MUST use the same silent `request_close` plus review-surface path as Inicio (`POST /api/v1/lumo/messages` with the technical identifier, then the sheet). It MUST NOT show `Cerrar el día`. It MUST NOT append a visible merchant bubble. When the action is `record_cash_count`, Hoy MUST communicate `Registrar conteo` and MUST NOT show an amount field. When `primary_action` is null, Hoy MUST NOT show a close control.
+When today `primary_action.kind` is `prepare_daily_close`, Hoy MUST show `Preparar el cierre del día` and MUST open the close workspace (`invocation` `close_workspace`). It MUST NOT show `Cerrar el día` as the Hoy chrome primary label, MUST NOT show `Registrar conteo` or `Revisar cierre` as the operator progression, and MUST NOT append a visible merchant bubble. When `primary_action` is null, Hoy MUST NOT show a close control. Inicio MUST NOT mirror the operator CTA.
 
-#### Scenario: Count action has no close button
+#### Scenario: Prepare-close opens workspace
+- **WHEN** the merchant taps `Preparar el cierre del día` on Hoy for an open close-eligible day
+- **THEN** the client MUST open the close workspace and MUST NOT navigate to Inicio for cash count entry
+
+#### Scenario: Count action is not a separate Hoy CTA
 - **WHEN** the today GET state is `cash_count_required`
-- **THEN** Hoy MUST NOT show `Cerrar el día` or `Confirmar cierre`
-
-#### Scenario: Close action opens review
-- **WHEN** the merchant taps `Revisar cierre` on Hoy for a counted open day
-- **THEN** the client MUST silent-post `request_close`, MUST open the review surface, and MUST NOT insert a user turn `cerrar el día`
+- **THEN** Hoy MUST show `Preparar el cierre del día` and MUST NOT show a standalone `Registrar conteo` button
 
 ### Requirement: Register next_best_action@1
 `GenerativeUIRegistry` MUST register component `next_best_action` version `1`. The composer MUST emit it only for a completed `operational_day.next_best_action@1` turn whose projection is not null. `data` MUST carry the projection fields. `fallback_text` MUST be `title`, a space, and `reason`, and MUST NOT contain a token. `actions` MUST be empty for `cash_count_required` and exactly `closing.request@1` for `cash_difference_review` and `close_confirmation_required`. That Inicio action MUST carry the existing `typ=ui_action` `context_token` used by `daily_close_preparation@1`. The GET payload MUST NOT include that token. The card MUST NOT emit `closing.confirm@1`. A null projection MUST emit no component. `closing_ready_card` and `cash_difference_card` MUST stay unregistered.

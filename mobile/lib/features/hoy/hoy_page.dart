@@ -58,8 +58,7 @@ class HoyPage extends StatefulWidget {
     this.businessName,
     this.stream,
     this.streamFailed = false,
-    this.onRecordCashCount,
-    this.onReviewClose,
+    this.onPrepareClose,
   });
 
   final LumoApiClient apiClient;
@@ -67,8 +66,7 @@ class HoyPage extends StatefulWidget {
   final String? businessName;
   final BusinessStream? stream;
   final bool streamFailed;
-  final VoidCallback? onRecordCashCount;
-  final VoidCallback? onReviewClose;
+  final VoidCallback? onPrepareClose;
 
   @override
   State<HoyPage> createState() => _HoyPageState();
@@ -119,7 +117,7 @@ class _HoyPageState extends State<HoyPage> {
     final summary = stream?.factualSummary;
     return ListView(
       key: const Key('hoy-scroll'),
-      padding: const EdgeInsets.fromLTRB(20, 24, 20, 16),
+      padding: const EdgeInsets.fromLTRB(20, 24, 20, 100),
       children: [
         Row(
           children: [
@@ -155,7 +153,7 @@ class _HoyPageState extends State<HoyPage> {
             ),
             const SizedBox(height: 12),
           ],
-          _section('Cierre', _closingLines(stream)),
+          _closeCard(stream),
           if (stream.coverageSentence != null) ...[
             const SizedBox(height: 12),
             Text(stream.coverageSentence!, style: LumoTypography.body),
@@ -191,14 +189,40 @@ class _HoyPageState extends State<HoyPage> {
     );
   }
 
+  Widget _closeCard(BusinessStream stream) {
+    final action = stream.primaryAction;
+    final closed = stream.operatorState == 'closed';
+    return LumoCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Cierre', style: LumoTypography.eyebrow),
+          const SizedBox(height: 8),
+          for (final line in _closingLines(stream)) ...[
+            Text(line, style: LumoTypography.body),
+            const SizedBox(height: 4),
+          ],
+          if (!closed && action != null) ...[
+            const SizedBox(height: 8),
+            Text('Confirma efectivo y revisa pendientes', style: LumoTypography.caption),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: LumoPrimaryButton(
+                label: action.label,
+                onPressed: () => _invoke(action),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   List<String> _closingLines(BusinessStream stream) {
     final summary = stream.factualSummary;
     final lines = <String>[_operatorLabel(stream)];
     if (summary != null) {
-      final cash = cashStatusLabel(summary.cashStatus);
-      if (cash != lines.first) {
-        lines.add(cash);
-      }
       lines.add('Esperado ${formatStreamAmount(summary.drawerExpected.amount)}');
       final counted = summary.countedCash;
       if (counted != null) {
@@ -216,16 +240,16 @@ class _HoyPageState extends State<HoyPage> {
     final summary = stream.factualSummary;
     return switch (stream.operatorState) {
       'closed' => 'Día cerrado',
-      'cash_count_required' => 'Falta contar efectivo',
-      'ready_to_close' => summary == null ? stream.responsibility : cashStatusLabel(summary.cashStatus),
-      'cash_difference' => summary == null ? stream.responsibility : cashStatusLabel(summary.cashStatus),
+      'cash_count_required' => 'Falta contar',
+      'ready_to_close' || 'cash_difference' => summary == null
+          ? stream.responsibility
+          : cashStatusLabel(summary.cashStatus),
       'no_active_day' || 'organizing' || 'unavailable' => stream.responsibility,
       _ => stream.responsibility,
     };
   }
 
   Widget _section(String title, List<String> lines) {
-    final action = title == 'Cierre' ? widget.stream?.primaryAction : null;
     return LumoCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -236,28 +260,14 @@ class _HoyPageState extends State<HoyPage> {
             Text(line, style: LumoTypography.body),
             const SizedBox(height: 4),
           ],
-          if (action != null) ...[
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: LumoPrimaryButton(
-                label: action.label,
-                onPressed: () => _invoke(action),
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
   void _invoke(StreamPrimaryAction action) {
-    if (action.kind == 'record_cash_count' && action.invocation == 'composer') {
-      widget.onRecordCashCount?.call();
-      return;
-    }
-    if (action.kind == 'request_close' && action.invocation == 'review_surface') {
-      widget.onReviewClose?.call();
+    if (action.kind == 'prepare_daily_close' && action.invocation == 'close_workspace') {
+      widget.onPrepareClose?.call();
     }
   }
 }

@@ -180,6 +180,8 @@ MemoriaCardView? memoriaCardView(Map<String, dynamic> event) {
         'Ventas registradas $gross',
         'Caja $status',
         'Diferencia ${values['cash_difference']}',
+        if (values['close_note'] is String && (values['close_note'] as String).isNotEmpty)
+          values['close_note'] as String,
       ],
       localTime: localTime,
     );

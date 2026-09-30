@@ -11,6 +11,21 @@ from app.domain.shared.errors import ValidationAppError
 
 _TWO_PLACES = Decimal("0.01")
 _SNAPSHOT_STATUSES = frozenset({CashStatus.BALANCED, CashStatus.OVER, CashStatus.SHORT})
+CLOSE_NOTE_MAX_LENGTH = 500
+
+
+def normalize_close_note(value: str | None) -> str | None:
+    """Trim merchant close note. Blank becomes null. Over-length is refused."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValidationAppError("close_note must be a string")
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if len(trimmed) > CLOSE_NOTE_MAX_LENGTH:
+        raise ValidationAppError(f"close_note must be at most {CLOSE_NOTE_MAX_LENGTH} characters")
+    return trimmed
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,6 +49,7 @@ class ClosingSnapshot:
     closed_at: datetime
     created_at: datetime
     updated_at: datetime
+    close_note: str | None = None
 
     def __post_init__(self) -> None:
         if self.cash_status not in _SNAPSHOT_STATUSES:
@@ -59,6 +75,7 @@ class ClosingSnapshot:
             raise ValidationAppError("cash_status must match the sign of cash_difference")
         if self.created_at != self.closed_at or self.updated_at != self.closed_at:
             raise ValidationAppError("created_at and updated_at must equal closed_at")
+        note = normalize_close_note(self.close_note)
         object.__setattr__(self, "gross_sales_total", gross)
         object.__setattr__(self, "cash_total", cash)
         object.__setattr__(self, "card_total", card)
@@ -66,6 +83,7 @@ class ClosingSnapshot:
         object.__setattr__(self, "expected_cash", expected)
         object.__setattr__(self, "counted_cash", counted)
         object.__setattr__(self, "cash_difference", difference)
+        object.__setattr__(self, "close_note", note)
 
 
 def status_for_difference(difference: Decimal) -> CashStatus:

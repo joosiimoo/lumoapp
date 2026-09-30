@@ -14,6 +14,7 @@ from app.agent.ui_actions import (
     CONFIRM_CLOSE_ACTION_ID,
     REMOVE_ITEM_ACTION_ID,
     REQUEST_CLOSE_ACTION_ID,
+    SUBMIT_CASH_COUNT_ACTION_ID,
     VOID_CONFIRM_ACTION_ID,
     UiActionRegistry,
 )
@@ -47,6 +48,8 @@ from app.application.workflows.get_operational_day_summary import GetOperational
 from app.application.workflows.record_cash_count import RecordCashCount
 from app.application.workflows.totalize_sale_session import TotalizeSaleSession
 from app.domain.sales.concept import basis_question, ground_user_price, parse_sale_utterance
+from app.domain.operations.cash_count import parse_counted_amount
+from app.domain.operations.closing_snapshot import normalize_close_note
 from app.domain.shared.tenant import TenantContext
 from app.infrastructure.persistence.base import utcnow
 from app.policies import PolicyEngine, PolicyRequest
@@ -796,6 +799,7 @@ class FoundationOrchestrator:
             now=context.get("now"),
             hash_material=context.get("hash_material"),
             ui_action_id=context.get("ui_action_id"),
+            close_note=context.get("close_note"),
         )
         if result.kind == "stale":
             return AgentResponse(
@@ -1004,11 +1008,69 @@ class FoundationOrchestrator:
             if verified is None:
                 return AgentResponse(text="No pude verificar esa acción.", ui=[])
             return self._handle_request_close(AgentDecision(intent="request_close"), context, tenant)
+        if registry.is_submit_cash_count(action_id):
+            verified = verify_ui_action_token(
+                secret=self.token_secret,
+                token=token_text,
+                action_id=action_id,
+                business_id=tenant.business_id,
+                actor_id=tenant.actor_id,
+                conversation_id=conversation_id,
+                now=now,
+                require_sale_session_id=False,
+            )
+            if verified is None or self.record_cash_count is None:
+                return AgentResponse(text="No pude verificar esa acción.", ui=[])
+            raw_amount = action_payload.get("amount")
+            if not isinstance(raw_amount, str):
+                return AgentResponse(text="Indica cuánto contaste en efectivo.", ui=[])
+            try:
+                counted_amount = parse_counted_amount(raw_amount)
+            except ValidationAppError:
+                return AgentResponse(text="Indica cuánto contaste en efectivo.", ui=[])
+            registered = self.tools.is_registered("closing.submit_cash_count@1")
+            policy = self.policies.evaluate(
+                PolicyRequest(
+                    action="execute_tool",
+                    tool_id="closing.submit_cash_count@1",
+                    tool_registered=registered,
+                    from_llm=True,
+                    arguments={"counted_amount": str(counted_amount)},
+                )
+            )
+            if not registered or policy.decision.value == "deny":
+                return AgentResponse(text="That action is not available.", ui=[])
+            result = self.record_cash_count.execute(
+                tenant=tenant,
+                conversation_id=conversation_id,
+                counted_amount=str(counted_amount),
+                idempotency_key=context["idempotency_key"],
+                correlation_id=context.get("correlation_id", "unknown"),
+                policy=policy,
+                fail_after_write=bool(context.get("fail_after_write")),
+                raw_message="",
+                counted_at=now,
+                ui_action_id=action_id,
+            )
+            if result.kind in {"clarify", "deny"}:
+                return AgentResponse(text=result.text, ui=[])
+            return AgentResponse(
+                text=result.text,
+                ui=self._preparation_ui(result.payload, tenant, conversation_id, context),
+            )
+        if not registry.is_confirm_close(action_id):
+            return AgentResponse(text="Esa acción no está disponible.", ui=[])
+        raw_note = action_payload.get("close_note") if action_payload else None
+        try:
+            note = normalize_close_note(raw_note if isinstance(raw_note, str) else None)
+        except ValidationAppError as exc:
+            return AgentResponse(text=str(exc), ui=[])
         updated = {
             **context,
             "client_context": {"confirmation_token": token_text},
-            "hash_material": f"{action_id}|{conversation_id}|{token_text or ''}",
+            "hash_material": f"{action_id}|{conversation_id}|{token_text or ''}|{note or ''}",
             "ui_action_id": action_id,
+            "close_note": note,
         }
         return self._handle_confirm_close(
             AgentDecision(intent="confirm_close", candidate_tool="closing.confirm@1"),
@@ -1165,8 +1227,24 @@ class FoundationOrchestrator:
             return []
         if data.get("day_status") != "open":
             return []
-        if data.get("operational_day_id") is None or data.get("cash_count_id") is None:
+        if data.get("operational_day_id") is None:
             return []
+        if data.get("cash_count_id") is None or data.get("cash_status") == "not_counted":
+            return [
+                GenerativeUIAction(
+                    action_id=SUBMIT_CASH_COUNT_ACTION_ID,
+                    option_id=None,
+                    context_token=issue_ui_action_token(
+                        secret=self.token_secret,
+                        action_id=SUBMIT_CASH_COUNT_ACTION_ID,
+                        business_id=tenant.business_id,
+                        actor_id=tenant.actor_id,
+                        conversation_id=conversation_id,
+                        issued_at=issued_at,
+                    ),
+                    idempotency_key=str(new_uuid7()),
+                )
+            ]
         if data.get("cash_status") not in {"balanced", "short", "over"}:
             return []
         token = data.get("confirmation_token")

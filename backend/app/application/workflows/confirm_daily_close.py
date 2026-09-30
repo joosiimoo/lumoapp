@@ -26,6 +26,7 @@ from app.application.workflows.get_daily_close_preparation import (
     fingerprint_for_preparation,
 )
 from app.domain.operations import ClosingSnapshot, OperationalDayStatus, cash_difference, cash_status_for
+from app.domain.operations.closing_snapshot import normalize_close_note
 from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
@@ -78,13 +79,15 @@ class ConfirmDailyClose:
         now: datetime | None = None,
         hash_material: str | None = None,
         ui_action_id: str | None = None,
+        close_note: str | None = None,
     ) -> ConfirmDailyCloseResult:
         token = confirmation_token or ""
+        note = normalize_close_note(close_note)
         if hash_material is not None:
             request_hash = sha256(hash_material.encode()).hexdigest()
         else:
             request_hash = sha256(
-                f"{raw_message}|{conversation_id or ''}|{token}".encode()
+                f"{raw_message}|{conversation_id or ''}|{token}|{note or ''}".encode()
             ).hexdigest()
 
         replay = self._peek(tenant, idempotency_key, request_hash)
@@ -213,6 +216,7 @@ class ConfirmDailyClose:
                 closed_at=instant,
                 created_at=instant,
                 updated_at=instant,
+                close_note=note,
             ),
         )
         self._operations.close_open_day(
@@ -317,6 +321,7 @@ class ConfirmDailyClose:
                 "closed_at": payload["closed_at"],
                 "previous_status": "open",
                 "new_status": "closed",
+                **({"close_note": note} if note else {}),
                 **({"ui_action_id": ui_action_id} if ui_action_id else {}),
             },
         )
@@ -339,6 +344,7 @@ class ConfirmDailyClose:
                 "cash_difference": payload["cash_difference"]["amount"],
                 "cash_status": payload["cash_status"],
                 "closed_at": payload["closed_at"],
+                **({"close_note": note} if note else {}),
             },
         )
         if fail_after_write:

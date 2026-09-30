@@ -10,7 +10,7 @@ import 'package:lumo/core/env/app_config.dart';
 import 'package:lumo/core/session/session_store.dart';
 import 'package:lumo/features/inicio/business_stream.dart';
 import 'package:lumo/features/inicio/inicio_page.dart';
-import 'package:lumo/lumo/widgets/lumo_buttons.dart';
+import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/widgets/lumo_composer.dart';
 
 void main() {
@@ -21,7 +21,7 @@ void main() {
   });
 
   test('cash status labels and amount display do not recompute money', () {
-    expect(cashStatusLabel('not_counted'), 'Falta contar efectivo');
+    expect(cashStatusLabel('not_counted'), 'Falta contar');
     expect(cashStatusLabel('balanced'), 'Caja cuadrada');
     expect(cashStatusLabel('short'), 'Faltante');
     expect(cashStatusLabel('over'), 'Sobrante');
@@ -29,8 +29,10 @@ void main() {
     expect(formatStreamAmount('-2.50'), r'-$2.50');
     final stream = BusinessStream.fromJson(_body(state: 'cash_difference', cashStatus: 'short'));
     expect(stream.primaryAction!.actionId, isNull);
-    expect(stream.primaryAction!.label, 'Revisar cierre');
-    expect(stream.primaryAction!.message, 'cerrar el día');
+    expect(stream.primaryAction!.label, 'Preparar el cierre del día');
+    expect(stream.primaryAction!.message, isNull);
+    expect(stream.primaryAction!.kind, 'prepare_daily_close');
+    expect(stream.primaryAction!.invocation, 'close_workspace');
     expect(stream.coverageSentence, 'Este cierre considera las operaciones registradas en Lumo.');
   });
 
@@ -53,94 +55,166 @@ void main() {
     expect(requests.where((request) => request.url.path == '/api/v1/business-stream/today'), isNotEmpty);
   });
 
-  testWidgets('registrar conteo focuses the composer without inserting text', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(420, 1400));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('Inicio light header shows sentence and indicators without close CTAs', (tester) async {
     final client = _client([], (_) => _body(state: 'cash_count_required', cashStatus: 'not_counted'));
     await tester.pumpWidget(_app(client));
     await tester.pumpAndSettle();
-    expect(find.text('Falta contar efectivo'), findsOneWidget);
-    final button = find.text('Registrar conteo');
-    expect(button, findsOneWidget);
-    await tester.ensureVisible(button);
-    await tester.pumpAndSettle();
-    await tester.tap(button);
-    await tester.pumpAndSettle();
-    final field = tester.widget<TextField>(find.byType(TextField));
-    expect(field.focusNode!.hasFocus, isTrue);
-    expect(field.controller!.text, isEmpty);
-    expect(tester.widget<LumoComposer>(find.byType(LumoComposer)).emphasized, isTrue);
-    expect(find.text('cerrar el día'), findsNothing);
+    expect(find.text(r'Llevas $22.50 en ventas.'), findsOneWidget);
+    expect(find.text('VENTAS HOY'), findsOneWidget);
+    expect(find.text('CAJA'), findsOneWidget);
+    expect(find.text('1 venta'), findsOneWidget);
+    expect(find.text(r'$22.50'), findsWidgets);
+    expect(find.text('Falta contar'), findsOneWidget);
+    expect(find.text('Registrar conteo'), findsNothing);
+    expect(find.text('Revisar cierre'), findsNothing);
+    expect(find.text('Confirmar cierre'), findsNothing);
+    expect(find.text('Efectivo \$22.50'), findsNothing);
   });
 
-  testWidgets('cash count CTA stays enabled and one tap posts a single message', (tester) async {
+
+  testWidgets('Hoy opens prepare-close workspace without navigating to Inicio', (tester) async {
     await tester.binding.setSurfaceSize(const Size(420, 1400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final requests = <http.Request>[];
     final client = _client(requests, (request) {
       if (request.method == 'POST' && request.url.path == '/api/v1/lumo/messages') {
-        return {
-          'message_id': 'm-count',
-          'status': 'completed',
-          'text': 'Conteo registrado',
-          'ui': [],
-          'correlation_id': 'c-count',
-        };
+        return _prepareCountResponse();
       }
       return _body(state: 'cash_count_required', cashStatus: 'not_counted');
     });
     await tester.pumpWidget(_app(client));
     await tester.pumpAndSettle();
-    final button = find.text('Registrar conteo');
-    expect(tester.widget<LumoPrimaryButton>(find.ancestor(of: button, matching: find.byType(LumoPrimaryButton))).enabled,
-        isTrue);
-    await tester.ensureVisible(button);
-    await tester.tap(button);
+    expect(find.text('Preparar el cierre del día'), findsNothing);
+    await tester.tap(find.text('Hoy'));
     await tester.pumpAndSettle();
-    expect(tester.widget<LumoComposer>(find.byType(LumoComposer)).emphasized, isTrue);
-    final postsBeforeSend = requests.where((r) => r.method == 'POST').length;
-    await tester.enterText(find.byType(TextField), 'tengo 22.50 en caja');
-    await tester.testTextInput.receiveAction(TextInputAction.send);
+    expect(find.text('Preparar el cierre del día'), findsOneWidget);
+    expect(find.text('Confirma efectivo y revisa pendientes'), findsOneWidget);
+    expect(find.text('Registrar conteo'), findsNothing);
+    expect(find.text('Revisar cierre'), findsNothing);
+    await tester.ensureVisible(find.text('Preparar el cierre del día'));
+    await tester.tap(find.text('Preparar el cierre del día'));
     await tester.pumpAndSettle();
-    final messagePosts =
-        requests.where((r) => r.method == 'POST' && r.url.path == '/api/v1/lumo/messages').toList();
-    expect(messagePosts.length - postsBeforeSend, 1);
-    final body = jsonDecode(messagePosts.last.body) as Map<String, dynamic>;
-    expect(body['message'], 'tengo 22.50 en caja');
-    expect(body['conversation_id'], isNotEmpty);
-    expect(requests.where((r) => r.url.path == '/api/v1/lumo/actions'), isEmpty);
-    expect(find.text('tengo 22.50 en caja'), findsOneWidget);
+    expect(find.byKey(const Key('close-workspace')), findsOneWidget);
+    expect(find.text('Cierre del día'), findsOneWidget);
+    expect(find.textContaining('deberías tener'), findsOneWidget);
+    expect(find.text('¿Cuánto contaste?'), findsOneWidget);
+    expect(find.text('Buenos días'), findsNothing);
+    expect(find.byKey(const Key('close-count-input')), findsOneWidget);
+    final preparePosts = requests.where((r) => r.method == 'POST' && r.url.path == '/api/v1/lumo/messages');
+    expect(preparePosts, hasLength(1));
+    expect(jsonDecode(preparePosts.single.body)['message'], 'preparar el cierre');
   });
 
-  testWidgets('revisar cierre posts the phrase on the existing conversation', (tester) async {
+  testWidgets('workspace submits structured cash count and shows balanced facts', (tester) async {
     await tester.binding.setSurfaceSize(const Size(420, 1400));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final requests = <http.Request>[];
     final client = _client(requests, (request) {
-      if (request.method == 'POST') {
-        return _reviewResponse();
+      if (request.method == 'POST' && request.url.path == '/api/v1/lumo/actions') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['action_id'], 'closing.submit_cash_count@1');
+        expect(body['payload']['amount'], '22.50');
+        return _countedPreparationResponse(status: 'balanced', counted: '22.50', difference: '0.00');
       }
-      return _body(state: 'ready_to_close', cashStatus: 'balanced', difference: '0.00');
+      if (request.method == 'POST' && request.url.path == '/api/v1/lumo/messages') {
+        return _prepareCountResponse();
+      }
+      return _body(state: 'cash_count_required', cashStatus: 'not_counted');
     });
     await tester.pumpWidget(_app(client));
     await tester.pumpAndSettle();
+    await tester.tap(find.text('Hoy'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Preparar el cierre del día'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('close-count-input')), '22.50');
+    await tester.tap(find.text('Registrar conteo'));
+    await tester.pumpAndSettle();
     expect(find.text('Caja cuadrada'), findsOneWidget);
-    expect(find.text('Revisar cierre'), findsOneWidget);
-    expect(find.text('Confirmar cierre'), findsNothing);
-    await tester.ensureVisible(find.text('Revisar cierre'));
+    expect(find.textContaining(r'Esperado $22.50'), findsWidgets);
+    expect(find.textContaining(r'Contado $22.50'), findsOneWidget);
+    expect(find.textContaining(r'Diferencia $0.00'), findsOneWidget);
+    expect(find.text('Cerrar el día'), findsOneWidget);
+    expect(find.text('Agregar nota'), findsOneWidget);
+    expect(find.text('Buenos días'), findsNothing);
+    expect(requests.where((r) => r.url.path == '/api/v1/lumo/actions'), hasLength(1));
+  });
+
+  testWidgets('workspace shortage emphasizes optional note and closes with Listo', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(420, 1400));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var closed = false;
+    final requests = <http.Request>[];
+    final client = _client(requests, (request) {
+      if (request.method == 'POST' && request.url.path == '/api/v1/lumo/actions') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        expect(body['action_id'], 'closing.confirm@1');
+        expect(body['payload']['close_note'], 'Faltaron dos billetes');
+        closed = true;
+        return _confirmedCloseResponse(note: 'Faltaron dos billetes');
+      }
+      if (request.method == 'POST' && request.url.path == '/api/v1/lumo/messages') {
+        final body = jsonDecode(request.body) as Map<String, dynamic>;
+        if (body['message'] == 'cerrar el día') {
+          return _reviewResponse(status: 'short', counted: '20.00', difference: '-2.50');
+        }
+      }
+      if (closed) {
+        return _body(state: 'closed', cashStatus: 'short', counted: '20.00', difference: '-2.50');
+      }
+      return _body(
+        state: 'cash_difference',
+        cashStatus: 'short',
+        amount: '22.50',
+        counted: '20.00',
+        difference: '-2.50',
+      );
+    });
+    await tester.pumpWidget(_app(client));
     await tester.pumpAndSettle();
-    final before = requests.length;
-    await tester.tap(find.text('Revisar cierre'));
+    await tester.tap(find.text('Hoy'));
     await tester.pumpAndSettle();
-    final posts = requests.skip(before).where((request) => request.method == 'POST').toList();
-    expect(posts, hasLength(1));
-    expect(posts.single.url.path, '/api/v1/lumo/messages');
-    final body = jsonDecode(posts.single.body) as Map<String, dynamic>;
-    expect(body['message'], 'cerrar el día');
-    expect(body['conversation_id'], isNotEmpty);
-    expect(requests.where((request) => request.url.path.contains('/lumo/actions')), isEmpty);
-    expect(find.byType(TextField).evaluate().single, isNotNull);
-    expect(tester.widget<TextField>(find.byType(TextField)).controller!.text, isEmpty);
+    await tester.tap(find.text('Preparar el cierre del día'));
+    await tester.pumpAndSettle();
+    expect(find.text('Faltante'), findsWidgets);
+    expect(find.textContaining(r'-$2.50'), findsWidgets);
+    expect(find.textContaining('nota opcional'), findsOneWidget);
+    await tester.tap(find.text('Agregar nota'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('close-note-input')), 'Faltaron dos billetes');
+    await tester.tap(find.text('Cerrar el día'));
+    await tester.pumpAndSettle();
+    expect(find.text('Día cerrado'), findsOneWidget);
+    expect(find.text('Faltaron dos billetes'), findsOneWidget);
+    await tester.tap(find.text('Listo'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('close-workspace')), findsNothing);
+    expect(find.text('Día cerrado'), findsOneWidget);
+    expect(find.text('Preparar el cierre del día'), findsNothing);
+    expect(find.text('Cerrar el día'), findsNothing);
+  });
+
+  testWidgets('Hoy shortage CTA is prepare-close and does not invent math', (tester) async {
+    final client = _client(
+      [],
+      (_) => _body(
+        state: 'cash_difference',
+        cashStatus: 'short',
+        amount: '22.50',
+        counted: '20.00',
+        difference: '-2.50',
+      ),
+    );
+    await tester.pumpWidget(_app(client));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Hoy'));
+    await tester.pumpAndSettle();
+    expect(find.text('Faltante'), findsWidgets);
+    expect(find.textContaining(r'-$2.50'), findsWidgets);
+    expect(find.text('20.00 − 22.50'), findsNothing);
+    expect(find.text('Preparar el cierre del día'), findsOneWidget);
+    expect(find.text('Revisar cierre'), findsNothing);
+    expect(find.text('Cerrar el día'), findsNothing);
   });
 
   testWidgets('a failed refresh drops the previous facts and retry restores them', (tester) async {
@@ -194,7 +268,7 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.send);
     await tester.pumpAndSettle();
     expect(streamGets, 2);
-    expect(find.text('Falta contar efectivo'), findsOneWidget);
+    expect(find.text('Falta contar'), findsOneWidget);
     expect(find.text('900gr zanahoria'), findsOneWidget);
     final posted = requests.where((request) => request.method == 'POST').single;
     expect(jsonDecode(posted.body)['message'], '900gr zanahoria');
@@ -235,312 +309,13 @@ void main() {
       ),
     ));
     expect(find.text('Buenos días'), findsOneWidget);
-    expect(find.text('Falta contar efectivo'), findsOneWidget);
-    expect(find.text('1 venta · \$22.50'), findsOneWidget);
-    expect(find.text('1 ventas'), findsNothing);
-    await tester.scrollUntilVisible(
-      find.text('venta 29'),
-      400,
-      scrollable: find.descendant(
-        of: find.byKey(const Key('inicio-transcript')),
-        matching: find.byType(Scrollable),
-      ),
-    );
-    expect(find.text('Buenos días'), findsOneWidget);
-    expect(find.text('Falta contar efectivo'), findsOneWidget);
-    expect(find.text('venta 0'), findsNothing);
-    expect(find.text('venta 29'), findsOneWidget);
-  });
-
-  testWidgets('return to Inicio shows the current state without scrolling history', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(420, 640));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final client = _client([], (request) {
-      if (request.method == 'POST') {
-        return {
-          'message_id': 'm1',
-          'status': 'completed',
-          'text': 'Anotado',
-          'ui': [],
-          'correlation_id': 'c1',
-        };
-      }
-      return _body(state: 'ready_to_close', cashStatus: 'balanced', difference: '0.00');
-    });
-    await tester.pumpWidget(_app(client));
-    await tester.pumpAndSettle();
-    for (var index = 0; index < 8; index++) {
-      await tester.enterText(find.byType(TextField), 'nota $index');
-      await tester.testTextInput.receiveAction(TextInputAction.send);
-      await tester.pumpAndSettle();
-    }
-    await tester.drag(find.byKey(const Key('inicio-transcript')), const Offset(0, -800));
-    await tester.pumpAndSettle();
-    expect(find.text('Caja cuadrada'), findsOneWidget);
-    await tester.tap(find.text('Hoy'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Inicio'));
-    await tester.pumpAndSettle();
-    expect(find.text('Buenos días'), findsOneWidget);
-    expect(find.text('Caja cuadrada'), findsOneWidget);
-    expect(tester.getTopLeft(find.text('Caja cuadrada')).dy, lessThan(400));
-  });
-
-  testWidgets('Hoy shows server sale and tender figures, coverage, and exports', (tester) async {
-    final client = _client([], (_) => _twoTenderBody());
-    await tester.pumpWidget(_app(client));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Hoy'));
-    await tester.pumpAndSettle();
-    expect(find.text('Así va hoy'), findsOneWidget);
-    expect(find.text('2 ventas'), findsOneWidget);
-    expect(find.text(r'$52.50'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Este cierre considera las operaciones registradas en Lumo.'),
-      200,
-      scrollable: find.descendant(
-        of: find.byKey(const Key('hoy-scroll')),
-        matching: find.byType(Scrollable),
-      ),
-    );
-    expect(find.textContaining(r'$22.50'), findsWidgets);
-    expect(find.textContaining(r'$30.00'), findsWidgets);
-    expect(find.textContaining(r'$0.00'), findsWidgets);
-    expect(find.text('Este cierre considera las operaciones registradas en Lumo.'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.text('Descargar Excel'),
-      200,
-      scrollable: find.descendant(
-        of: find.byKey(const Key('hoy-scroll')),
-        matching: find.byType(Scrollable),
-      ),
-    );
-    expect(find.text('Descargar Excel'), findsOneWidget);
-    expect(find.text('Descargar CSV'), findsOneWidget);
-    expect(find.text('Cerrar el día'), findsNothing);
-    expect(find.text('Registrar conteo'), findsNothing);
-  });
-
-  testWidgets('Hoy shortage copy is the server difference', (tester) async {
-    final client = _client(
-      [],
-      (_) => _body(
-        state: 'cash_difference',
-        cashStatus: 'short',
-        amount: '22.50',
-        counted: '20.00',
-        difference: '-2.50',
-      ),
-    );
-    await tester.pumpWidget(_app(client));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Hoy'));
-    await tester.pumpAndSettle();
-    expect(find.text('Faltante'), findsWidgets);
-    expect(find.textContaining(r'-$2.50'), findsWidgets);
-    expect(find.text('20.00 − 22.50'), findsNothing);
-    expect(find.text('Cerrar el día'), findsNothing);
-    expect(find.text('Revisar cierre'), findsOneWidget);
-  });
-
-  testWidgets('revisar cierre opens a review sheet without a merchant turn or preparation card', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(420, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final requests = <http.Request>[];
-    final client = _client(requests, (request) {
-      if (request.method == 'POST' && request.url.path == '/api/v1/lumo/messages') {
-        return _reviewResponse();
-      }
-      return _twoTenderBody(state: 'ready_to_close', cashStatus: 'balanced');
-    });
-    await tester.pumpWidget(_app(client));
-    await tester.pumpAndSettle();
-    expect(find.text('Confirmar cierre'), findsNothing);
-    await tester.tap(find.text('Revisar cierre'));
-    await tester.pumpAndSettle();
-    final messages = requests.where((request) => request.method == 'POST' && request.url.path == '/api/v1/lumo/messages');
-    expect(messages, hasLength(1));
-    final posted = jsonDecode(messages.single.body) as Map<String, dynamic>;
-    expect(posted['message'], 'cerrar el día');
-    expect(posted['conversation_id'], isNotEmpty);
-    expect(requests.where((request) => request.url.path.endsWith('/lumo/actions')), isEmpty);
-    expect(find.byKey(const Key('close-review-sheet')), findsOneWidget);
-    expect(find.text('cerrar el día'), findsNothing);
-    expect(find.textContaining('El cierre está preparado'), findsNothing);
-    expect(find.textContaining('¿Confirmas el cierre?'), findsNothing);
-    expect(find.text('Cierre 2026-09-26'), findsNothing);
-    final transcript = find.byKey(const Key('inicio-transcript'));
-    expect(find.descendant(of: transcript, matching: find.text('Confirmar cierre')), findsNothing);
-    expect(find.descendant(of: find.byKey(const Key('close-review-sheet')), matching: find.text('Confirmar cierre')),
-        findsOneWidget);
-    expect(find.text('Confirmar cierre'), findsOneWidget);
-    expect(find.text('2 ventas'), findsWidgets);
-    final sheet = find.byKey(const Key('close-review-sheet'));
-    expect(find.descendant(of: sheet, matching: find.textContaining(r'$52.50')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.textContaining(r'$30.00')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text('Caja cuadrada')), findsOneWidget);
-    expect(
-      find.descendant(
-        of: sheet,
-        matching: find.text('Este cierre considera las operaciones registradas en Lumo.'),
-      ),
-      findsOneWidget,
-    );
-    await tester.tap(find.text('Cancelar'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('close-review-sheet')), findsNothing);
-    expect(requests.where((request) => request.url.path.endsWith('/lumo/actions')), isEmpty);
-    expect(find.text('Revisar cierre'), findsOneWidget);
-    expect(find.text('cerrar el día'), findsNothing);
-    expect(find.text('Confirmar cierre'), findsNothing);
-    await tester.tap(find.text('Hoy'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Inicio'));
-    await tester.pumpAndSettle();
-    expect(find.text('cerrar el día'), findsNothing);
-    expect(find.text('Confirmar cierre'), findsNothing);
-    expect(find.text('Cierre 2026-09-26'), findsNothing);
-  });
-
-  testWidgets('revisar cierre keeps the silent response out of the transcript', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(420, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    const prose =
-        'El cierre está preparado: 2 ventas · \$47.50. Efectivo esperado \$22.50. Contado \$22.50. Diferencia \$0.00. ¿Confirmas el cierre?';
-    final client = _client([], (request) {
-      if (request.method == 'POST') {
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
-        if (body['message'] == 'cerrar el día') {
-          return _reviewResponse(prose: prose);
-        }
-        return {
-          'message_id': 'm-sale',
-          'status': 'completed',
-          'text': 'Anoté zanahoria.',
-          'ui': [],
-          'correlation_id': 'c-sale',
-        };
-      }
-      return _body(
-        state: 'ready_to_close',
-        cashStatus: 'balanced',
-        amount: '22.50',
-        saleCount: 2,
-        gross: '47.50',
-        cash: '22.50',
-        card: '25.00',
-        transfer: '0.00',
-        counted: '22.50',
-        difference: '0.00',
-      );
-    });
-    await tester.pumpWidget(_app(client));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byType(TextField), '900gr zanahoria');
-    await tester.testTextInput.receiveAction(TextInputAction.send);
-    await tester.pumpAndSettle();
-    expect(find.text('900gr zanahoria'), findsOneWidget);
-    expect(find.text('Anoté zanahoria.'), findsOneWidget);
-    await tester.tap(find.text('Revisar cierre'));
-    await tester.pumpAndSettle();
-    expect(find.text('900gr zanahoria'), findsOneWidget);
-    expect(find.text('Anoté zanahoria.'), findsOneWidget);
-    expect(find.text('cerrar el día'), findsNothing);
-    expect(find.text(prose), findsNothing);
-    expect(find.textContaining('¿Confirmas el cierre?'), findsNothing);
-    expect(find.text('Cierre 2026-09-26'), findsNothing);
-    final transcript = find.byKey(const Key('inicio-transcript'));
-    expect(find.descendant(of: transcript, matching: find.text('Confirmar cierre')), findsNothing);
-    expect(find.descendant(of: transcript, matching: find.text(prose)), findsNothing);
-    final sheet = find.byKey(const Key('close-review-sheet'));
-    expect(sheet, findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text('Confirmar cierre')), findsOneWidget);
-    expect(find.text('Confirmar cierre'), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text('2 ventas')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text(r'Total $47.50')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text(r'Efectivo $22.50')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text(r'Tarjeta $25.00')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text(r'Transferencia $0.00')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text(r'Esperado $22.50')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text(r'Contado $22.50')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text(r'Diferencia $0.00')), findsOneWidget);
-    expect(find.descendant(of: sheet, matching: find.text('Caja cuadrada')), findsOneWidget);
-    expect(
-      find.descendant(
-        of: sheet,
-        matching: find.text('Este cierre considera las operaciones registradas en Lumo.'),
-      ),
-      findsOneWidget,
-    );
-    expect(find.descendant(of: sheet, matching: find.text('Cancelar')), findsOneWidget);
-    final rect = tester.getRect(sheet);
-    expect(rect.height, greaterThan(80));
-    expect(rect.top, greaterThanOrEqualTo(0));
-    expect(rect.bottom, lessThanOrEqualTo(900));
-  });
-
-  testWidgets('confirmar cierre posts closing.confirm@1 and refreshes Inicio and Hoy', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(420, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final requests = <http.Request>[];
-    var confirmed = false;
-    final client = _client(requests, (request) {
-      if (request.method == 'POST' && request.url.path == '/api/v1/lumo/actions') {
-        final body = jsonDecode(request.body) as Map<String, dynamic>;
-        expect(body['action_id'], 'closing.confirm@1');
-        expect(body['context_token'], 'token-review');
-        confirmed = true;
-        return {
-          'message_id': 'm-confirmed',
-          'status': 'completed',
-          'text': 'Cierre confirmado',
-          'ui': [
-            {
-              'component': 'daily_close_confirmed',
-              'version': 1,
-              'fallback_text': 'Cierre confirmado',
-              'data': {'day_status': 'closed'},
-              'actions': [],
-            },
-          ],
-          'correlation_id': 'c-confirmed',
-        };
-      }
-      if (request.method == 'POST') {
-        return _reviewResponse(status: 'short', counted: '20.00', difference: '-2.50');
-      }
-      if (confirmed) {
-        return _twoTenderBody(state: 'closed', cashStatus: 'balanced');
-      }
-      return _twoTenderBody(state: 'cash_difference', cashStatus: 'short', counted: '20.00', difference: '-2.50');
-    });
-    await tester.pumpWidget(_app(client));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Revisar cierre'));
-    await tester.pumpAndSettle();
-    expect(find.descendant(of: find.byKey(const Key('close-review-sheet')), matching: find.textContaining(r'-$2.50')),
-        findsOneWidget);
-    expect(find.text('Confirmar cierre'), findsOneWidget);
-    await tester.tap(find.text('Confirmar cierre'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('close-review-sheet')), findsNothing);
-    expect(find.text('Día cerrado'), findsOneWidget);
-    expect(find.text('Cierre confirmado'), findsNothing);
-    expect(find.text('cerrar el día'), findsNothing);
+    expect(find.text(r'Llevas $22.50 en ventas.'), findsOneWidget);
+    expect(find.text('VENTAS HOY'), findsOneWidget);
+    expect(find.text('CAJA'), findsOneWidget);
+    expect(find.text('Falta contar'), findsOneWidget);
+    expect(find.text('1 venta'), findsOneWidget);
     expect(find.text('Registrar conteo'), findsNothing);
     expect(find.text('Revisar cierre'), findsNothing);
-    expect(find.text('Confirmar cierre'), findsNothing);
-    await tester.tap(find.text('Hoy'));
-    await tester.pumpAndSettle();
-    expect(find.text('Día cerrado'), findsOneWidget);
-    expect(find.textContaining(r'$52.50'), findsWidgets);
-    expect(find.text('Descargar Excel'), findsOneWidget);
-    expect(find.text('Descargar CSV'), findsOneWidget);
-    expect(find.text('Registrar conteo'), findsNothing);
-    expect(find.text('Revisar cierre'), findsNothing);
-    expect(find.text('Confirmar cierre'), findsNothing);
-    expect(find.text('Cerrar el día'), findsNothing);
-    expect(requests.where((request) => request.url.path.endsWith('/lumo/actions')), hasLength(1));
   });
 
   testWidgets('typed cerrar el día still keeps the conversational card', (tester) async {
@@ -559,55 +334,152 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('cerrar el día'), findsOneWidget);
     expect(find.text('Confirmar cierre'), findsWidgets);
-    expect(find.byKey(const Key('close-review-sheet')), findsNothing);
+    expect(find.byKey(const Key('close-workspace')), findsNothing);
   });
 
-  testWidgets('Hoy revisar cierre uses the same silent review path', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(420, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final requests = <http.Request>[];
-    final client = _client(requests, (request) {
-      if (request.method == 'POST') {
-        return _reviewResponse();
-      }
-      return _twoTenderBody(state: 'ready_to_close', cashStatus: 'balanced');
-    });
+  testWidgets('active tab selection styling remains visible', (tester) async {
+    final client = _client([], (_) => _body());
     await tester.pumpWidget(_app(client));
     await tester.pumpAndSettle();
+    expect(find.text('Inicio'), findsOneWidget);
     await tester.tap(find.text('Hoy'));
     await tester.pumpAndSettle();
-    await tester.ensureVisible(find.text('Revisar cierre'));
-    await tester.tap(find.text('Revisar cierre'));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('close-review-sheet')), findsOneWidget);
-    expect(find.text('cerrar el día'), findsNothing);
-    expect(find.text('Confirmar cierre'), findsOneWidget);
-    await tester.tap(find.text('Cancelar'));
-    await tester.pumpAndSettle();
+    expect(find.text('Hoy'), findsOneWidget);
+    expect(find.text('Así va hoy'), findsOneWidget);
     await tester.tap(find.text('Inicio'));
     await tester.pumpAndSettle();
-    expect(find.text('cerrar el día'), findsNothing);
-    expect(requests.where((request) => request.method == 'POST'), hasLength(1));
+    expect(find.text('Buenos días'), findsOneWidget);
   });
 
-  testWidgets('Hoy registrar conteo focuses the composer', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(420, 900));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
-    final client = _client([], (_) => _body(state: 'cash_count_required', cashStatus: 'not_counted'));
-    await tester.pumpWidget(_app(client));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Hoy'));
-    await tester.pumpAndSettle();
-    expect(find.text('Cerrar el día'), findsNothing);
-    expect(find.text('Confirmar cierre'), findsNothing);
-    await tester.ensureVisible(find.text('Registrar conteo'));
-    await tester.tap(find.text('Registrar conteo'));
-    await tester.pumpAndSettle();
-    expect(find.text('Buenos días'), findsOneWidget);
-    final field = tester.widget<TextField>(find.byType(TextField));
-    expect(field.focusNode!.hasFocus, isTrue);
-    expect(field.controller!.text, isEmpty);
+  testWidgets('closed day keeps sale transcript read-only without mutation controls', (tester) async {
+    final summary = GenerativeUiContract.fromJson(_staleSaleSummary());
+    final added = GenerativeUiContract.fromJson(_staleSaleItemAdded());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InicioPage(
+            businessName: 'Carrota',
+            stream: BusinessStream.fromJson(_body(state: 'closed', cashStatus: 'balanced')),
+            messages: [
+              InicioTurn.user('900gr zanahoria'),
+              InicioTurn.assistant('Agregué Zanahoria', [added]),
+              InicioTurn.user('totalizar'),
+              InicioTurn.assistant('Venta lista para cobrar', [summary]),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('900gr zanahoria'), findsOneWidget);
+    expect(find.text('Zanahoria'), findsWidgets);
+    expect(find.textContaining(r'$22.50'), findsWidgets);
+    expect(find.text('Quitar'), findsNothing);
+    expect(find.text('Lista para cobrar'), findsNothing);
+    expect(find.text('¿Cómo pagó?'), findsNothing);
+    expect(find.text('Efectivo'), findsNothing);
+    expect(find.text('Tarjeta'), findsNothing);
+    expect(find.text('Transferencia'), findsNothing);
+    expect(find.text('Anular'), findsNothing);
   });
+
+  testWidgets('open day still shows sale mutation controls on summary cards', (tester) async {
+    final summary = GenerativeUiContract.fromJson(_staleSaleSummary());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InicioPage(
+            businessName: 'Carrota',
+            stream: BusinessStream.fromJson(
+              _body(state: 'cash_count_required', cashStatus: 'not_counted'),
+            ),
+            messages: [
+              InicioTurn.assistant('Venta lista para cobrar', [summary]),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Lista para cobrar'), findsOneWidget);
+    expect(find.text('¿Cómo pagó?'), findsOneWidget);
+    expect(find.text('Efectivo'), findsOneWidget);
+    expect(find.text('Tarjeta'), findsOneWidget);
+    expect(find.text('Transferencia'), findsOneWidget);
+  });
+}
+
+Map<String, dynamic> _staleSaleItemAdded() {
+  return {
+    'component': 'sale_item_added',
+    'version': 1,
+    'data': {
+      'sale_session_id': 'sess-1',
+      'sale_item_id': 'item-1',
+      'product_name': 'Zanahoria',
+      'quantity_input': '900gr',
+      'unit_input': 'gr',
+      'quantity_normalized': '0.900',
+      'unit_normalized': 'kilogram',
+      'unit_price': {'amount': '25.00', 'currency': 'MXN'},
+      'line_total': {'amount': '22.50', 'currency': 'MXN'},
+      'session_item_count': 1,
+      'session_total': {'amount': '22.50', 'currency': 'MXN'},
+    },
+    'actions': [
+      {
+        'action_id': 'sale.remove_item@1',
+        'option_id': null,
+        'context_token': 'tok-remove',
+        'idempotency_key': 'idem-remove',
+      },
+    ],
+    'fallback_text': 'Agregué Zanahoria',
+  };
+}
+
+Map<String, dynamic> _staleSaleSummary() {
+  return {
+    'component': 'sale_summary',
+    'version': 1,
+    'data': {
+      'sale_session_id': 'sess-1',
+      'status': 'ready_to_charge',
+      'currency': 'MXN',
+      'item_count': 1,
+      'subtotal': {'amount': '22.50', 'currency': 'MXN'},
+      'total': {'amount': '22.50', 'currency': 'MXN'},
+      'items': [
+        {
+          'sale_item_id': 'item-1',
+          'product_name': 'Zanahoria',
+          'quantity_normalized': '0.900',
+          'unit_normalized': 'kilogram',
+          'unit_price': {'amount': '25.00', 'currency': 'MXN'},
+          'line_total': {'amount': '22.50', 'currency': 'MXN'},
+        },
+      ],
+    },
+    'actions': [
+      {
+        'action_id': 'sale.pay.cash@1',
+        'option_id': null,
+        'context_token': 'tok-cash',
+        'idempotency_key': 'idem-cash',
+      },
+      {
+        'action_id': 'sale.pay.card@1',
+        'option_id': null,
+        'context_token': 'tok-card',
+        'idempotency_key': 'idem-card',
+      },
+      {
+        'action_id': 'sale.pay.transfer@1',
+        'option_id': null,
+        'context_token': 'tok-xfer',
+        'idempotency_key': 'idem-xfer',
+      },
+    ],
+    'fallback_text': r'Venta lista para cobrar · 1 artículo · $22.50',
+  };
 }
 
 LumoApp _app(LumoApiClient client) {
@@ -660,6 +532,114 @@ Map<String, dynamic> _twoTenderBody({
     counted: counted,
     difference: difference,
   );
+}
+
+Map<String, dynamic> _prepareCountResponse() {
+  return {
+    'message_id': 'm-prepare-count',
+    'status': 'completed',
+    'text': 'Falta contar efectivo',
+    'ui': [
+      {
+        'component': 'daily_close_preparation',
+        'version': 1,
+        'fallback_text': 'Falta contar efectivo',
+        'data': {
+          'operational_day_id': 'day-1',
+          'business_date': '2026-09-26',
+          'day_status': 'open',
+          'currency': 'MXN',
+          'sale_count': 1,
+          'expected_cash': {'amount': '22.50', 'currency': 'MXN'},
+          'counted_cash': null,
+          'cash_difference': null,
+          'cash_status': 'not_counted',
+          'confirmation_token': null,
+        },
+        'actions': [
+          {
+            'action_id': 'closing.submit_cash_count@1',
+            'option_id': null,
+            'context_token': 'token-count',
+            'idempotency_key': 'idem-count',
+          },
+        ],
+      },
+    ],
+    'correlation_id': 'c-prepare-count',
+  };
+}
+
+Map<String, dynamic> _countedPreparationResponse({
+  required String status,
+  required String counted,
+  required String difference,
+}) {
+  return {
+    'message_id': 'm-counted',
+    'status': 'completed',
+    'text': 'Conteo registrado',
+    'ui': [
+      {
+        'component': 'daily_close_preparation',
+        'version': 1,
+        'fallback_text': 'Conteo registrado',
+        'data': {
+          'operational_day_id': 'day-1',
+          'business_date': '2026-09-26',
+          'day_status': 'open',
+          'currency': 'MXN',
+          'sale_count': 1,
+          'expected_cash': {'amount': '22.50', 'currency': 'MXN'},
+          'counted_cash': {'amount': counted, 'currency': 'MXN'},
+          'cash_difference': {'amount': difference, 'currency': 'MXN'},
+          'cash_status': status,
+          'confirmation_token': null,
+        },
+        'actions': [
+          {
+            'action_id': 'closing.request@1',
+            'option_id': null,
+            'context_token': 'token-request',
+            'idempotency_key': 'idem-request',
+          },
+        ],
+      },
+    ],
+    'correlation_id': 'c-counted',
+  };
+}
+
+Map<String, dynamic> _confirmedCloseResponse({String? note}) {
+  return {
+    'message_id': 'm-confirmed',
+    'status': 'completed',
+    'text': 'Cierre confirmado',
+    'ui': [
+      {
+        'component': 'daily_close_confirmed',
+        'version': 1,
+        'fallback_text': 'Cierre confirmado',
+        'data': {
+          'operational_day_id': 'day-1',
+          'closing_snapshot_id': 'snap-1',
+          'business_date': '2026-09-26',
+          'day_status': 'closed',
+          'closed_at': '2026-09-26T18:00:00Z',
+          'currency': 'MXN',
+          'sale_count': 1,
+          'gross_sales_total': {'amount': '22.50', 'currency': 'MXN'},
+          'expected_cash': {'amount': '22.50', 'currency': 'MXN'},
+          'counted_cash': {'amount': '20.00', 'currency': 'MXN'},
+          'cash_difference': {'amount': '-2.50', 'currency': 'MXN'},
+          'cash_status': 'short',
+          if (note != null) 'close_note': note,
+        },
+        'actions': [],
+      },
+    ],
+    'correlation_id': 'c-confirmed',
+  };
 }
 
 Map<String, dynamic> _reviewResponse({
@@ -758,20 +738,11 @@ Map<String, dynamic> _body({
           },
     'attention': null,
     'primary_action': switch (state) {
-      'cash_count_required' => {
-          'kind': 'record_cash_count',
-          'label': 'Registrar conteo',
-          'invocation': 'composer',
+      'cash_count_required' || 'ready_to_close' || 'cash_difference' => {
+          'kind': 'prepare_daily_close',
+          'label': 'Preparar el cierre del día',
+          'invocation': 'close_workspace',
           'message': null,
-          'action_id': null,
-          'work_item_id': null,
-          'outcome_run_id': null,
-        },
-      'ready_to_close' || 'cash_difference' => {
-          'kind': 'request_close',
-          'label': 'Revisar cierre',
-          'invocation': 'review_surface',
-          'message': 'cerrar el día',
           'action_id': null,
           'work_item_id': null,
           'outcome_run_id': null,

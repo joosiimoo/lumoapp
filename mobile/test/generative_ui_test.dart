@@ -316,6 +316,37 @@ void main() {
     expect(find.text('Corregir'), findsNothing);
   });
 
+  testWidgets('hideMutationActions omits sale summary chrome without deleting card facts', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._summaryContract(total: '32.50'),
+      'actions': [
+        {
+          'action_id': 'sale.pay.cash@1',
+          'option_id': null,
+          'context_token': 'tok',
+          'idempotency_key': 'idem',
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: renderer.build(
+            contract,
+            chrome: const UiActionChrome(hideMutationActions: true),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Zanahoria'), findsOneWidget);
+    expect(find.textContaining(r'$32.50'), findsWidgets);
+    expect(find.text('Lista para cobrar'), findsNothing);
+    expect(find.text('¿Cómo pagó?'), findsNothing);
+    expect(find.text('Efectivo'), findsNothing);
+    expect(find.text('Quitar'), findsNothing);
+  });
+
   test('unknown version of sale_summary falls back', () {
     const renderer = GenerativeUIRenderer();
     final contract = GenerativeUiContract.fromJson({

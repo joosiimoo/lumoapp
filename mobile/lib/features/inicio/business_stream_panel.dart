@@ -4,22 +4,18 @@ import 'package:lumo/lumo/typography.dart';
 import 'package:lumo/lumo/widgets/lumo_buttons.dart';
 import 'package:lumo/lumo/widgets/lumo_card.dart';
 
-/// Compact current-state panel. It displays server fields and does not rank or sum.
-class BusinessStreamPanel extends StatelessWidget {
-  const BusinessStreamPanel({
+/// Light Inicio operational header. Displays server facts only; no close CTAs.
+class InicioOperationalHeader extends StatelessWidget {
+  const InicioOperationalHeader({
     super.key,
     required this.stream,
     required this.failed,
     required this.onRetry,
-    required this.onRecordCashCount,
-    required this.onReviewClose,
   });
 
   final BusinessStream? stream;
   final bool failed;
   final VoidCallback onRetry;
-  final VoidCallback onRecordCashCount;
-  final VoidCallback onReviewClose;
 
   @override
   Widget build(BuildContext context) {
@@ -40,81 +36,71 @@ class BusinessStreamPanel extends StatelessWidget {
     if (current == null) {
       return const SizedBox.shrink();
     }
-    final lines = _lines(current);
-    final action = current.primaryAction;
+    final summary = current.factualSummary;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(_operationalSentence(current), style: LumoTypography.body),
+        if (summary != null) ...[
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _indicatorCard(
+                  label: 'VENTAS HOY',
+                  primary: formatStreamAmount(summary.grossSalesTotal.amount),
+                  secondary: saleCountLabel(summary.saleCount),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _indicatorCard(
+                  label: 'CAJA',
+                  primary: formatStreamAmount(summary.drawerExpected.amount),
+                  secondary: operatorCashStateLabel(
+                    operatorState: current.operatorState,
+                    cashStatus: summary.cashStatus,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _indicatorCard({
+    required String label,
+    required String primary,
+    required String secondary,
+  }) {
     return LumoCard(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          for (var index = 0; index < lines.length; index++) ...[
-            if (index > 0) const SizedBox(height: 4),
-            Text(lines[index], style: index == 0 ? LumoTypography.cardTitle : LumoTypography.body),
-          ],
-          if (action != null) ...[
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: LumoPrimaryButton(
-                label: action.label,
-                onPressed: () => _invoke(action),
-              ),
-            ),
-          ],
+          Text(label, style: LumoTypography.sectionLabel),
+          const SizedBox(height: 6),
+          Text(primary, style: LumoTypography.metricSm),
+          const SizedBox(height: 4),
+          Text(secondary, style: LumoTypography.caption),
         ],
       ),
     );
   }
-
-  void _invoke(StreamPrimaryAction action) {
-    if (action.kind == 'record_cash_count' && action.invocation == 'composer') {
-      onRecordCashCount();
-      return;
-    }
-    if (action.kind == 'request_close' && action.invocation == 'review_surface') {
-      onReviewClose();
-    }
-  }
 }
 
-List<String> _lines(BusinessStream stream) {
+String _operationalSentence(BusinessStream stream) {
   final summary = stream.factualSummary;
-  final state = stream.operatorState;
-  if (state == 'no_active_day') {
-    return [stream.responsibility];
+  if (summary != null) {
+    return 'Llevas ${formatStreamAmount(summary.grossSalesTotal.amount)} en ventas.';
   }
-  if (state == 'unavailable' || summary == null) {
-    return [stream.responsibility.isEmpty ? streamUnavailableResponsibility : stream.responsibility];
+  if (stream.responsibility.isEmpty) {
+    return streamUnavailableResponsibility;
   }
-  final sales = '${saleCountLabel(summary.saleCount)} · ${formatStreamAmount(summary.grossSalesTotal.amount)}';
-  if (state == 'closed') {
-    return ['Día cerrado', sales];
-  }
-  if (state == 'organizing') {
-    return [sales, ..._tenders(summary)];
-  }
-  final headline = switch (state) {
-    'cash_count_required' => 'Falta contar efectivo',
-    'cash_difference' || 'ready_to_close' => cashStatusLabel(summary.cashStatus),
-    _ => stream.responsibility,
-  };
-  final lines = <String>[headline, sales, ..._tenders(summary)];
-  lines.add('Esperado ${formatStreamAmount(summary.drawerExpected.amount)}');
-  final counted = summary.countedCash;
-  if (counted != null) {
-    lines.add('Contado ${formatStreamAmount(counted.amount)}');
-  }
-  final difference = summary.cashDifference;
-  if (difference != null) {
-    lines.add('Diferencia ${formatStreamAmount(difference.amount)}');
-  }
-  return lines;
-}
-
-List<String> _tenders(StreamFactualSummary summary) {
-  return [
-    'Efectivo ${formatStreamAmount(summary.cashTotal.amount)}',
-    'Tarjeta ${formatStreamAmount(summary.cardTotal.amount)}',
-    'Transferencia ${formatStreamAmount(summary.transferTotal.amount)}',
-  ];
+  return stream.responsibility;
 }

@@ -334,6 +334,7 @@ class OperationsRepository:
             counted_cash=snapshot.counted_cash,
             cash_difference=snapshot.cash_difference,
             cash_status=snapshot.cash_status.value,
+            close_note=snapshot.close_note,
             closed_at=snapshot.closed_at,
             created_at=snapshot.created_at,
             updated_at=snapshot.updated_at,
@@ -1017,6 +1018,7 @@ def _to_snapshot(row: ClosingSnapshotRow) -> ClosingSnapshot:
         closed_at=row.closed_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        close_note=row.close_note,
     )
 
 

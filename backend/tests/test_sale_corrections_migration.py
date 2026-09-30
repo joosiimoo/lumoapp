@@ -16,7 +16,7 @@ from tests.conftest import TEST_SECRET, postgres_available, settings_kwargs
 from tests.migration_db import use_clean_proof_database
 
 BACKEND = Path(__file__).resolve().parents[1]
-HEAD = "0016_sale_corrections"
+HEAD = "0017_closing_snapshot_close_note"
 
 pytestmark = pytest.mark.schema_migration
 

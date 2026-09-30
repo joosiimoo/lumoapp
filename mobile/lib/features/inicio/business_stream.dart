@@ -135,10 +135,11 @@ class BusinessStream {
   }
 }
 
+/// Concise operator-surface label from server `cash_status`. Display only.
 String cashStatusLabel(String status) {
   switch (status) {
     case 'not_counted':
-      return 'Falta contar efectivo';
+      return 'Falta contar';
     case 'balanced':
       return 'Caja cuadrada';
     case 'short':
@@ -147,6 +148,20 @@ String cashStatusLabel(String status) {
       return 'Sobrante';
   }
   throw FormatException('unknown cash_status');
+}
+
+/// Caja / close headline from server `operator_state` and `cash_status`.
+String operatorCashStateLabel({required String operatorState, String? cashStatus}) {
+  if (operatorState == 'closed') {
+    return 'Día cerrado';
+  }
+  if (operatorState == 'cash_count_required') {
+    return 'Falta contar';
+  }
+  if (cashStatus == null || cashStatus.isEmpty) {
+    return '';
+  }
+  return cashStatusLabel(cashStatus);
 }
 
 /// Display a server decimal string. This does not add, compare, or recompute it.
