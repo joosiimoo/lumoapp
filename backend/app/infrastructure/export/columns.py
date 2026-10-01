@@ -3,6 +3,8 @@
 EXPORT_COLUMNS: tuple[str, ...] = (
     "business_date",
     "sale_session_id",
+    "sale_transaction_number",
+    "void_transaction_number",
     "sale_status",
     "sale_confirmed_at",
     "sale_item_id",
@@ -22,22 +24,24 @@ EXPORT_COLUMNS: tuple[str, ...] = (
 )
 
 COLUMN_WIDTHS: tuple[int, ...] = (
-    14,
-    38,
-    12,
-    22,
-    38,
-    28,
-    16,
-    38,
-    12,
-    14,
-    20,
-    14,
-    36,
-    14,
-    12,
-    38,
-    16,
-    16,
+    14,  # business_date
+    38,  # sale_session_id
+    18,  # sale_transaction_number
+    18,  # void_transaction_number
+    22,  # sale_status
+    38,  # sale_confirmed_at
+    38,  # sale_item_id
+    28,  # product_name
+    16,  # source_type
+    38,  # product_id
+    12,  # quantity
+    14,  # unit
+    20,  # catalog_unit_price
+    14,  # unit_price
+    36,  # price_override_reason
+    14,  # line_total
+    12,  # currency
+    38,  # payment_id
+    16,  # payment_method
+    16,  # payment_amount
 )

@@ -97,6 +97,7 @@ class SalesPort(Protocol):
         sale_session_id: UUID,
         operational_day_id: UUID,
         confirmed_at: Any,
+        transaction_sequence: int,
     ) -> Any: ...
 
     def add_session(self, *, tenant: TenantContext, session: Any) -> Any: ...
@@ -117,6 +118,7 @@ class SalesPort(Protocol):
         voided_at: Any,
         voided_by_actor_id: UUID,
         void_reason: str,
+        void_transaction_sequence: int,
     ) -> Any: ...
 
     def add_payment(self, *, tenant: TenantContext, payment: Any) -> Any: ...

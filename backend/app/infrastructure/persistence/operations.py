@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -296,6 +296,33 @@ class OperationsRepository:
         self._session.flush()
         return _to_cash_count(row)
 
+    def allocate_transaction_sequence(self, *, tenant: TenantContext) -> int:
+        """Allocate the next per-business transaction sequence (ADR-033).
+
+        Server-only. Runs inside the caller's DB transaction: a rollback releases the
+        counter increment, so a failed or stale mutation commits no reference. The
+        first-allocation insert is race-safe; the UPDATE takes the row lock that
+        serializes concurrent allocations for the same business.
+        """
+        tenant = _require_tenant(tenant)
+        set_current_business_id(self._session, tenant.business_id)
+        self._session.execute(
+            text(
+                "INSERT INTO operations.business_transaction_counters (business_id, last_value) "
+                "VALUES (:business_id, 0) ON CONFLICT DO NOTHING"
+            ),
+            {"business_id": tenant.business_id},
+        )
+        value = self._session.execute(
+            text(
+                "UPDATE operations.business_transaction_counters "
+                "SET last_value = last_value + 1 "
+                "WHERE business_id = :business_id RETURNING last_value"
+            ),
+            {"business_id": tenant.business_id},
+        ).scalar_one()
+        return int(value)
+
     def get_snapshot_for_day(
         self,
         *,
@@ -335,6 +362,7 @@ class OperationsRepository:
             cash_difference=snapshot.cash_difference,
             cash_status=snapshot.cash_status.value,
             close_note=snapshot.close_note,
+            transaction_sequence=snapshot.transaction_sequence,
             closed_at=snapshot.closed_at,
             created_at=snapshot.created_at,
             updated_at=snapshot.updated_at,
@@ -1018,6 +1046,7 @@ def _to_snapshot(row: ClosingSnapshotRow) -> ClosingSnapshot:
         closed_at=row.closed_at,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        transaction_sequence=int(row.transaction_sequence),
         close_note=row.close_note,
     )
 

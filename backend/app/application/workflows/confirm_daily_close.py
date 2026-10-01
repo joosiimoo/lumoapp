@@ -194,6 +194,7 @@ class ConfirmDailyClose:
             body = replay["body"]
             return ConfirmDailyCloseResult(kind="replay", text=body.get("text", "Listo."), payload=body)
 
+        transaction_sequence = self._operations.allocate_transaction_sequence(tenant=tenant)
         snapshot = self._operations.insert_snapshot(
             tenant=tenant,
             snapshot=ClosingSnapshot(
@@ -216,6 +217,7 @@ class ConfirmDailyClose:
                 closed_at=instant,
                 created_at=instant,
                 updated_at=instant,
+                transaction_sequence=transaction_sequence,
                 close_note=note,
             ),
         )
@@ -319,6 +321,7 @@ class ConfirmDailyClose:
                 "cash_difference": payload["cash_difference"]["amount"],
                 "cash_status": payload["cash_status"],
                 "closed_at": payload["closed_at"],
+                "transaction_number": payload["transaction_number"],
                 "previous_status": "open",
                 "new_status": "closed",
                 **({"close_note": note} if note else {}),
@@ -344,6 +347,7 @@ class ConfirmDailyClose:
                 "cash_difference": payload["cash_difference"]["amount"],
                 "cash_status": payload["cash_status"],
                 "closed_at": payload["closed_at"],
+                "transaction_number": payload["transaction_number"],
                 **({"close_note": note} if note else {}),
             },
         )

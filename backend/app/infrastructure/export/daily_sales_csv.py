@@ -8,6 +8,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from app.application.queries.export_daily_sales import SalesExport, SalesExportLine
+from app.domain.shared.transaction_number import format_transaction_number
 from app.infrastructure.export.columns import EXPORT_COLUMNS
 
 
@@ -26,6 +27,8 @@ def _row(line: SalesExportLine, zone: ZoneInfo) -> list[str]:
     return [
         line.business_date.isoformat(),
         str(line.sale_session_id),
+        format_transaction_number(line.sale_transaction_sequence),
+        "" if line.void_transaction_sequence is None else format_transaction_number(line.void_transaction_sequence),
         line.sale_status,
         local.isoformat(timespec="seconds"),
         str(line.sale_item_id),

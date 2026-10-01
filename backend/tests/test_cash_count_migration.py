@@ -83,7 +83,7 @@ def _tenant(connection, business_id: UUID) -> None:
     )
 
 
-def _seed_day_with_cash_sale(connection) -> dict:
+def _seed_day_with_cash_sale(connection, *, with_sequence: bool = False) -> dict:
     business_id = new_uuid7()
     actor_id = new_uuid7()
     day_id = new_uuid7()
@@ -132,12 +132,15 @@ def _seed_day_with_cash_sale(connection) -> dict:
             """
             INSERT INTO sales.sale_sessions (
                 id, business_id, actor_id, conversation_id, status, currency,
-                operational_day_id, confirmed_at, created_at, updated_at
+                operational_day_id, confirmed_at, {seq_column}created_at, updated_at
             ) VALUES (
                 :id, :business_id, :actor_id, 'conv-legacy', 'confirmed', 'MXN',
-                :day_id, :at, :at, :at
+                :day_id, :at, {seq_value}:at, :at
             )
-            """
+            """.format(
+                seq_column="transaction_sequence, " if with_sequence else "",
+                seq_value="1, " if with_sequence else "",
+            )
         ),
         {
             "id": session_id,
@@ -299,7 +302,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
         ).scalar_one()
         seeded = _seed_day_with_cash_sale(connection)
     command.upgrade(_config(), "head")
-    assert _revision(at_0005) == "0017_closing_snapshot_close_note"
+    assert _revision(at_0005) == "0018_transaction_references"
     business_id = seeded["business_id"]
     with at_0005.begin() as connection:
         _tenant(connection, business_id)
@@ -386,7 +389,7 @@ def test_upgrade_creates_cash_counts_and_keeps_existing_rows(at_0005) -> None:
             {"b": business_id},
         ).scalar_one() == 1
     command.upgrade(_config(), "head")
-    assert _revision(at_0005) == "0017_closing_snapshot_close_note"
+    assert _revision(at_0005) == "0018_transaction_references"
 
 
 def test_supersede_constraints_are_composite_and_correctly_deferred(at_head) -> None:
@@ -453,7 +456,7 @@ def test_model_metadata_matches_the_migrated_deferral(at_head) -> None:
 
 def test_recount_order_commits_and_a_dangling_link_fails_at_commit(at_head) -> None:
     with at_head.begin() as connection:
-        seeded = _seed_day_with_cash_sale(connection)
+        seeded = _seed_day_with_cash_sale(connection, with_sequence=True)
     business_id = seeded["business_id"]
     previous_id = new_uuid7()
     new_id = new_uuid7()
@@ -538,9 +541,9 @@ def test_recount_order_commits_and_a_dangling_link_fails_at_commit(at_head) -> N
 
 def test_supersede_link_cannot_cross_tenants(at_head) -> None:
     with at_head.begin() as connection:
-        carrota = _seed_day_with_cash_sale(connection)
+        carrota = _seed_day_with_cash_sale(connection, with_sequence=True)
     with at_head.begin() as connection:
-        other = _seed_day_with_cash_sale(connection)
+        other = _seed_day_with_cash_sale(connection, with_sequence=True)
     carrota_count = new_uuid7()
     other_count = new_uuid7()
     with at_head.begin() as connection:

@@ -1460,6 +1460,81 @@ void main() {
     expect(find.text('Motivo: cobro duplicado'), findsOneWidget);
     expect(find.text('Anular'), findsNothing);
   });
+
+  testWidgets('sale_confirmed shows the server transaction number as a caption, not a chip', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._confirmedContract(),
+      'data': {
+        ..._confirmedContract()['data'] as Map<String, dynamic>,
+        'transaction_number': 'TRX-000012',
+      },
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('TRX-000012'), findsOneWidget);
+    expect(find.widgetWithText(LumoStatusChip, 'TRX-000012'), findsNothing);
+    expect(find.widgetWithText(LumoStatusChip, 'Venta registrada'), findsOneWidget);
+  });
+
+  testWidgets('voided sale_confirmed shows its own number and the original', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._confirmedContract(),
+      'data': {
+        ..._confirmedContract()['data'] as Map<String, dynamic>,
+        'status': 'voided',
+        'void_reason': 'cobro duplicado',
+        'transaction_number': 'TRX-000014',
+        'original_transaction_number': 'TRX-000012',
+      },
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.text('TRX-000014 · Anula TRX-000012'), findsOneWidget);
+    expect(find.widgetWithText(LumoStatusChip, 'Venta anulada'), findsOneWidget);
+  });
+
+  testWidgets('sale_confirmed without a server number renders no reference and never invents one', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._confirmedContract(),
+      'data': {
+        ..._confirmedContract()['data'] as Map<String, dynamic>,
+        'transaction_number': 'not-a-reference',
+      },
+    });
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(contract))));
+    expect(find.textContaining('TRX'), findsNothing);
+    expect(find.text('not-a-reference'), findsNothing);
+  });
+
+  testWidgets('confirmed close shows the server transaction number caption', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    GenerativeUiContract close(Map<String, dynamic> extra) => GenerativeUiContract.fromJson({
+          'component': 'daily_close_confirmed',
+          'version': 1,
+          'fallback_text': 'Cierre confirmado',
+          'actions': [],
+          'data': {
+            'business_date': '2026-09-22',
+            'currency': 'MXN',
+            'sale_count': 1,
+            'gross_sales_total': {'amount': '22.50', 'currency': 'MXN'},
+            'expected_cash': {'amount': '22.50', 'currency': 'MXN'},
+            'counted_cash': {'amount': '22.50', 'currency': 'MXN'},
+            'cash_difference': {'amount': '0.00', 'currency': 'MXN'},
+            'cash_status': 'balanced',
+            'closed_at': '2026-09-22T18:00:00+00:00',
+            ...extra,
+          },
+        });
+    await tester.pumpWidget(
+      MaterialApp(home: Scaffold(body: renderer.build(close({'transaction_number': 'TRX-000006'})))),
+    );
+    expect(find.text('TRX-000006'), findsOneWidget);
+    expect(find.widgetWithText(LumoStatusChip, 'TRX-000006'), findsNothing);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(close({})))));
+    expect(find.textContaining('TRX'), findsNothing);
+  });
 }
 
 void _ignoreAction(GenerativeUiAction action, {String? voidReason}) {}

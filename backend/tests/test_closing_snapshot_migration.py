@@ -128,11 +128,13 @@ def _insert_snapshot(connection, business_id: UUID, day_id: UUID, count_id: UUID
             INSERT INTO operations.closing_snapshots (
                 id, business_id, operational_day_id, cash_count_id, actor_id, business_date,
                 currency, sale_count, gross_sales_total, cash_total, card_total, transfer_total,
-                expected_cash, counted_cash, cash_difference, cash_status, closed_at, created_at, updated_at
+                expected_cash, counted_cash, cash_difference, cash_status, closed_at, created_at, updated_at,
+                transaction_sequence
             ) VALUES (
                 :id, :business_id, :day_id, :count_id, :actor_id, DATE '2026-09-22',
                 'MXN', 1, 22.50, 22.50, 0, 0,
-                22.50, 22.50, 0, 'balanced', :at, :at, :at
+                22.50, 22.50, 0, 'balanced', :at, :at, :at,
+                :transaction_sequence
             )
             """
         ),
@@ -143,6 +145,7 @@ def _insert_snapshot(connection, business_id: UUID, day_id: UUID, count_id: UUID
             "count_id": count_id,
             "actor_id": new_uuid7(),
             "at": STAMP,
+            "transaction_sequence": (snapshot_id.int % 1_000_000_000) + 1,
         },
     )
     return snapshot_id
@@ -166,7 +169,7 @@ def test_upgrade_from_0006_keeps_open_days_and_adds_snapshots(admin_engine) -> N
         business_id = _insert_business(connection)
         day_id = _insert_day(connection, business_id)
     command.upgrade(_config(), "head")
-    assert _revision(admin_engine) == "0017_closing_snapshot_close_note"
+    assert _revision(admin_engine) == "0018_transaction_references"
     with admin_engine.begin() as connection:
         _tenant(connection, business_id)
         status = connection.execute(
@@ -214,7 +217,7 @@ def test_downgrade_refuses_when_a_confirmed_close_exists(admin_engine) -> None:
     discard_work_items(admin_engine)
     with pytest.raises(Exception, match="cannot downgrade 0007 while a confirmed close exists"):
         command.downgrade(_config(), "0006_cash_count")
-    assert _revision(admin_engine) == "0017_closing_snapshot_close_note"
+    assert _revision(admin_engine) == "0018_transaction_references"
     with admin_engine.begin() as connection:
         _tenant(connection, business_id)
         status = connection.execute(

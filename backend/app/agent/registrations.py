@@ -132,6 +132,7 @@ COMMIT_SALE = ToolRegistration(
         ],
         "properties": {
             "status": {"enum": ["confirmed"]},
+            "transaction_number": {"type": "string", "pattern": "^TRX-[0-9]+$"},
             "payment": {
                 "type": "object",
                 "required": ["method", "amount", "status"],
@@ -198,6 +199,8 @@ VOID_SALE = ToolRegistration(
         ],
         "properties": {
             "status": {"enum": ["voided", "confirmed"]},
+            "transaction_number": {"type": "string", "pattern": "^TRX-[0-9]+$"},
+            "original_transaction_number": {"type": "string", "pattern": "^TRX-[0-9]+$"},
         },
     },
     permission="sale.create",
@@ -354,6 +357,7 @@ CLOSING_CONFIRM = ToolRegistration(
             "day_status": {"enum": ["closed"]},
             "cash_status": {"enum": ["balanced", "over", "short"]},
             "close_note": {"type": ["string", "null"]},
+            "transaction_number": {"type": "string", "pattern": "^TRX-[0-9]+$"},
         },
     },
     permission="closing.confirm",
@@ -411,6 +415,8 @@ SALE_CONFIRMED = GenerativeUIRegistration(
         "required": ["sale_session_id", "payment_id", "status", "item_count", "total", "payment", "items"],
         "properties": {
             "status": {"enum": ["confirmed", "voided"]},
+            "transaction_number": {"type": "string", "pattern": "^TRX-[0-9]+$"},
+            "original_transaction_number": {"type": "string", "pattern": "^TRX-[0-9]+$"},
         },
     },
 )
@@ -469,6 +475,7 @@ DAILY_CLOSE_CONFIRMED_UI = GenerativeUIRegistration(
             "day_status": {"enum": ["closed"]},
             "cash_status": {"enum": ["balanced", "over", "short"]},
             "close_note": {"type": "string"},
+            "transaction_number": {"type": "string", "pattern": "^TRX-[0-9]+$"},
         },
     },
 )

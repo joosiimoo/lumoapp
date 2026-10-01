@@ -278,7 +278,7 @@ def test_downgrade_aborts_while_an_outcome_exists(migrated) -> None:
         command.downgrade(_config(), "0010_work_items")
     with migrated.connect() as connection:
         assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
-            "0017_closing_snapshot_close_note"
+            "0018_transaction_references"
         )
     discard_work_items(migrated)
     with migrated.begin() as connection:

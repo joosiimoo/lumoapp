@@ -30,6 +30,7 @@ from app.domain.identity.onboarding import payment_method_allowed, sales_allowed
 from app.domain.shared.errors import PaymentMethodNotEnabledError, ValidationAppError, OnboardingIncompleteError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
+from app.domain.shared.transaction_number import format_transaction_number
 from app.policies import PolicyDecision, PolicyRequest
 from app.policies.engine import FoundationPolicyEngine
 
@@ -47,7 +48,7 @@ def build_sale_confirmed(session: SaleSession, items: list[SaleItem], payment: P
     noun = "artículo" if count == 1 else "artículos"
     amount = total.to_json()["amount"]
     method_label = PAYMENT_METHOD_LABELS[payment.method]
-    return {
+    payload: dict[str, Any] = {
         "sale_session_id": str(session.id),
         "payment_id": str(payment.id),
         "status": SaleSessionStatus.CONFIRMED.value,
@@ -62,6 +63,9 @@ def build_sale_confirmed(session: SaleSession, items: list[SaleItem], payment: P
         "items": _item_payloads(items),
         "text": f"Venta registrada · {count} {noun} · ${amount} · {method_label}",
     }
+    if session.transaction_sequence is not None:
+        payload["transaction_number"] = format_transaction_number(session.transaction_sequence)
+    return payload
 
 
 UI_ACTION_STALE_TEXT = "Esta acción ya no aplica a la venta en curso."
@@ -357,11 +361,13 @@ class CommitSaleSession:
                 source=PaymentSource.MANUAL_CAPTURE,
             ),
         )
+        transaction_sequence = self._operations.allocate_transaction_sequence(tenant=tenant)
         updated = self._sales.confirm_session(
             tenant=tenant,
             sale_session_id=session.id,
             operational_day_id=day.id,
             confirmed_at=instant,
+            transaction_sequence=transaction_sequence,
         )
         payload = build_sale_confirmed(updated, items, payment)
         policy_payload = policy.model_dump() if policy is not None else None
@@ -377,6 +383,7 @@ class CommitSaleSession:
                 "sale_session_id": payload["sale_session_id"],
                 "payment_id": payload["payment_id"],
                 "status": payload["status"],
+                "transaction_number": payload["transaction_number"],
                 "item_count": payload["item_count"],
                 "total": payload["total"],
                 "method": payment.method.value,
@@ -441,6 +448,7 @@ class CommitSaleSession:
             payment_method=payment.method.value,
             amount=payment.amount.amount,
             currency=payment.amount.currency,
+            transaction_number=payload["transaction_number"],
             occurred_at=updated.confirmed_at,
             created_at=instant,
         )

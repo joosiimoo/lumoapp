@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
@@ -13,9 +14,10 @@ _TWO_PLACES = Decimal("0.01")
 _PAYMENT_METHODS = frozenset({"cash", "card", "transfer"})
 _CASH_STATUSES = frozenset({"balanced", "short", "over"})
 _CLOSE_NOTE_MAX = 500
+_TRANSACTION_NUMBER_RE = re.compile(r"^TRX-[0-9]+$")
 
 SALE_CONFIRMED_FACT_KEYS = frozenset(
-    {"sale_session_id", "payment_id", "payment_method", "amount", "currency"}
+    {"sale_session_id", "payment_id", "payment_method", "amount", "currency", "transaction_number"}
 )
 SALE_VOIDED_FACT_KEYS = frozenset(
     {
@@ -26,6 +28,8 @@ SALE_VOIDED_FACT_KEYS = frozenset(
         "currency",
         "void_reason",
         "voided_by_actor_id",
+        "transaction_number",
+        "original_transaction_number",
     }
 )
 CASH_COUNT_RECORDED_FACT_KEYS = frozenset(
@@ -42,6 +46,7 @@ DAILY_CLOSE_COMPLETED_FACT_KEYS = frozenset(
         "cash_difference",
         "cash_status",
         "currency",
+        "transaction_number",
     }
 )
 DAILY_CLOSE_OPTIONAL_FACT_KEYS = frozenset({"close_note"})
@@ -129,6 +134,7 @@ def sale_confirmed_facts(
     payment_method: str,
     amount: Decimal | str,
     currency: str,
+    transaction_number: str,
 ) -> dict[str, str]:
     if payment_method not in _PAYMENT_METHODS:
         raise ValidationAppError("payment_method is not a confirmed payment method")
@@ -138,6 +144,7 @@ def sale_confirmed_facts(
         "payment_method": payment_method,
         "amount": decimal_fact(amount),
         "currency": _currency(currency),
+        "transaction_number": _transaction_number(transaction_number, "transaction_number"),
     }
 
 
@@ -150,6 +157,8 @@ def sale_voided_facts(
     currency: str,
     void_reason: str,
     voided_by_actor_id: UUID,
+    transaction_number: str,
+    original_transaction_number: str,
 ) -> dict[str, str]:
     if payment_method not in _PAYMENT_METHODS:
         raise ValidationAppError("payment_method is not a confirmed payment method")
@@ -164,6 +173,10 @@ def sale_voided_facts(
         "currency": _currency(currency),
         "void_reason": reason,
         "voided_by_actor_id": str(voided_by_actor_id),
+        "transaction_number": _transaction_number(transaction_number, "transaction_number"),
+        "original_transaction_number": _transaction_number(
+            original_transaction_number, "original_transaction_number"
+        ),
     }
 
 
@@ -199,6 +212,7 @@ def daily_close_completed_facts(
     cash_difference_amount: Decimal | str,
     cash_status: str,
     currency: str,
+    transaction_number: str,
     close_note: str | None = None,
 ) -> dict[str, Any]:
     if isinstance(sale_count, bool) or not isinstance(sale_count, int):
@@ -215,6 +229,7 @@ def daily_close_completed_facts(
         "cash_difference": decimal_fact(cash_difference_amount),
         "cash_status": cash_status,
         "currency": _currency(currency),
+        "transaction_number": _transaction_number(transaction_number, "transaction_number"),
     }
     note = _normalize_optional_close_note(close_note)
     if note is not None:
@@ -245,6 +260,7 @@ def validate_business_event_facts(
             raise ValidationAppError("payment_method is not a confirmed payment method")
         checked["amount"] = _require_money(checked["amount"])
         checked["currency"] = _currency(checked["currency"])
+        _transaction_number(checked["transaction_number"], "transaction_number")
     elif event_type is BusinessEventType.SALE_VOIDED:
         _require_uuid_text(checked["payment_id"], "payment_id")
         _require_uuid_text(checked["voided_by_actor_id"], "voided_by_actor_id")
@@ -255,6 +271,10 @@ def validate_business_event_facts(
         reason = checked.get("void_reason")
         if not isinstance(reason, str) or not reason.strip() or reason != reason.strip():
             raise ValidationAppError("void_reason must be non-empty trimmed text")
+        _transaction_number(checked["transaction_number"], "transaction_number")
+        _transaction_number(checked["original_transaction_number"], "original_transaction_number")
+        if checked["transaction_number"] == checked["original_transaction_number"]:
+            raise ValidationAppError("void transaction_number must differ from the original sale reference")
     elif event_type is BusinessEventType.CASH_COUNT_RECORDED:
         for key in ("expected_cash", "counted_cash", "cash_difference"):
             checked[key] = _require_money(checked[key])
@@ -270,6 +290,7 @@ def validate_business_event_facts(
         if checked["cash_status"] not in _CASH_STATUSES:
             raise ValidationAppError("cash_status is not a counted status")
         checked["currency"] = _currency(checked["currency"])
+        _transaction_number(checked["transaction_number"], "transaction_number")
         if "close_note" in checked:
             note = _normalize_optional_close_note(checked["close_note"])
             if note is None:
@@ -309,6 +330,12 @@ def _require_uuid_text(value: Any, field: str) -> None:
         raise ValidationAppError(f"{field} must be a uuid string") from exc
     if str(parsed) != value:
         raise ValidationAppError(f"{field} must be a uuid string")
+
+
+def _transaction_number(value: Any, field: str) -> str:
+    if not isinstance(value, str) or _TRANSACTION_NUMBER_RE.fullmatch(value) is None:
+        raise ValidationAppError(f"{field} must match TRX-<digits>")
+    return value
 
 
 def _currency(value: str) -> str:

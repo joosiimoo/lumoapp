@@ -68,6 +68,8 @@ class SaleSession:
     voided_at: datetime | None = None
     voided_by_actor_id: UUID | None = None
     void_reason: str | None = None
+    transaction_sequence: int | None = None
+    void_transaction_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)

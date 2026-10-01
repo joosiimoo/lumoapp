@@ -190,6 +190,7 @@ class SalesRepository:
         sale_session_id: UUID,
         operational_day_id: UUID,
         confirmed_at: datetime,
+        transaction_sequence: int,
     ) -> SaleSession:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)
@@ -199,6 +200,7 @@ class SalesRepository:
         row.status = SaleSessionStatus.CONFIRMED.value
         row.operational_day_id = operational_day_id
         row.confirmed_at = confirmed_at
+        row.transaction_sequence = transaction_sequence
         self._session.flush()
         return _to_session(row)
 
@@ -304,6 +306,7 @@ class SalesRepository:
         voided_at: datetime,
         voided_by_actor_id: UUID,
         void_reason: str,
+        void_transaction_sequence: int,
     ) -> SaleSession:
         tenant = _require_tenant(tenant)
         set_current_business_id(self._session, tenant.business_id)
@@ -317,6 +320,7 @@ class SalesRepository:
         row.voided_at = voided_at
         row.voided_by_actor_id = voided_by_actor_id
         row.void_reason = reason
+        row.void_transaction_sequence = void_transaction_sequence
         self._session.flush()
         return _to_session(row)
 
@@ -448,6 +452,8 @@ def _to_session(row: SaleSessionRow) -> SaleSession:
         voided_at=row.voided_at,
         voided_by_actor_id=row.voided_by_actor_id,
         void_reason=row.void_reason,
+        transaction_sequence=row.transaction_sequence,
+        void_transaction_sequence=row.void_transaction_sequence,
     )
 
 

@@ -355,6 +355,13 @@ class MemoriaTimelineEvent extends StatelessWidget {
                       item.primary,
                       style: LumoTypography.inter(size: 14, weight: FontWeight.w500),
                     ),
+                    if (item.reference != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        item.reference!,
+                        style: LumoTypography.inter(size: 12, color: LumoColors.mutedForeground),
+                      ),
+                    ],
                     if (item.secondary != null) ...[
                       const SizedBox(height: 2),
                       Text(

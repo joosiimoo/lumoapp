@@ -49,6 +49,7 @@ class ClosingSnapshot:
     closed_at: datetime
     created_at: datetime
     updated_at: datetime
+    transaction_sequence: int
     close_note: str | None = None
 
     def __post_init__(self) -> None:
@@ -56,6 +57,12 @@ class ClosingSnapshot:
             raise ValidationAppError("a closing snapshot cannot be not_counted")
         if self.sale_count < 0:
             raise ValidationAppError("sale_count must be non-negative")
+        if (
+            isinstance(self.transaction_sequence, bool)
+            or not isinstance(self.transaction_sequence, int)
+            or self.transaction_sequence < 1
+        ):
+            raise ValidationAppError("transaction_sequence must be a positive integer")
         expected = _money(self.expected_cash)
         cash = _money(self.cash_total)
         card = _money(self.card_total)

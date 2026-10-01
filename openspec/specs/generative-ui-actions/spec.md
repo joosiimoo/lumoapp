@@ -153,3 +153,10 @@ Memoria timeline responses MAY include `sale.void.request@1` using the same `typ
 #### Scenario: Stale token still refused with note
 - **WHEN** confirm is posted with a stale token and a note
 - **THEN** the day MUST stay open, no snapshot MUST be written, and the note MUST NOT be persisted
+
+### Requirement: Action responses pass through server transaction numbers
+Existing generative UI action paths for sale payment, void confirm, and close confirm MUST pass through server-authored `transaction_number` fields on sale/close contracts when present. No new UiAction id is required for transaction numbering. Clients MUST NOT supply allocation inputs.
+
+#### Scenario: Payment action confirmation includes TRX
+- **WHEN** a successful `sale.pay.cash@1` (or equivalent) commits a sale
+- **THEN** the returned `sale_confirmed@1` MUST include `data.transaction_number` from the server

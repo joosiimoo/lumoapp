@@ -22,6 +22,7 @@ from app.infrastructure.persistence.sales_export import ExportDayRead, ExportLin
 class SalesExportLine:
     business_date: date
     sale_session_id: UUID
+    sale_transaction_sequence: int
     sale_status: str
     sale_confirmed_at: datetime
     sale_item_id: UUID
@@ -38,6 +39,7 @@ class SalesExportLine:
     payment_id: UUID
     payment_method: str
     payment_amount: Decimal
+    void_transaction_sequence: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,9 +123,15 @@ def business_slug(name: str) -> str:
 def _to_line(loaded: ExportDayRead, line: ExportLineRead) -> SalesExportLine:
     if line.payment_id is None or line.payment_method is None or line.payment_amount is None:
         raise InternalError("confirmed sales export is inconsistent")
+    if line.transaction_sequence is None:
+        raise InternalError("confirmed sales export is missing a transaction reference")
+    if line.sale_status == "voided" and line.void_transaction_sequence is None:
+        raise InternalError("voided sales export is missing a void transaction reference")
     return SalesExportLine(
         business_date=loaded.business_date,
         sale_session_id=line.sale_session_id,
+        sale_transaction_sequence=line.transaction_sequence,
+        void_transaction_sequence=line.void_transaction_sequence,
         sale_status=line.sale_status,
         sale_confirmed_at=line.sale_confirmed_at,
         sale_item_id=line.sale_item_id,

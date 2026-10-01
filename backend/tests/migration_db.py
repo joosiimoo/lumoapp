@@ -12,6 +12,7 @@ from app.bootstrap.settings import get_settings
 
 MIGRATION_DB_NAME = "lumo_migration_test"
 CLEAN_PROOF_DB_NAME = "lumo_clean_0016"
+CLEAN_PROOF_0018_DB_NAME = "lumo_clean_0018"
 _MAINTENANCE_URL = "postgresql+psycopg://postgres:postgres@localhost:5432/postgres"
 
 
@@ -113,8 +114,8 @@ def use_migration_database() -> Iterator[None]:
 
 
 @contextmanager
-def use_clean_proof_database() -> Iterator[None]:
+def use_clean_proof_database(name: str = CLEAN_PROOF_DB_NAME) -> Iterator[None]:
     """Disposable empty database for base→head migration proof."""
-    app_url, admin_url = recreate_database(CLEAN_PROOF_DB_NAME)
+    app_url, admin_url = recreate_database(name)
     with use_database_urls(app_url, admin_url):
         yield

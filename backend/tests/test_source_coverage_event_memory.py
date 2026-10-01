@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from datetime import UTC, date, datetime
 from uuid import UUID
 
@@ -19,6 +20,7 @@ from app.domain.operations import (
     recorded_operations_declaration,
 )
 from app.domain.operations.business_event import sale_confirmed_facts, validate_business_event_facts
+from app.domain.shared.transaction_number import format_transaction_number
 from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
@@ -62,6 +64,7 @@ def test_fact_builders_reject_extra_keys() -> None:
         payment_method="cash",
         amount="22.50",
         currency="MXN",
+        transaction_number="TRX-000001",
     )
     facts["summary"] = "all sales captured"
     with pytest.raises(ValidationAppError, match="approved keys"):
@@ -99,8 +102,16 @@ def test_first_confirmed_sale_records_sales_coverage_and_exact_event(client: Tes
         "payment_method": "cash",
         "amount": "22.50",
         "currency": "MXN",
+        "transaction_number": format_transaction_number(session.transaction_sequence),
     }
-    assert set(event.facts) == {"sale_session_id", "payment_id", "payment_method", "amount", "currency"}
+    assert set(event.facts) == {
+        "sale_session_id",
+        "payment_id",
+        "payment_method",
+        "amount",
+        "currency",
+        "transaction_number",
+    }
     declaration = recorded_operations_declaration(_records(db_session, tenant))
     assert declaration["basis"] == "recorded_operations"
     assert declaration["domains"] == ["sales"]
@@ -260,6 +271,7 @@ def test_close_records_one_event_and_does_not_declare_completeness(client: TestC
     assert event.facts["expected_cash"] == "22.50"
     assert event.facts["counted_cash"] == "20.00"
     assert event.facts["cash_difference"] == "-2.50"
+    assert re.fullmatch(r"TRX-[0-9]{6,}", event.facts["transaction_number"])
     assert "summary" not in event.facts
     assert "completeness" not in event.facts
     forbidden_evidence = {"source_coverage_id", "coverage_summary", "completeness"}

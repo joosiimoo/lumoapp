@@ -745,6 +745,11 @@ class SaleConfirmedView extends StatelessWidget {
         chrome.hideMutationActions ? null : firstContractActionForId(contract, voidConfirmActionId);
     final impact = data['impact'] is Map ? Map<String, dynamic>.from(data['impact'] as Map) : null;
     final voidReason = '${data['void_reason'] ?? ''}'.trim();
+    final transactionNumber = SaleConfirmedView.displayTransactionNumber(data['transaction_number']);
+    final originalNumber = SaleConfirmedView.displayTransactionNumber(data['original_transaction_number']);
+    final String? reference = transactionNumber == null
+        ? null
+        : (voided && originalNumber != null ? '$transactionNumber · Anula $originalNumber' : transactionNumber);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -772,6 +777,10 @@ class SaleConfirmedView extends StatelessWidget {
                       alignment: Alignment.centerLeft,
                       child: LumoStatusChip(label: voided ? 'Venta anulada' : 'Venta registrada'),
                     ),
+                    if (reference != null) ...[
+                      const SizedBox(height: 4),
+                      Text(reference, style: LumoTypography.caption),
+                    ],
                     const SizedBox(height: 10),
                     for (final raw in items) SaleSummaryView._itemRow(Map<String, dynamic>.from(raw as Map)),
                     const SizedBox(height: 8),
@@ -818,6 +827,13 @@ class SaleConfirmedView extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  static final _transactionNumberPattern = RegExp(r'^TRX-[0-9]+$');
+
+  /// Server-issued reference only; anything that is not `TRX-<digits>` is ignored.
+  static String? displayTransactionNumber(Object? value) {
+    return value is String && _transactionNumberPattern.hasMatch(value) ? value : null;
   }
 
   static String displayMethod(String method) {
@@ -1070,6 +1086,7 @@ class DailyCloseConfirmedView extends StatelessWidget {
     final status = DailyClosePreparationView.statusLabel('${data['cash_status'] ?? ''}');
     final saleCount = '${data['sale_count'] ?? ''}';
     final saleLabel = saleCount == '1' ? '1 venta' : '$saleCount ventas';
+    final reference = SaleConfirmedView.displayTransactionNumber(data['transaction_number']);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1099,6 +1116,10 @@ class DailyCloseConfirmedView extends StatelessWidget {
                         alignment: Alignment.centerLeft,
                         child: LumoStatusChip(label: 'Cierre confirmado'),
                       ),
+                      if (reference != null) ...[
+                        const SizedBox(height: 4),
+                        Text(reference, style: LumoTypography.caption),
+                      ],
                       const SizedBox(height: 10),
                       Text('Cierre $businessDate', style: LumoTypography.caption),
                       if (saleCount.isNotEmpty) Text(saleLabel, style: LumoTypography.caption),

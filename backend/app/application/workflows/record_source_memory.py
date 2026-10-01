@@ -31,6 +31,7 @@ from app.domain.operations.closing_snapshot import ClosingSnapshot
 from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.ids import new_uuid7
 from app.domain.shared.tenant import TenantContext
+from app.domain.shared.transaction_number import format_transaction_number
 from app.infrastructure.persistence.base import utcnow
 from app.infrastructure.persistence.operations import OperationsRepository
 
@@ -45,6 +46,7 @@ def record_confirmed_sale(
     payment_method: str,
     amount: Decimal | str,
     currency: str,
+    transaction_number: str,
     occurred_at: datetime | None,
     created_at: datetime,
 ) -> None:
@@ -74,6 +76,7 @@ def record_confirmed_sale(
                 payment_method=payment_method,
                 amount=amount,
                 currency=currency,
+                transaction_number=transaction_number,
             ),
             created_at=created_at,
         ),
@@ -92,6 +95,8 @@ def record_voided_sale(
     currency: str,
     void_reason: str,
     voided_by_actor_id: UUID,
+    transaction_number: str,
+    original_transaction_number: str,
     occurred_at: datetime,
     created_at: datetime,
 ) -> None:
@@ -115,6 +120,8 @@ def record_voided_sale(
                 currency=currency,
                 void_reason=void_reason,
                 voided_by_actor_id=voided_by_actor_id,
+                transaction_number=transaction_number,
+                original_transaction_number=original_transaction_number,
             ),
             created_at=created_at,
         ),
@@ -216,6 +223,7 @@ def record_daily_close(
                 cash_difference_amount=snapshot.cash_difference,
                 cash_status=snapshot.cash_status.value,
                 currency=snapshot.currency,
+                transaction_number=format_transaction_number(snapshot.transaction_sequence),
                 close_note=snapshot.close_note,
             ),
             created_at=created_at,

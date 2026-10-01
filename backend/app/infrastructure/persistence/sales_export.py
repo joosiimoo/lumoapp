@@ -25,6 +25,8 @@ from app.infrastructure.persistence.rls import set_current_business_id
 @dataclass(frozen=True, slots=True)
 class ExportLineRead:
     sale_session_id: UUID
+    transaction_sequence: int | None
+    void_transaction_sequence: int | None
     sale_status: str
     sale_confirmed_at: datetime
     sale_item_id: UUID
@@ -128,6 +130,8 @@ class SalesExportRepository:
                 PaymentRow.method,
                 PaymentRow.amount,
                 PaymentRow.currency,
+                SaleSessionRow.transaction_sequence,
+                SaleSessionRow.void_transaction_sequence,
             )
             .select_from(OperationalDayRow)
             .join(BusinessRow, BusinessRow.id == OperationalDayRow.business_id)
@@ -178,6 +182,8 @@ class SalesExportRepository:
             lines.append(
                 ExportLineRead(
                     sale_session_id=row[7],
+                    transaction_sequence=row[25],
+                    void_transaction_sequence=row[26],
                     sale_status=row[8],
                     sale_confirmed_at=row[9],
                     sale_item_id=row[10],

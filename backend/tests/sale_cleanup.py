@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.infrastructure.persistence.models import (
     AuditEventRow,
     BusinessEventRow,
+    BusinessTransactionCounterRow,
     CashCountRow,
     ClosingSnapshotRow,
     IdempotencyRecordRow,
@@ -291,6 +292,11 @@ def clear_tenant_sale_mutations(session: Session, business_id) -> None:
     session.execute(CashCountRow.__table__.delete().where(CashCountRow.business_id == business_id))
     session.execute(BusinessEventRow.__table__.delete().where(BusinessEventRow.business_id == business_id))
     session.execute(
+        BusinessTransactionCounterRow.__table__.delete().where(
+            BusinessTransactionCounterRow.business_id == business_id
+        )
+    )
+    session.execute(
         SourceCoverageRecordRow.__table__.delete().where(SourceCoverageRecordRow.business_id == business_id)
     )
     session.execute(OperationalDayRow.__table__.delete().where(OperationalDayRow.business_id == business_id))
@@ -406,6 +412,10 @@ def sale_integrity_orphans(session: Session, business_id) -> list[str]:
             orphans.append(f"session:{sale.id}:missing_day={sale.operational_day_id}")
         if sale.status == "confirmed" and (sale.operational_day_id is None or sale.confirmed_at is None):
             orphans.append(f"session:{sale.id}:confirmed_without_membership")
+        if sale.status in {"confirmed", "voided"} and sale.transaction_sequence is None:
+            orphans.append(f"session:{sale.id}:confirmed_without_transaction_sequence")
+        if sale.status == "voided" and sale.void_transaction_sequence is None:
+            orphans.append(f"session:{sale.id}:voided_without_void_transaction_sequence")
         if sale.status in {"open", "ready_to_charge"} and (
             sale.operational_day_id is not None or sale.confirmed_at is not None
         ):

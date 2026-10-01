@@ -90,20 +90,23 @@ def test_slug_filename_and_serializers_are_deterministic() -> None:
     assert 'Pan ""bolillo""' in text_body
     rows = list(csv.reader(io.StringIO(text_body)))
     assert rows[0] == list(EXPORT_COLUMNS)
-    assert rows[1][2] == "confirmed"
-    assert rows[1][5] == "Piña, fresca"
-    assert rows[1][8] == "0.9"
-    assert rows[1][10] == "20.00"
-    assert rows[1][12] == ""
-    assert rows[2][12] == "precio de feria"
-    assert rows[3][6] == "free_concept"
-    assert rows[3][7] == ""
-    assert rows[3][10] == ""
-    assert rows[3][5] == "Nota\nextra"
-    assert rows[1][3] == "2026-09-23T14:05:00-06:00"
-    assert rows[1][17] == "49.00"
-    assert rows[2][17] == "49.00"
-    assert rows[3][17] == "49.00"
+    assert rows[1][2] == "TRX-000007"
+    assert rows[1][3] == ""
+    assert rows[2][2] == rows[3][2] == "TRX-000007"
+    assert rows[1][4] == "confirmed"
+    assert rows[1][7] == "Piña, fresca"
+    assert rows[1][10] == "0.9"
+    assert rows[1][12] == "20.00"
+    assert rows[1][14] == ""
+    assert rows[2][14] == "precio de feria"
+    assert rows[3][8] == "free_concept"
+    assert rows[3][9] == ""
+    assert rows[3][12] == ""
+    assert rows[3][7] == "Nota\nextra"
+    assert rows[1][5] == "2026-09-23T14:05:00-06:00"
+    assert rows[1][19] == "49.00"
+    assert rows[2][19] == "49.00"
+    assert rows[3][19] == "49.00"
 
     first_xlsx = render_daily_sales_xlsx(export)
     second_xlsx = render_daily_sales_xlsx(export)
@@ -116,13 +119,15 @@ def test_slug_filename_and_serializers_are_deterministic() -> None:
     assert facts["money_formats"] == ["0.00"]
     assert facts["quantity_format"] == "0.######"
     assert facts["date_format"] == "yyyy-mm-dd"
-    assert facts["values"][0][2] == "confirmed"
-    assert facts["values"][0][5] == "Piña, fresca"
-    assert facts["values"][0][8] == pytest.approx(0.9)
-    assert facts["values"][0][10] == pytest.approx(20.0)
-    assert facts["values"][2][7] is None
-    assert facts["values"][2][10] is None
-    assert facts["values"][0][3] == datetime(2026, 9, 23, 14, 5, 0)
+    assert facts["values"][0][2] == "TRX-000007"
+    assert facts["values"][0][3] is None
+    assert facts["values"][0][4] == "confirmed"
+    assert facts["values"][0][7] == "Piña, fresca"
+    assert facts["values"][0][10] == pytest.approx(0.9)
+    assert facts["values"][0][12] == pytest.approx(20.0)
+    assert facts["values"][2][9] is None
+    assert facts["values"][2][12] is None
+    assert facts["values"][0][5] == datetime(2026, 9, 23, 14, 5, 0)
     assert facts["formulas"] == []
 
     source = inspect.getsource(__import__("app.application.queries.export_daily_sales", fromlist=["x"]))
@@ -324,21 +329,21 @@ def test_open_day_csv_and_xlsx_match_persisted_sales(client: TestClient, db_sess
         assert str(day_id) not in filename
         assert csv_response.content == csv_again.content
         rows = _csv_rows(csv_response.content)
-        assert [row[4] for row in rows] == [
+        assert [row[6] for row in rows] == [
             str(ITEM_PINEAPPLE),
             str(ITEM_OVERRIDE),
             str(ITEM_FREE),
             str(card_item),
             str(transfer_item),
         ]
-        assert {row[2] for row in rows} == {"confirmed"}
-        assert rows[0][3] == local_confirmed.isoformat(timespec="seconds")
-        assert rows[0][5] == "Piña, fresca"
-        assert rows[0][10] == "20.00"
+        assert {row[4] for row in rows} == {"confirmed"}
+        assert rows[0][5] == local_confirmed.isoformat(timespec="seconds")
+        assert rows[0][7] == "Piña, fresca"
+        assert rows[0][12] == "20.00"
         assert "NO-OPEN" not in csv_response.text
         assert "NO-READY" not in csv_response.text
         assert "Renombrada" not in csv_response.text
-        assert {row[16] for row in rows} == {"cash", "card", "transfer"}
+        assert {row[18] for row in rows} == {"cash", "card", "transfer"}
         _assert_reconciliation(rows)
 
         assert xlsx_response.status_code == 200
@@ -351,9 +356,9 @@ def test_open_day_csv_and_xlsx_match_persisted_sales(client: TestClient, db_sess
         assert first_facts == second_facts
         assert first_facts["sheets"] == ["Ventas"]
         assert len(first_facts["values"]) == 5
-        assert first_facts["values"][0][10] == pytest.approx(20.0)
-        assert isinstance(first_facts["values"][0][8], (int, float))
-        assert isinstance(first_facts["values"][0][13], (int, float))
+        assert first_facts["values"][0][12] == pytest.approx(20.0)
+        assert isinstance(first_facts["values"][0][10], (int, float))
+        assert isinstance(first_facts["values"][0][15], (int, float))
 
         _close_with_empty_snapshot(db_session, business_id, user_id, day_id, business_date)
         closed = _export(client, token, str(day_id), "csv")
@@ -468,6 +473,7 @@ def test_inconsistent_sale_and_invalid_timezone_return_no_file(client: TestClien
                 currency="MXN",
                 operational_day_id=day_id,
                 confirmed_at=datetime(2026, 1, 15, 19, tzinfo=UTC),
+                transaction_sequence=_trx_seq(),
             )
         )
         db_session.flush()
@@ -505,6 +511,7 @@ def test_inconsistent_sale_and_invalid_timezone_return_no_file(client: TestClien
                 currency="MXN",
                 operational_day_id=mismatch_day,
                 confirmed_at=datetime(2026, 1, 17, 18, tzinfo=UTC),
+                transaction_sequence=_trx_seq(),
             )
         )
         db_session.flush()
@@ -597,6 +604,7 @@ def _sample_export() -> SalesExport:
         base = dict(
             business_date=datetime(2026, 9, 23).date(),
             sale_session_id=session,
+            sale_transaction_sequence=7,
             sale_status="confirmed",
             sale_confirmed_at=confirmed,
             source_type="catalog",
@@ -660,18 +668,18 @@ def _workbook_facts(payload: bytes) -> dict:
     money_formats = set()
     quantity_format = None
     date_format = None
-    for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row, max_col=18):
+    for row in sheet.iter_rows(min_row=2, max_row=sheet.max_row, max_col=20):
         if all(cell.value is None for cell in row):
             continue
         values.append([cell.value for cell in row])
         for cell in row:
             if isinstance(cell.value, str) and cell.value.startswith("="):
                 formulas.append(cell.value)
-        if row[8].value is not None:
-            quantity_format = row[8].number_format
+        if row[10].value is not None:
+            quantity_format = row[10].number_format
         if row[0].value is not None:
             date_format = row[0].number_format
-        for index in (10, 11, 13, 17):
+        for index in (12, 13, 15, 19):
             if row[index].value is not None:
                 money_formats.add(row[index].number_format)
     return {
@@ -679,7 +687,7 @@ def _workbook_facts(payload: bytes) -> dict:
         "header": header,
         "freeze": sheet.freeze_panes,
         "filter": sheet.auto_filter.ref,
-        "widths": [sheet.column_dimensions[chr(64 + index)].width for index in range(1, 19)],
+        "widths": [sheet.column_dimensions[chr(64 + index)].width for index in range(1, 21)],
         "values": values,
         "formulas": formulas,
         "money_formats": sorted(money_formats),
@@ -695,16 +703,16 @@ def _csv_rows(payload: bytes) -> list[list[str]]:
 
 
 def _assert_reconciliation(rows: list[list[str]]) -> None:
-    line_total = sum(Decimal(row[13]) for row in rows)
-    naive_payment = sum(Decimal(row[17]) for row in rows)
+    line_total = sum(Decimal(row[15]) for row in rows)
+    naive_payment = sum(Decimal(row[19]) for row in rows)
     distinct: dict[str, Decimal] = {}
     for row in rows:
-        distinct[row[15]] = Decimal(row[17])
+        distinct[row[17]] = Decimal(row[19])
     assert line_total == sum(distinct.values())
     assert naive_payment != line_total
     grouped: dict[str, set[str]] = {}
     for row in rows:
-        grouped.setdefault(row[1], set()).add(row[17])
+        grouped.setdefault(row[1], set()).add(row[19])
     assert all(len(amounts) == 1 for amounts in grouped.values())
 
 
@@ -760,6 +768,11 @@ def _product(session, business_id, *, name: str, price: str) -> UUID:
     return product_id
 
 
+def _trx_seq() -> int:
+    """Unique per-business test sequence for directly inserted rows."""
+    return (new_uuid7().int % 1_000_000_000) + 1
+
+
 def _item(**kwargs) -> dict:
     return kwargs
 
@@ -775,6 +788,7 @@ def _sale(session, *, business_id, actor_id, day_id, session_id, confirmed_at, m
             currency="MXN",
             operational_day_id=day_id,
             confirmed_at=confirmed_at,
+            transaction_sequence=_trx_seq(),
         )
     )
     session.flush()
@@ -915,6 +929,7 @@ def _close_with_empty_snapshot(session, business_id, actor_id, day_id, business_
             cash_difference=Decimal("0.00"),
             cash_status="balanced",
             closed_at=closed_at,
+            transaction_sequence=_trx_seq(),
         )
     )
     session.commit()

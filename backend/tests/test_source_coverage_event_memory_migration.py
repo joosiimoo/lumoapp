@@ -11,7 +11,7 @@ from tests.conftest import postgres_available, settings_kwargs
 from tests.sale_cleanup import discard_work_items
 from tests.test_work_item_migration import _config
 
-HEAD = "0017_closing_snapshot_close_note"
+HEAD = "0018_transaction_references"
 
 pytestmark = pytest.mark.schema_migration
 
@@ -254,7 +254,8 @@ def test_0012_schema_constraints_rls_and_immutability(migrated) -> None:
                     "facts": (
                         '{"sale_session_id":"' + str(entity_id) + '",'
                         '"payment_id":"00000000-0000-7000-8000-000000000098",'
-                        '"payment_method":"cash","amount":"1.00","currency":"MXN"}'
+                        '"payment_method":"cash","amount":"1.00","currency":"MXN",'
+                        '"transaction_number":"TRX-000001"}'
                     ),
                 },
             )

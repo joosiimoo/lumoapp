@@ -21,6 +21,7 @@ from app.domain.operations import (
 from app.domain.shared.errors import ValidationAppError
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
+from app.domain.shared.transaction_number import format_transaction_number
 from app.infrastructure.persistence.base import utcnow
 from app.infrastructure.persistence.operations import OperationsRepository
 
@@ -127,6 +128,10 @@ def confirmed_ui_data(payload: dict[str, Any]) -> dict[str, Any]:
     note = payload.get("close_note")
     if isinstance(note, str) and note:
         data["close_note"] = note
+    # Pre-0018 stored idempotency bodies may omit the reference; never invent one here.
+    transaction_number = payload.get("transaction_number")
+    if isinstance(transaction_number, str) and transaction_number:
+        data["transaction_number"] = transaction_number
     return data
 
 
@@ -179,6 +184,7 @@ def build_confirmed_close(snapshot: ClosingSnapshot) -> dict[str, Any]:
         "cash_difference": Money(snapshot.cash_difference, currency).to_json(),
         "cash_status": snapshot.cash_status.value,
         "cash_count_id": str(snapshot.cash_count_id),
+        "transaction_number": format_transaction_number(snapshot.transaction_sequence),
     }
     if snapshot.close_note:
         payload["close_note"] = snapshot.close_note

@@ -5,6 +5,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Date,
     DateTime,
@@ -273,6 +274,12 @@ class ClosingSnapshotRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             name="uq_closing_snapshots_id_business_day",
         ),
         UniqueConstraint("cash_count_id", name="uq_closing_snapshots_cash_count"),
+        UniqueConstraint(
+            "business_id",
+            "transaction_sequence",
+            name="uq_closing_snapshots_business_transaction_sequence",
+        ),
+        CheckConstraint("transaction_sequence >= 1", name="ck_closing_snapshots_transaction_sequence"),
         Index("ix_closing_snapshots_business_id", "business_id"),
         CheckConstraint("sale_count >= 0", name="ck_closing_snapshots_sale_count"),
         CheckConstraint(
@@ -324,6 +331,7 @@ class ClosingSnapshotRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     cash_difference: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     cash_status: Mapped[str] = mapped_column(String(16), nullable=False)
     close_note: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    transaction_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     closed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -788,6 +796,25 @@ class SaleSessionRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     voided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     voided_by_actor_id: Mapped[UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     void_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    transaction_sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    void_transaction_sequence: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+
+
+class BusinessTransactionCounterRow(Base):
+    """Per-business monotonic counter shared by sale, void, and daily close (ADR-033)."""
+
+    __tablename__ = "business_transaction_counters"
+    __table_args__ = (
+        CheckConstraint("last_value >= 0", name="ck_business_transaction_counters_last_value"),
+        {"schema": "operations"},
+    )
+
+    business_id: Mapped[UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("identity.businesses.id"),
+        primary_key=True,
+    )
+    last_value: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
 
 
 class SaleItemRow(UUIDPrimaryKeyMixin, TimestampMixin, Base):

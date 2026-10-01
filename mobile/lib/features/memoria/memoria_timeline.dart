@@ -50,6 +50,7 @@ class MemoriaFeedItem {
   const MemoriaFeedItem({
     required this.typeLabel,
     required this.primary,
+    this.reference,
     this.secondary,
     this.note,
     this.statusChip,
@@ -60,6 +61,9 @@ class MemoriaFeedItem {
 
   final String typeLabel;
   final String primary;
+
+  /// Server-issued transaction reference line (e.g. `TRX-000012`); never generated on device.
+  final String? reference;
   final String? secondary;
   final String? note;
   final String? statusChip;
@@ -126,6 +130,25 @@ String memoriaDateLabel({
 
 String _money(Object? value) => '\$$value';
 
+final _transactionNumberPattern = RegExp(r'^TRX-[0-9]+$');
+
+String? _transactionNumber(Object? value) {
+  return value is String && _transactionNumberPattern.hasMatch(value) ? value : null;
+}
+
+/// Secondary reference line from server facts only. Void shows `{trx} · Anula {original}`.
+String? memoriaTransactionReference(Map<String, dynamic> facts, {bool voided = false}) {
+  final number = _transactionNumber(facts['transaction_number']);
+  if (number == null) {
+    return null;
+  }
+  if (!voided) {
+    return number;
+  }
+  final original = _transactionNumber(facts['original_transaction_number']);
+  return original == null ? number : '$number · Anula $original';
+}
+
 MemoriaFeedItem? memoriaFeedItem(Map<String, dynamic> event) {
   final type = event['event_type'];
   final facts = event['facts'];
@@ -151,6 +174,7 @@ MemoriaFeedItem? memoriaFeedItem(Map<String, dynamic> event) {
     return MemoriaFeedItem(
       typeLabel: 'Venta',
       primary: primary,
+      reference: memoriaTransactionReference(values),
       localTime: localTime,
       voidRequest: voidAction?.action,
       voidConversationId: voidAction?.conversationId,
@@ -170,6 +194,7 @@ MemoriaFeedItem? memoriaFeedItem(Map<String, dynamic> event) {
     return MemoriaFeedItem(
       typeLabel: 'Venta anulada',
       primary: primary,
+      reference: memoriaTransactionReference(values, voided: true),
       secondary: reason is String && reason.isNotEmpty ? 'Motivo: $reason' : null,
       localTime: localTime,
     );
@@ -202,6 +227,7 @@ MemoriaFeedItem? memoriaFeedItem(Map<String, dynamic> event) {
     return MemoriaFeedItem(
       typeLabel: 'Cierre',
       primary: 'Cierre completado · ${_money(gross)} en ventas',
+      reference: memoriaTransactionReference(values),
       secondary: '$status · diferencia ${_money(difference)}',
       note: note is String && note.isNotEmpty ? note : null,
       localTime: localTime,

@@ -18,6 +18,7 @@ from app.domain.sales import SaleSession, SaleSessionStatus, sum_session_total
 from app.domain.shared.errors import OnboardingIncompleteError, ValidationAppError
 from app.domain.shared.money import Money
 from app.domain.shared.tenant import TenantContext
+from app.domain.shared.transaction_number import format_transaction_number
 from app.infrastructure.persistence.base import utcnow
 from app.infrastructure.persistence.operations import OperationsRepository
 from app.policies import PolicyDecision, PolicyDecisionName, PolicyRequest
@@ -244,12 +245,14 @@ class VoidSaleSession:
         items = self._sales.list_items(tenant=tenant, sale_session_id=session.id)
         impact = self.impact_for(tenant=tenant, session=session)
 
+        void_transaction_sequence = self._operations.allocate_transaction_sequence(tenant=tenant)
         updated = self._sales.void_session(
             tenant=tenant,
             sale_session_id=session.id,
             voided_at=instant,
             voided_by_actor_id=tenant.actor_id,
             void_reason=reason,
+            void_transaction_sequence=void_transaction_sequence,
         )
         payload = build_voided_sale(updated, items, payment)
         payload["impact"] = impact
@@ -268,6 +271,8 @@ class VoidSaleSession:
                 "sale_session_id": str(updated.id),
                 "status": updated.status.value,
                 "void_reason": updated.void_reason,
+                "transaction_number": payload["transaction_number"],
+                "original_transaction_number": payload["original_transaction_number"],
                 "voided_at": instant.isoformat(),
                 "voided_by_actor_id": str(tenant.actor_id),
                 **({"ui_action_id": ui_action_id} if ui_action_id else {}),
@@ -293,6 +298,8 @@ class VoidSaleSession:
             currency=payment.amount.currency,
             void_reason=reason,
             voided_by_actor_id=tenant.actor_id,
+            transaction_number=payload["transaction_number"],
+            original_transaction_number=payload["original_transaction_number"],
             occurred_at=instant,
             created_at=instant,
         )
@@ -336,6 +343,12 @@ def build_voided_sale(session: SaleSession, items: list, payment) -> dict[str, A
     amount = base["total"]["amount"]
     base["text"] = f"Venta anulada · ${amount}"
     base["items"] = _item_payloads(items)
+    # Void-result semantics (ADR-033): ``transaction_number`` identifies the void
+    # transaction; the sale identity stays in ``original_transaction_number``.
+    if session.transaction_sequence is None or session.void_transaction_sequence is None:
+        raise ValidationAppError("voided sale requires stored transaction references")
+    base["original_transaction_number"] = format_transaction_number(session.transaction_sequence)
+    base["transaction_number"] = format_transaction_number(session.void_transaction_sequence)
     return base
 
 

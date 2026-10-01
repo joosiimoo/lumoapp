@@ -420,9 +420,14 @@ class FoundationOrchestrator:
             "payment": result.payload["payment"],
             "items": result.payload["items"],
         }
+        # Pre-0018 stored replay bodies may omit references; never invent one here.
+        if result.payload.get("transaction_number"):
+            data["transaction_number"] = result.payload["transaction_number"]
         if status == "voided":
             data["void_reason"] = result.payload.get("void_reason")
             data["voided_at"] = result.payload.get("voided_at")
+            if result.payload.get("original_transaction_number"):
+                data["original_transaction_number"] = result.payload["original_transaction_number"]
         if result.payload.get("impact"):
             data["impact"] = result.payload["impact"]
         # Inicio is not a void entry point: never mint sale.void.request@1 on sale_confirmed.

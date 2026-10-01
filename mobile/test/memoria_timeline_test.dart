@@ -145,6 +145,116 @@ void main() {
     expect(memoriaFeedItem({'event_type': 'unknown', 'local_time': '19:00', 'facts': {}}), isNull);
   });
 
+  test('sale, void, and close expose a secondary TRX reference from server facts only', () {
+    final sale = memoriaFeedItem({
+      'event_type': 'sale_confirmed',
+      'local_time': '10:00',
+      'facts': {'amount': '22.50', 'payment_method': 'cash', 'transaction_number': 'TRX-000003'},
+    })!;
+    expect(sale.reference, 'TRX-000003');
+    expect(sale.typeLabel, 'Venta');
+    expect(sale.statusChip, isNull);
+    final voided = memoriaFeedItem({
+      'event_type': 'sale_voided',
+      'local_time': '10:05',
+      'facts': {
+        'amount': '22.50',
+        'payment_method': 'cash',
+        'void_reason': 'cobro duplicado',
+        'transaction_number': 'TRX-000005',
+        'original_transaction_number': 'TRX-000003',
+      },
+    })!;
+    expect(voided.reference, 'TRX-000005 · Anula TRX-000003');
+    expect(voided.typeLabel, 'Venta anulada');
+    final close = memoriaFeedItem({
+      'event_type': 'daily_close_completed',
+      'local_time': '19:00',
+      'facts': {
+        'sale_count': 1,
+        'gross_sales_total': '22.50',
+        'cash_difference': '0.00',
+        'cash_status': 'balanced',
+        'transaction_number': 'TRX-1000000',
+      },
+    })!;
+    expect(close.reference, 'TRX-1000000');
+    expect(close.typeLabel, 'Cierre');
+    // Cash counts never carry a reference, even if a stray fact is present.
+    final cash = memoriaFeedItem({
+      'event_type': 'cash_count_recorded',
+      'local_time': '18:00',
+      'facts': {
+        'expected_cash': '1.00',
+        'counted_cash': '1.00',
+        'cash_difference': '0.00',
+        'cash_status': 'balanced',
+        'transaction_number': 'TRX-000009',
+      },
+    })!;
+    expect(cash.reference, isNull);
+    // Legacy rows without the fact, or malformed values, render no reference.
+    expect(
+      memoriaFeedItem({
+        'event_type': 'sale_confirmed',
+        'local_time': '10:00',
+        'facts': {'amount': '1.00', 'payment_method': 'cash', 'transaction_number': 'bad'},
+      })!.reference,
+      isNull,
+    );
+  });
+
+  testWidgets('Memoria renders the TRX line under the primary text and keeps the timeline', (tester) async {
+    await tester.pumpWidget(
+      _app(
+        _client(
+          _payload(
+            events: [
+              {
+                'event_type': 'sale_voided',
+                'business_date': '2026-09-25',
+                'local_time': '12:10',
+                'facts': {
+                  'amount': '22.50',
+                  'payment_method': 'cash',
+                  'void_reason': 'cobro duplicado',
+                  'transaction_number': 'TRX-000005',
+                  'original_transaction_number': 'TRX-000003',
+                },
+              },
+              {
+                'event_type': 'sale_confirmed',
+                'business_date': '2026-09-25',
+                'local_time': '10:00',
+                'facts': {'amount': '22.50', 'payment_method': 'cash', 'transaction_number': 'TRX-000003'},
+              },
+              {
+                'event_type': 'cash_count_recorded',
+                'business_date': '2026-09-25',
+                'local_time': '09:00',
+                'facts': {
+                  'expected_cash': '1.00',
+                  'counted_cash': '1.00',
+                  'cash_difference': '0.00',
+                  'cash_status': 'balanced',
+                },
+              },
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('TRX-000005 · Anula TRX-000003'), findsOneWidget);
+    expect(find.text('TRX-000003'), findsOneWidget);
+    expect(find.widgetWithText(LumoStatusChip, 'TRX-000003'), findsNothing);
+    expect(find.byType(MemoriaTimelineEvent), findsNWidgets(3));
+    expect(find.byType(Divider), findsNothing);
+    final events = tester.widgetList<MemoriaTimelineEvent>(find.byType(MemoriaTimelineEvent)).toList();
+    expect(events[0].connectBelow, isTrue);
+    expect(events[2].connectAbove, isTrue);
+  });
+
   test('feed items do not duplicate unnecessary facts', () {
     final sale = memoriaFeedItem({
       'event_type': 'sale_confirmed',

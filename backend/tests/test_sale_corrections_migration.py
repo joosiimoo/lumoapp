@@ -16,7 +16,7 @@ from tests.conftest import TEST_SECRET, postgres_available, settings_kwargs
 from tests.migration_db import use_clean_proof_database
 
 BACKEND = Path(__file__).resolve().parents[1]
-HEAD = "0017_closing_snapshot_close_note"
+HEAD = "0018_transaction_references"
 
 pytestmark = pytest.mark.schema_migration
 
@@ -192,10 +192,11 @@ def test_0016_applies_cleanly_from_base_on_disposable_db() -> None:
                         INSERT INTO sales.sale_sessions (
                             id, business_id, actor_id, conversation_id, status, currency,
                             operational_day_id, confirmed_at, sale_revision,
-                            voided_at, voided_by_actor_id, void_reason
+                            voided_at, voided_by_actor_id, void_reason,
+                            transaction_sequence, void_transaction_sequence
                         ) VALUES (
                             :id, :business_id, :actor_id, 'conv', 'voided', 'MXN',
-                            :day_id, NOW(), 1, NOW(), :actor_id, 'rls check'
+                            :day_id, NOW(), 1, NOW(), :actor_id, 'rls check', 1, 2
                         )
                         """
                     ),

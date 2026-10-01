@@ -12,6 +12,7 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from app.application.queries.export_daily_sales import SalesExport, SalesExportLine
+from app.domain.shared.transaction_number import format_transaction_number
 from app.infrastructure.export.columns import COLUMN_WIDTHS, EXPORT_COLUMNS
 
 _MONEY_FORMAT = "0.00"
@@ -31,7 +32,7 @@ def render_daily_sales_xlsx(export: SalesExport) -> bytes:
     for line in export.lines:
         _append_line(sheet, line, zone)
     sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = f"A1:R{sheet.max_row}"
+    sheet.auto_filter.ref = f"A1:{get_column_letter(len(EXPORT_COLUMNS))}{sheet.max_row}"
     for index, width in enumerate(COLUMN_WIDTHS, start=1):
         sheet.column_dimensions[get_column_letter(index)].width = width
     fixed = datetime(1980, 1, 1, tzinfo=timezone.utc)
@@ -51,6 +52,8 @@ def _append_line(sheet, line: SalesExportLine, zone: ZoneInfo) -> None:
     values: list[object] = [
         line.business_date,
         str(line.sale_session_id),
+        format_transaction_number(line.sale_transaction_sequence),
+        None if line.void_transaction_sequence is None else format_transaction_number(line.void_transaction_sequence),
         line.sale_status,
         local,
         str(line.sale_item_id),

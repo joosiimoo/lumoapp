@@ -5,7 +5,7 @@ Versioned `sale_confirmed@1` contract for an operationally completed sale. The b
 ### Requirement: Register sale_confirmed@1
 `GenerativeUIRegistry` MUST register component `sale_confirmed` version `1`. `GenerativeUIComposer` MUST emit this contract after a committed `sale.commit@1` **transition**, and MAY emit the same contract as a current-state read-back when the session is already `confirmed` and no newer `open` or `ready_to_charge` session exists for the interaction context. After a successful void, the composer MUST emit a voided confirmation variant of this contract (same component version) whose `data.status` is `voided` and whose void metadata and impact fields are server-provided. A current-state read-back MUST NOT be composed when a newer active session exists. An exact completed idempotency replay MAY still return a previously stored body that contains `sale_confirmed@1`; that replay is not a fresh current-state read-back. A fresh payment action bound to an already confirmed session MUST NOT compose that historical `sale_confirmed@1` when a newer active session exists; it returns `ui_action_stale` with empty `ui`. It MUST refuse unknown components. The backend MUST NOT render Flutter widgets or HTML.
 
-For a live `confirmed` sale, Inicio `sale_confirmed@1` `actions` MUST NOT include `sale.void.request@1`, `sale.void.confirm@1`, or any Anular affordance. Confirmed-sale void entry is Memoria-only (see `memoria-timeline`). For `voided`, `actions` MUST be empty. Money MUST be decimal strings plus `MXN`. `fallback_text` MUST be server-provided and MUST contain the item count, total, and payment method display label (`Efectivo` | `Tarjeta` | `Transferencia`), and for voided MUST convey anulación. The contract version MUST remain `1`. `data.items` MUST include every persisted line.
+For a live `confirmed` sale, Inicio `sale_confirmed@1` `actions` MUST NOT include `sale.void.request@1`, `sale.void.confirm@1`, or any Anular affordance. Confirmed-sale void entry is Memoria-only (see `memoria-timeline`). For `voided`, `actions` MUST be empty. Money MUST be decimal strings plus `MXN`. `fallback_text` MUST be server-provided and MUST contain the item count, total, and payment method display label (`Efectivo` | `Tarjeta` | `Transferencia`), and for voided MUST convey anulación. The contract version MUST remain `1`. `data.items` MUST include every persisted line. For `status=confirmed`, `data.transaction_number` MUST be the server-formatted **sale** number. For `status=voided`, this contract variant represents the **void result / current void state**, not a rewritten identity of the original confirmed-sale transaction: `data.transaction_number` MUST be the **void** number and `data.original_transaction_number` MUST be the preserved original sale number. The original sale `transaction_sequence` on the entity and on the historical `sale_confirmed` Event Memory row MUST remain the sale number.
 
 The contract MUST be:
 
@@ -17,6 +17,7 @@ The contract MUST be:
     "sale_session_id": "<uuid>",
     "payment_id": "<uuid>",
     "status": "confirmed",
+    "transaction_number": "TRX-000101",
     "currency": "MXN",
     "item_count": 3,
     "total": {"amount": "56.50", "currency": "MXN"},
@@ -45,19 +46,23 @@ The contract MUST be:
 
 #### Scenario: Composer emits after committed cash
 - **WHEN** `sale.commit@1` has committed a three-item session totaling `56.50` MXN with method `cash`
-- **THEN** the agent response `ui` MUST include exactly one `sale_confirmed` version `1` payload whose `data.status` is `confirmed`, `data.total.amount` is `56.50`, `data.payment.method` is `cash`, and `actions` MUST NOT include `sale.void.request@1`
+- **THEN** the agent response `ui` MUST include exactly one `sale_confirmed` version `1` payload whose `data.status` is `confirmed`, `data.total.amount` is `56.50`, `data.payment.method` is `cash`, `data.transaction_number` is present, and `actions` MUST NOT include `sale.void.request@1`
 
-#### Scenario: Composer emits voided confirmation
+#### Scenario: Composer emits voided confirmation as void result state
 - **WHEN** `sale.void@1` has voided that session
-- **THEN** the response `ui` MUST include `sale_confirmed@1` with `data.status` `voided`, empty `actions`, and fallback text that conveys the sale was anulada
+- **THEN** the response `ui` MUST include `sale_confirmed@1` with `data.status` `voided`, empty `actions`, `data.transaction_number` equal to the void number, `data.original_transaction_number` equal to the preserved sale number, and fallback text that conveys the sale was anulada, and that variant MUST be interpreted as the void result/current void state rather than a rewritten original sale identity
 
 #### Scenario: Composer emits current confirmation on confirmed read-back
 - **WHEN** the session is already `confirmed`, no newer `open` or `ready_to_charge` session exists for that conversation, and the actor posts `efectivo` with a new `Idempotency-Key`
-- **THEN** the response `ui` MUST include `sale_confirmed@1` built from the persisted session, items, and payment and MUST NOT depend on a second commit
+- **THEN** the response `ui` MUST include `sale_confirmed@1` built from the persisted session, items, payment, and sale `transaction_number` and MUST NOT depend on a second commit
 
 #### Scenario: Fresh stale action does not compose a historical card
 - **WHEN** session A is `confirmed`, session B is `ready_to_charge` in the same conversation, and an unused payment action bound to A is submitted
 - **THEN** the response `ui` MUST be empty and MUST NOT include `sale_confirmed@1`
+
+#### Scenario: Exact post-0018 replay returns same TRX
+- **WHEN** a completed post-0018 payment action for session A is retried with the same key and hash
+- **THEN** the stored body MUST include the same `transaction_number` that was persisted on first commit
 
 #### Scenario: Exact replay may return a stored confirmed card
 - **WHEN** a completed payment action for session A is retried with the same key and hash after session B is `ready_to_charge`
@@ -68,11 +73,19 @@ The contract MUST be:
 - **THEN** the backend MUST refuse to include it
 
 ### Requirement: Flutter maps sale_confirmed@1
-Flutter `GenerativeUIRenderer` MUST register `sale_confirmed` version `1`. It MUST render a conversation card using existing Lumo language: Lumo mark gutter, soft `LumoCard`, status chip `Venta registrada`, every server item row (name, user-facing quantity and unit price, right-aligned server line total), one total row from `data.total`, and a payment row labeled `Pago` with the method display label. Flutter MUST format server strings only and MUST NOT sum `line_total`s, recompute `total`, or derive payment amount. It MUST map `cash`→`Efectivo`, `card`→`Tarjeta`, `transfer`→`Transferencia` for display only. It MUST NOT show a second amount for `payment.amount`, payment-selection chips, Registrar, Corregir, Deshacer, inventory copy, a receipt, an invoice, or a POS table. Unknown versions MUST show `fallback_text` and MUST NOT run actions.
+Flutter `GenerativeUIRenderer` MUST register `sale_confirmed` version `1`. It MUST render a conversation card using existing Lumo language: Lumo mark gutter, soft `LumoCard`, status chip treatment that MAY include the server `transaction_number` subtly as `Venta registrada · {transaction_number}` when `status=confirmed` and present. For `status=voided`, Flutter MUST treat the card as void-result state and MAY show `"{transaction_number} · Anula {original_transaction_number}"` from server fields without treating the void number as a replacement of the original sale identity. It MUST render every server item row (name, user-facing quantity and unit price, right-aligned server line total), one total row from `data.total`, and a payment row labeled `Pago` with the method display label. Flutter MUST format server strings only and MUST NOT sum `line_total`s, recompute `total`, derive payment amount, or generate transaction numbers. It MUST map `cash`→`Efectivo`, `card`→`Tarjeta`, `transfer`→`Transferencia` for display only. It MUST NOT show a second amount for `payment.amount`, payment-selection chips, Registrar, Corregir, Deshacer, inventory copy, a receipt, an invoice, or a POS table. Unknown versions MUST show `fallback_text` and MUST NOT run actions.
 
 #### Scenario: Confirmed card lists every item
 - **WHEN** the renderer receives a `sale_confirmed@1` payload with two items, `total.amount` `32.50`, and `payment.method` `cash`
 - **THEN** it MUST show both product names, both server line totals, total `$32.50`, and `Pago` `Efectivo`, without adding the line totals
+
+#### Scenario: Confirmed card shows subtle TRX
+- **WHEN** the renderer receives `sale_confirmed@1` with `status=confirmed` and `transaction_number` `TRX-000101`
+- **THEN** it MUST show that number subtly with the registered-sale treatment and MUST NOT invent a different number
+
+#### Scenario: Voided card shows void Anula original
+- **WHEN** the renderer receives `sale_confirmed@1` with `status=voided`, `transaction_number` `TRX-000105`, and `original_transaction_number` `TRX-000101`
+- **THEN** it MUST present the void result using those server fields (for example `TRX-000105 · Anula TRX-000101`) and MUST NOT invent numbers or treat `TRX-000105` as the original sale identity
 
 #### Scenario: Unknown version falls back
 - **WHEN** the payload is `sale_confirmed` version `2`
