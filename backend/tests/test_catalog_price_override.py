@@ -343,3 +343,101 @@ def test_mixed_total_payment_and_closed_day(client: TestClient, db_session) -> N
     _post(client, token, "totalizar", "closed-tot", "conv-closed-ov")
     refused = _post(client, token, "efectivo", "closed-pay", "conv-closed-ov")
     assert refused.json()["text"] == "La jornada de hoy ya está cerrada. No puedo registrar otra venta en ese día."
+
+
+def test_inline_promotion_completes_catalog_override(client: TestClient, db_session) -> None:
+    tenant, token = _seed_catalog(db_session)
+    done = _post(client, token, "1 galleta A a 10 por promoción", "ov-inline", "conv-inline")
+    assert done.status_code == 200, done.text
+    card = done.json()["ui"][0]
+    assert card["data"]["product_name"] == GALLETA_A_NAME
+    assert card["data"]["unit_price"]["amount"] == "10.00"
+    assert card["data"]["catalog_unit_price"]["amount"] == "12.00"
+    assert card["data"]["line_total"]["amount"] == "10.00"
+    set_current_business_id(db_session, tenant.business_id)
+    line = db_session.scalars(select(SaleItemRow).where(SaleItemRow.id == card["data"]["sale_item_id"])).one()
+    assert line.source_type == "catalog"
+    assert line.catalog_unit_price_snapshot == Decimal("12.00")
+    assert line.unit_price == Decimal("10.00")
+    assert line.price_override_reason == "promoción"
+    assert line.quantity_normalized == Decimal("1")
+    assert line.line_total == Decimal("10.00")
+    assert line.product_name_snapshot == GALLETA_A_NAME
+    follow = _post(client, token, "promoción otra vez", "ov-inline-2", "conv-inline")
+    assert follow.json()["ui"] == [] or follow.json()["text"] != done.json()["text"]
+
+
+def test_inline_promotion_does_not_leave_pending(client: TestClient, db_session) -> None:
+    _tenant, token = _seed_catalog(db_session)
+    _post(client, token, "1 galleta A a 10 por promoción", "ov-nopend", "conv-nopend")
+    stray = _post(client, token, "otro motivo", "ov-nopend-2", "conv-nopend")
+    assert "Galleta A" not in stray.json().get("text", "") or stray.json()["ui"] == []
+
+
+def test_price_without_inline_reason_still_asks(client: TestClient, db_session) -> None:
+    _tenant, token = _seed_catalog(db_session)
+    asked = _post(client, token, "2 galletas A a 10", "ov-ask-unit", "conv-ask-unit")
+    assert asked.json()["text"] == "Galleta A está registrado a $12.00 por unidad. ¿Por qué lo vendiste a $10.00?"
+    assert asked.json()["ui"] == []
+    _, items = _sales_for(db_session, _tenant.business_id)
+    assert items == []
+
+
+def test_overlong_inline_reason_stays_pending_then_completes(client: TestClient, db_session) -> None:
+    tenant, token = _seed_catalog(db_session)
+    long_motivo = "á" * 201
+    refused = _post(client, token, f"1 galleta A a 10 por {long_motivo}", "ov-long-inline", "conv-long-inline")
+    assert refused.json()["text"] == "Ese motivo es demasiado largo."
+    assert refused.json()["ui"] == []
+    _, items = _sales_for(db_session, tenant.business_id)
+    assert items == []
+    done = _post(client, token, "promoción", "ov-long-why", "conv-long-inline")
+    assert done.status_code == 200, done.text
+    card = done.json()["ui"][0]
+    assert card["data"]["product_name"] == GALLETA_A_NAME
+    assert card["data"]["unit_price"]["amount"] == "10.00"
+    assert card["data"]["line_total"]["amount"] == "10.00"
+    set_current_business_id(db_session, tenant.business_id)
+    line = db_session.scalars(select(SaleItemRow).where(SaleItemRow.id == card["data"]["sale_item_id"])).one()
+    assert line.price_override_reason == "promoción"
+    assert line.source_type == "catalog"
+
+
+def test_unknown_inline_promotion_is_cleaned_free_concept(client: TestClient, db_session) -> None:
+    tenant, token = _seed_catalog(db_session)
+    done = _post(client, token, "1 hielo suelto a 10 por promoción", "ov-free-tail", "conv-free-tail")
+    assert done.status_code == 200, done.text
+    card = done.json()["ui"][0]
+    assert card["data"]["product_name"] == "hielo suelto"
+    assert card["data"]["unit_price"]["amount"] == "10.00"
+    assert "catalog_unit_price" not in card["data"]
+    set_current_business_id(db_session, tenant.business_id)
+    line = db_session.scalars(select(SaleItemRow).where(SaleItemRow.id == card["data"]["sale_item_id"])).one()
+    assert line.source_type == "free_concept"
+    assert line.product_name_snapshot == "hielo suelto"
+    assert line.price_override_reason is None
+    assert line.product_name_snapshot not in {
+        "1 hielo suelto a 10 por promoción",
+        "hielo suelto a 10 por promoción",
+    }
+
+
+def test_por_kilo_is_not_stored_as_override_reason(client: TestClient, db_session) -> None:
+    from app.domain.sales.concept import extract_inline_override_reason, parse_sale_utterance
+
+    parsed = parse_sale_utterance("500g de Café Molido a 240 por kilo")
+    assert parsed is not None
+    assert parsed.per_kilogram is True
+    assert parsed.override_reason is None
+    assert extract_inline_override_reason("500g de Café Molido a 240 por kilo") is None
+
+
+def test_scripted_interpreter_inline_promotion_path() -> None:
+    from app.agent.providers.scripted import ScriptedLLMProvider
+
+    decision = ScriptedLLMProvider().interpret("1 galleta A a 10 por promoción", {}, [])
+    assert decision.intent == "add_sale_item"
+    assert decision.product_query == "galleta A"
+    assert decision.unit_price == "10.00"
+    assert decision.price_override_reason == "promoción"
+    assert decision.product_query != "1 galleta A a 10 por promoción"

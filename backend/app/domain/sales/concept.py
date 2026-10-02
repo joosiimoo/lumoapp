@@ -17,7 +17,11 @@ _BASIS_PHRASES = ("el kilo", "por kilo", "por kg", "por kilogramo", "el kilogram
 _AMOUNT = r"-?\$?\d+(?:[.,]\d+)?"
 _BASIS = r"(?:el kilo|por kilo|por kg|por kilogramo|el kilogramo)"
 _PRICE_WITH_A = re.compile(
-    rf"^(?P<body>.*?)\s+a\s+(?P<amount>{_AMOUNT})(?:\s+cada\s+un[oa])?(?:\s+(?P<basis>{_BASIS}))?\s*$",
+    rf"^(?P<body>.*?)\s+a\s+(?P<amount>{_AMOUNT})"
+    rf"(?:\s+cada\s+un[oa])?"
+    rf"(?:\s+(?P<basis>{_BASIS}))?"
+    rf"(?:\s+por\s+(?P<reason>.+))?"
+    rf"\s*$",
     re.IGNORECASE,
 )
 _PRICE_TRAILING = re.compile(
@@ -103,6 +107,7 @@ class ParsedSaleUtterance:
     package_word: str | None = None
     price_problem: str | None = None
     bare_number: str | None = None
+    override_reason: str | None = None
 
 
 def collapse_display_span(value: str) -> str:
@@ -147,6 +152,7 @@ def parse_sale_utterance(message: str) -> ParsedSaleUtterance | None:
     body = _body_without_price(text, grounded)
     leading = _LEADING_QTY.match(body.strip())
     price_text = None if grounded.amount is None else _format_price(grounded.amount)
+    override_reason = extract_inline_override_reason(text)
     if leading is None:
         span = collapse_display_span(body)
         if not span:
@@ -157,6 +163,7 @@ def parse_sale_utterance(message: str) -> ParsedSaleUtterance | None:
             unit_price=price_text,
             per_kilogram=grounded.per_kilogram,
             price_problem=grounded.problem,
+            override_reason=override_reason,
         )
     rest = leading.group("rest")
     if _UNSUPPORTED.match(rest.strip()):
@@ -171,7 +178,20 @@ def parse_sale_utterance(message: str) -> ParsedSaleUtterance | None:
         per_kilogram=grounded.per_kilogram,
         package_word=package_word,
         price_problem=grounded.problem,
+        override_reason=override_reason,
     )
+
+
+def extract_inline_override_reason(raw_message: str) -> str | None:
+    """Normalized inline `por {motivo}` after `a {amount}`, or None when absent/empty."""
+    priced = _PRICE_WITH_A.match(raw_message.strip())
+    if priced is None:
+        return None
+    raw_reason = priced.group("reason")
+    if raw_reason is None:
+        return None
+    reason = normalize_override_reason(raw_reason)
+    return reason or None
 
 
 def _body_without_price(text: str, grounded: GroundedPrice) -> str:

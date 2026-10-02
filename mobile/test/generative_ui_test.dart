@@ -13,6 +13,7 @@ import 'package:lumo/features/inicio/inicio_page.dart';
 import 'package:lumo/lumo/generative_ui/renderer.dart';
 import 'package:lumo/lumo/widgets/lumo_card.dart';
 import 'package:lumo/lumo/widgets/lumo_chips.dart';
+import 'package:lumo/lumo/widgets/lumo_messages.dart';
 
 Future<void> tapLabel(WidgetTester tester, String label) async {
   final finder = find.text(label);
@@ -512,7 +513,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(conversationIds, hasLength(2));
     expect(conversationIds[1], conversationIds[0]);
-    expect(find.text('totalizar'), findsOneWidget);
+    expect(find.text('totalizar', skipOffstage: false), findsOneWidget);
     expect(find.text('Lista para cobrar'), findsOneWidget);
     expect(find.textContaining('\$32.50'), findsWidgets);
   });
@@ -849,7 +850,7 @@ void main() {
     expect(conversationIds, hasLength(2));
     expect(conversationIds[1], conversationIds[0]);
     expect(conversationIds.first, isNotEmpty);
-    expect(find.text('tengo 20 en caja'), findsOneWidget);
+    expect(find.text('tengo 20 en caja', skipOffstage: false), findsOneWidget);
     expect(find.text('EFECTIVO ESPERADO'), findsWidgets);
     expect(find.text('Confirmar cierre'), findsNothing);
   });
@@ -1057,12 +1058,14 @@ void main() {
     await tester.enterText(find.byType(TextField), 'totalizar');
     await tester.testTextInput.receiveAction(TextInputAction.send);
     await tester.pumpAndSettle();
-    expect(find.text('totalizar'), findsOneWidget);
-    await tester.ensureVisible(find.text('Efectivo'));
+    expect(find.text('totalizar', skipOffstage: false), findsOneWidget);
+    final cash = find.text('Efectivo', skipOffstage: false);
+    expect(cash, findsOneWidget);
+    await tester.ensureVisible(cash);
     await tapLabel(tester, 'Efectivo');
     await tester.pumpAndSettle();
     expect(find.text('totalizar', skipOffstage: false), findsOneWidget);
-    expect(find.text('Efectivo'), findsOneWidget);
+    expect(find.text('Efectivo', skipOffstage: false), findsOneWidget);
     expect(find.text('Venta registrada'), findsOneWidget);
     final action = bodies.last;
     expect(action.containsKey('sale_session_id'), isFalse);
@@ -1534,6 +1537,154 @@ void main() {
     expect(find.widgetWithText(LumoStatusChip, 'TRX-000006'), findsNothing);
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: renderer.build(close({})))));
     expect(find.textContaining('TRX'), findsNothing);
+  });
+
+  testWidgets('removed item card shows Quitado without Quitar', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._goldenContract(),
+      'data': {
+        ..._goldenContract()['data'] as Map<String, dynamic>,
+        'product_name': 'Galleta A',
+      },
+      'actions': [
+        {
+          'action_id': 'sale.remove_item@1',
+          'option_id': null,
+          'context_token': 'remove-token',
+          'idempotency_key': 'remove-key',
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: renderer.build(
+            contract,
+            chrome: const UiActionChrome(markedRemoved: true, hideMutationActions: true),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Quitado'), findsOneWidget);
+    expect(find.text('Quitar'), findsNothing);
+    expect(find.text('Galleta A'), findsOneWidget);
+  });
+
+  testWidgets('removed summary row shows Quitado and hides Quitar', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._summaryContract(),
+      'actions': [
+        {
+          'action_id': 'sale.remove_item@1',
+          'option_id': null,
+          'context_token': 'remove-z',
+          'idempotency_key': 'remove-z',
+        },
+        {
+          'action_id': 'sale.remove_item@1',
+          'option_id': null,
+          'context_token': 'remove-t',
+          'idempotency_key': 'remove-t',
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: renderer.build(
+            contract,
+            chrome: const UiActionChrome(
+              hideMutationActions: true,
+              removedSaleItemIds: {'i2'},
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Quitado'), findsOneWidget);
+    expect(find.text('Quitar'), findsNothing);
+    expect(find.text('Tomate'), findsOneWidget);
+  });
+
+  testWidgets('failed remove leaves card without Quitado', (tester) async {
+    const renderer = GenerativeUIRenderer();
+    final contract = GenerativeUiContract.fromJson({
+      ..._goldenContract(),
+      'actions': [
+        {
+          'action_id': 'sale.remove_item@1',
+          'option_id': null,
+          'context_token': 'remove-token',
+          'idempotency_key': 'remove-key',
+        },
+      ],
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: renderer.build(
+            contract,
+            chrome: UiActionChrome(onAction: (action, {voidReason}) {}),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Quitado'), findsNothing);
+    expect(find.text('Quitar'), findsOneWidget);
+  });
+
+  test('named remove confirmation includes the product', () {
+    expect(
+      namedRemoveConfirmation('Galleta A', 'Artículo quitado. Quedan 1 en la venta · \$22.50'),
+      'Quité Galleta A. Artículo quitado. Quedan 1 en la venta · \$22.50',
+    );
+    expect(namedRemoveConfirmation('Galleta A', 'Quité Galleta A. Listo.'), 'Quité Galleta A. Listo.');
+  });
+
+  test('session timezone formats HH:MM in that zone', () {
+    // 20:05 UTC → 14:05 in America/Mexico_City (UTC-6, no DST).
+    final occurred = DateTime.utc(2026, 10, 1, 20, 5);
+    expect(formatInicioEventTime(occurred, timezone: 'America/Mexico_City'), '14:05');
+    expect(formatInicioEventTime(occurred, timezone: 'UTC'), '20:05');
+  });
+
+  test('absent session timezone falls back to device local', () {
+    final occurred = DateTime.utc(2026, 10, 1, 20, 5);
+    final local = occurred.toLocal();
+    final expected =
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+    expect(formatInicioEventTime(occurred), expected);
+    expect(formatInicioEventTime(occurred, timezone: null), expected);
+    expect(formatInicioEventTime(occurred, timezone: ''), expected);
+  });
+
+  testWidgets('assistant cards show HH:MM and user bubbles do not', (tester) async {
+    // 20:05 UTC → 14:05 America/Mexico_City; device-local alone would not guarantee 14:05.
+    final occurred = DateTime.utc(2026, 10, 1, 20, 5);
+    final added = GenerativeUiContract.fromJson(_goldenContract());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: InicioPage(
+            timezone: 'America/Mexico_City',
+            messages: [
+              InicioTurn.user('1 galleta A', occurredAt: occurred),
+              InicioTurn.assistant('Agregué Galleta A', [added], occurred),
+            ],
+          ),
+        ),
+      ),
+    );
+    expect(find.text('14:05'), findsOneWidget);
+    expect(find.text('1 galleta A'), findsOneWidget);
+    final userBubble = find.text('1 galleta A');
+    expect(
+      find.descendant(of: find.byType(LumoUserMessage), matching: find.text('14:05')),
+      findsNothing,
+    );
+    expect(userBubble, findsOneWidget);
   });
 }
 

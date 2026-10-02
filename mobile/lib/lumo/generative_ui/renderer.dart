@@ -121,6 +121,8 @@ class UiActionChrome {
     this.loadingKey,
     this.hideFallback = false,
     this.hideMutationActions = false,
+    this.markedRemoved = false,
+    this.removedSaleItemIds = const {},
   });
 
   final void Function(GenerativeUiAction action, {String? voidReason})? onAction;
@@ -131,12 +133,25 @@ class UiActionChrome {
   /// When true, sale mutation controls are omitted (closed operational day).
   final bool hideMutationActions;
 
+  /// When true, a historical `sale_item_added` card was successfully removed.
+  final bool markedRemoved;
+
+  /// Historical summary rows whose `sale_item_id` was successfully removed.
+  final Set<String> removedSaleItemIds;
+
   bool actionEnabled(GenerativeUiAction action) {
     return !disabled && !hideMutationActions && onAction != null && loadingKey == null;
   }
 
   bool actionLoading(GenerativeUiAction action) {
     return loadingKey == action.idempotencyKey;
+  }
+
+  bool itemRemoved(String? saleItemId) {
+    if (saleItemId == null || saleItemId.isEmpty) {
+      return false;
+    }
+    return removedSaleItemIds.contains(saleItemId);
   }
 }
 
@@ -372,6 +387,13 @@ class SaleItemAddedView extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (chrome.markedRemoved) ...[
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: LumoStatusChip(label: 'Quitado'),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
                     Row(
                       crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
@@ -426,7 +448,8 @@ class SaleItemAddedView extends StatelessWidget {
                       ),
                     ],
                     if (firstContractActionForId(contract, removeItemActionId) != null &&
-                        !chrome.hideMutationActions) ...[
+                        !chrome.hideMutationActions &&
+                        !chrome.markedRemoved) ...[
                       const SizedBox(height: 8),
                       Align(
                         alignment: Alignment.centerLeft,
@@ -573,6 +596,8 @@ class SaleSummaryView extends StatelessWidget {
     UiActionChrome chrome = const UiActionChrome(),
   }) {
     final productName = '${item['product_name'] ?? ''}';
+    final saleItemId = '${item['sale_item_id'] ?? ''}';
+    final removed = chrome.itemRemoved(saleItemId);
     final quantity = '${item['quantity_normalized'] ?? ''}';
     final unit = SaleItemAddedView.displayUnit('${item['unit_normalized'] ?? ''}');
     final unitPrice = SaleItemAddedView.formatAmount(item['unit_price']);
@@ -586,6 +611,13 @@ class SaleSummaryView extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                if (removed) ...[
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: LumoStatusChip(label: 'Quitado'),
+                  ),
+                  const SizedBox(height: 4),
+                ],
                 Text(
                   productName,
                   maxLines: 1,
@@ -601,7 +633,7 @@ class SaleSummaryView extends StatelessWidget {
                     SaleItemAddedView.adjustedPriceCaption(item)!,
                     style: LumoTypography.caption,
                   ),
-                if (removeAction != null)
+                if (removeAction != null && !removed)
                   UiSecondaryActionButton(
                     label: 'Quitar',
                     action: removeAction,

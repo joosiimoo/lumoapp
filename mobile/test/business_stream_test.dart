@@ -316,6 +316,40 @@ void main() {
     expect(find.text('1 venta'), findsOneWidget);
     expect(find.text('Registrar conteo'), findsNothing);
     expect(find.text('Revisar cierre'), findsNothing);
+    final header = tester.getRect(find.text(r'Llevas $22.50 en ventas.'));
+    await tester.drag(find.byKey(const Key('inicio-transcript')), const Offset(0, -400));
+    await tester.pumpAndSettle();
+    final headerAfter = tester.getRect(find.text(r'Llevas $22.50 en ventas.'));
+    expect(headerAfter.top, header.top);
+    final transcriptTop = tester.getRect(find.byKey(const Key('inicio-transcript'))).top;
+    expect(transcriptTop, greaterThanOrEqualTo(headerAfter.bottom + 12 - 0.5));
+  });
+
+  testWidgets('returning to Inicio shows the latest transcript activity', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(420, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    final messages = <InicioTurn>[
+      for (var index = 0; index < 20; index++) InicioTurn.user('venta $index'),
+      InicioTurn.assistant('Última actividad'),
+    ];
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: InicioPage(
+          businessName: 'Carrota',
+          stream: BusinessStream.fromJson(_body()),
+          messages: messages,
+          scrollController: controller,
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(find.text('Última actividad'), findsOneWidget);
+    expect(controller.offset, greaterThan(0));
+    expect(find.text('venta 0'), findsNothing);
   });
 
   testWidgets('typed cerrar el día still keeps the conversational card', (tester) async {

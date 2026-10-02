@@ -89,13 +89,17 @@ class _LumoHomeState extends State<LumoHome> {
   LumoTab _tab = LumoTab.inicio;
   final _composer = TextEditingController();
   final _composerFocus = FocusNode();
+  final _inicioScroll = ScrollController();
   final List<InicioTurn> _inicio = [];
   bool _sending = false;
   String? _pendingOperation;
   String? _businessName;
+  String? _timezone;
   String? _confirmationToken;
   late final String _conversationId;
   final Set<String> _settledCards = {};
+  final Set<String> _removedCardKeys = {};
+  final Set<String> _removedSaleItemIds = {};
   String? _busyCardKey;
   String? _busyActionKey;
   BusinessStream? _stream;
@@ -110,6 +114,24 @@ class _LumoHomeState extends State<LumoHome> {
     super.initState();
     _conversationId = const Uuid().v4();
     _loadBusiness();
+  }
+
+  void _scrollInicioToLatest() {
+    void jump() {
+      if (!_inicioScroll.hasClients) {
+        return;
+      }
+      final extent = _inicioScroll.position.maxScrollExtent;
+      if (extent <= 0) {
+        return;
+      }
+      _inicioScroll.jumpTo(extent);
+    }
+
+    // Wait for the new turn to lay out before measuring maxScrollExtent.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => jump());
+    });
   }
 
   Future<void> _loadBusiness() async {
@@ -127,11 +149,17 @@ class _LumoHomeState extends State<LumoHome> {
         return;
       }
       final business = body['business'];
+      final timezone = body['timezone'] ?? (business is Map ? business['timezone'] : null);
       if (business is Map && mounted) {
         setState(() {
           _onboarding = false;
           _businessName = '${business['name'] ?? ''}';
+          if (timezone is String && timezone.isNotEmpty) {
+            _timezone = timezone;
+          }
         });
+      } else if (timezone is String && timezone.isNotEmpty && mounted) {
+        setState(() => _timezone = timezone);
       }
     } catch (_) {}
     if (mounted && !_onboarding) {
@@ -255,6 +283,7 @@ class _LumoHomeState extends State<LumoHome> {
   void dispose() {
     _composerFocus.dispose();
     _composer.dispose();
+    _inicioScroll.dispose();
     super.dispose();
   }
 
@@ -262,6 +291,7 @@ class _LumoHomeState extends State<LumoHome> {
     final cardKey = uiCardKey(contract);
     if (_busyCardKey != null ||
         _settledCards.contains(cardKey) ||
+        _removedCardKeys.contains(cardKey) ||
         _tab != LumoTab.inicio ||
         _stream?.operatorState == 'closed') {
       return;
@@ -282,13 +312,27 @@ class _LumoHomeState extends State<LumoHome> {
       if (!mounted) {
         return;
       }
+      final now = DateTime.now();
+      final isRemove = action.actionId == removeItemActionId;
+      final removedName = isRemove ? productNameForRemove(contract, action) : null;
+      final removedItemId = isRemove ? saleItemIdForRemove(contract, action) : null;
+      final confirmation = isRemove && removedName != null
+          ? namedRemoveConfirmation(removedName, response.text)
+          : response.text;
       setState(() {
-        _inicio.add(InicioTurn.assistant(response.text, response.ui));
+        _inicio.add(InicioTurn.assistant(confirmation, response.ui, now));
         _confirmationToken = nextConfirmationToken(response.ui, _confirmationToken);
         _settledCards.add(cardKey);
+        if (isRemove) {
+          _removedCardKeys.add(cardKey);
+          if (removedItemId != null) {
+            _removedSaleItemIds.add(removedItemId);
+          }
+        }
         _busyCardKey = null;
         _busyActionKey = null;
       });
+      _scrollInicioToLatest();
       await _loadStream();
     } catch (_) {
       if (!mounted) {
@@ -314,10 +358,11 @@ class _LumoHomeState extends State<LumoHome> {
     _composer.clear();
     final operation = _pendingOperation ?? 'lumo.message.send.${DateTime.now().microsecondsSinceEpoch}';
     _pendingOperation = operation;
+    final now = DateTime.now();
     setState(() {
       final last = _inicio.isEmpty ? null : _inicio.last;
       if (last == null || !last.fromUser || last.text != text) {
-        _inicio.add(InicioTurn.user(text));
+        _inicio.add(InicioTurn.user(text, occurredAt: now));
       }
       _sending = true;
     });
@@ -332,11 +377,12 @@ class _LumoHomeState extends State<LumoHome> {
         return;
       }
       setState(() {
-        _inicio.add(InicioTurn.assistant(response.text, response.ui));
+        _inicio.add(InicioTurn.assistant(response.text, response.ui, DateTime.now()));
         _confirmationToken = nextConfirmationToken(response.ui, _confirmationToken);
         _sending = false;
         _pendingOperation = null;
       });
+      _scrollInicioToLatest();
       await _loadStream();
     } catch (_) {
       if (!mounted) {
@@ -368,6 +414,9 @@ class _LumoHomeState extends State<LumoHome> {
         if (_showsOperationalState(tab)) {
           _loadStream();
         }
+        if (tab == LumoTab.inicio) {
+          _scrollInicioToLatest();
+        }
       },
       footer: showComposer
           ? LumoComposer(
@@ -382,11 +431,15 @@ class _LumoHomeState extends State<LumoHome> {
             businessName: _businessName,
             onAction: _onAction,
             disabledCardKeys: _settledCards,
+            removedCardKeys: _removedCardKeys,
+            removedSaleItemIds: _removedSaleItemIds,
             busyCardKey: _busyCardKey,
             busyActionKey: _busyActionKey,
             stream: _stream,
             streamFailed: _streamFailed,
             onRetryStream: _loadStream,
+            scrollController: _inicioScroll,
+            timezone: _timezone,
           ),
         LumoTab.hoy => HoyPage(
             apiClient: widget.apiClient,

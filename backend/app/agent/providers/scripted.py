@@ -377,6 +377,7 @@ class ScriptedLLMProvider:
                 quantity=parsed.quantity,
                 unit_price=parsed.unit_price,
                 price_basis=basis,
+                price_override_reason=parsed.override_reason,
                 package_word=parsed.package_word,  # type: ignore[arg-type]
                 missing_fields=["unit"],
                 clarification_question="¿En qué unidad está esa cantidad? Por ejemplo gramos o kilogramos.",
@@ -394,6 +395,7 @@ class ScriptedLLMProvider:
                 unit=parsed.unit,  # type: ignore[arg-type]
                 unit_price=parsed.unit_price,
                 price_basis=basis,
+                price_override_reason=parsed.override_reason,
                 package_word=parsed.package_word,  # type: ignore[arg-type]
                 missing_fields=missing,
                 entities=[
@@ -407,6 +409,7 @@ class ScriptedLLMProvider:
             unit=parsed.unit,  # type: ignore[arg-type]
             unit_price=parsed.unit_price,
             price_basis="per_kilogram" if parsed.per_kilogram else ("per_each" if parsed.unit in {"unit", "package"} and parsed.unit_price else None),
+            price_override_reason=parsed.override_reason,
             package_word=parsed.package_word,  # type: ignore[arg-type]
             candidate_tool="sale.add_item@1",
             response_hints=["99.00"],

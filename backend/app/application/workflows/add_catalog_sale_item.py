@@ -37,6 +37,7 @@ from app.domain.sales.concept import (
     basis_question,
     catalog_override_question,
     collapse_display_span,
+    extract_inline_override_reason,
     ground_user_price,
     missing_price_text,
     normalize_override_reason,
@@ -189,6 +190,78 @@ class AddCatalogSaleItem:
             raise IdempotencyConflictError("Idempotency key reused with a different payload")
         body = found["body"]
         return AddItemWorkflowResult(kind="committed", text=body.get("text", "Listo."), payload=body)
+
+    def _complete_inline_catalog_override(
+        self,
+        *,
+        tenant: TenantContext,
+        conversation_id: str | None,
+        idempotency_key: str,
+        correlation_id: str,
+        fail_after_write: bool,
+        product: Product,
+        product_query: str,
+        quantity_text: str,
+        unit_name: str,
+        uttered: Decimal,
+        reason: str,
+        observed: str,
+    ) -> AddItemWorkflowResult:
+        try:
+            locked = self._catalog.get_for_update(tenant=tenant, product_id=product.id)
+        except ProductNotFoundError:
+            return AddItemWorkflowResult(
+                kind="clarify",
+                text="Ese producto está inactivo.",
+                payload={"clear_pending": True, "match": "inactive"},
+            )
+        if not locked.is_active or locked.id != product.id:
+            self._catalog.rollback_product_lock()
+            return AddItemWorkflowResult(
+                kind="clarify",
+                text="Ese producto está inactivo.",
+                payload={"clear_pending": True, "match": "inactive"},
+            )
+        observed_amount = Decimal(observed)
+        locked_amount = locked.current_price.amount
+        if locked_amount != observed_amount and locked_amount != uttered:
+            self._catalog.rollback_product_lock()
+            restarted = {
+                "kind": "catalog_price_override",
+                "product_query": product_query,
+                "product_id": str(product.id),
+                "quantity": quantity_text,
+                "unit": unit_name,
+                "unit_price": f"{uttered.quantize(Decimal('0.01')):.2f}",
+                "observed_catalog_unit_price": locked.current_price.to_json()["amount"],
+            }
+            return AddItemWorkflowResult(
+                kind="clarify",
+                text=catalog_override_question(
+                    locked.name,
+                    locked.current_price,
+                    uttered,
+                    locked.sale_unit,
+                    changed=True,
+                ),
+                payload={"pending": restarted, "reason": "catalog_price_override_reason_required"},
+            )
+        charged = locked.current_price if locked_amount == uttered else Money(uttered, locked.current_price.currency)
+        stored_reason = None if locked_amount == uttered else reason
+        return self._commit_locked_catalog(
+            tenant=tenant,
+            conversation_id=conversation_id,
+            idempotency_key=idempotency_key,
+            correlation_id=correlation_id,
+            fail_after_write=fail_after_write,
+            product=locked,
+            quantity_text=quantity_text,
+            unit_name=unit_name,
+            charged=charged,
+            reason=stored_reason,
+            replay_reason=reason,
+            create_session=True,
+        )
 
     def complete_price_override(
         self,
@@ -404,6 +477,50 @@ class AddCatalogSaleItem:
                 payload={"reason": "quantity_required"},
             )
         if uttered is not None and uttered != product.current_price.amount:
+            observed = product.current_price.to_json()["amount"]
+            pending = {
+                "kind": "catalog_price_override",
+                "product_query": working.product_query,
+                "product_id": str(product.id),
+                "quantity": working.quantity,
+                "unit": working.unit,
+                "unit_price": f"{uttered.quantize(Decimal('0.01')):.2f}",
+                "observed_catalog_unit_price": observed,
+            }
+            inline_reason = extract_inline_override_reason(raw_message)
+            if inline_reason is not None and len(inline_reason) > MAX_OVERRIDE_REASON:
+                self._policies.evaluate(
+                    PolicyRequest(
+                        action="execute_tool",
+                        tool_id="sale.add_item@1",
+                        tool_registered=True,
+                        arguments={"match": "catalog_price_override_reason_required"},
+                    )
+                )
+                return AddItemWorkflowResult(
+                    kind="clarify",
+                    text=LONG_OVERRIDE_REASON_TEXT,
+                    payload={
+                        "match": "catalog_price_override_reason_required",
+                        "reason": "catalog_price_override_reason_required",
+                        "pending": pending,
+                    },
+                )
+            if inline_reason:
+                return self._complete_inline_catalog_override(
+                    tenant=tenant,
+                    conversation_id=conversation_id,
+                    idempotency_key=idempotency_key,
+                    correlation_id=correlation_id,
+                    fail_after_write=fail_after_write,
+                    product=product,
+                    product_query=working.product_query or product.name,
+                    quantity_text=working.quantity or "",
+                    unit_name=working.unit or "",
+                    uttered=uttered,
+                    reason=inline_reason,
+                    observed=observed,
+                )
             self._policies.evaluate(
                 PolicyRequest(
                     action="execute_tool",
@@ -412,22 +529,13 @@ class AddCatalogSaleItem:
                     arguments={"match": "catalog_price_override_reason_required"},
                 )
             )
-            observed = product.current_price.to_json()["amount"]
             return AddItemWorkflowResult(
                 kind="clarify",
                 text=catalog_override_question(product.name, product.current_price, uttered, product.sale_unit),
                 payload={
                     "match": "catalog_price_override_reason_required",
                     "reason": "catalog_price_override_reason_required",
-                    "pending": {
-                        "kind": "catalog_price_override",
-                        "product_query": working.product_query,
-                        "product_id": str(product.id),
-                        "quantity": working.quantity,
-                        "unit": working.unit,
-                        "unit_price": f"{uttered.quantize(Decimal('0.01')):.2f}",
-                        "observed_catalog_unit_price": observed,
-                    },
+                    "pending": pending,
                 },
             )
         request_hash = sha256(

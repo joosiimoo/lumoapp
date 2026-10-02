@@ -31,6 +31,7 @@ class AgentDecision(BaseModel):
     unit: Literal["gram", "kilogram", "unit", "package"] | None = None
     unit_price: str | None = None
     price_basis: Literal["per_each", "per_kilogram"] | None = None
+    price_override_reason: str | None = None
     package_word: Literal["bolsa", "paquete"] | None = None
     payment_method: Literal["cash", "card", "transfer"] | None = None
     counted_amount: str | None = None
